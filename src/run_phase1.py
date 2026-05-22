@@ -50,6 +50,7 @@ def main() -> None:
 
     path = download_gamelog(SEASON, RAW_DIR)
     states = parse_gamelog(path)
+    print(f"Parsed {len(states):,} game states from {path.name}.")
     table = build_table(states)
 
     print("\n" + format_table(table) + "\n")
