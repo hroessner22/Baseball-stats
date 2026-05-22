@@ -1,6 +1,10 @@
 # The Python sandbox — large, machine-specific, and rebuildable
 venv/
 
+# Node / Cloudflare tooling — installed and rebuildable
+node_modules/
+.wrangler/
+
 # Downloaded data files — large, and freely re-downloadable
 data/*
 !data/.gitkeep

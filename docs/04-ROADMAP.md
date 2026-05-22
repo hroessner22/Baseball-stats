@@ -1,6 +1,6 @@
 # 04 — Roadmap
 
-*Baseball-stats (working title) · Draft v1 · May 2026*
+*Baseball-stats (working title) · Draft v2 · May 2026*
 
 > The extended build process, Phase 0 to growth. Effort sizes are
 > **planning-grade estimates** assuming roughly one focused engineer; the
@@ -10,99 +10,103 @@
 ## Shape of the plan
 
 ```
-Phase 0   Foundation             ✅ complete
-Phase 1   The Engine (PoC)       ← recommended first task
-Phase 2   Historical pipeline
-Phase 3   MVP app  ───────────── first real users; validate the idea
-Phase 4   Explorer + depth
-Phase 5   Production platform     first investor-ready product
+Phase 0   Foundation                ✅ complete
+Phase 1   The Engine (PoC)          ← Milestone 1 — current focus
+Phase 2   The Historical Engine
+Phase 3   The Live MVP  ──────────── first real users; validate the idea
+Phase 4   The Deep Dive
+Phase 5   Production & every scale    first investor-ready product
 Phase 6   Growth & monetization
 ```
 
-The most important line above is **Phase 3.** Everything before it is setup;
-everything after it depends on what real users do. **Get to Phase 3 fast.**
+The most important line is **Phase 3.** Everything before it is setup;
+everything after depends on what real users do. **Get to Phase 3 fast.**
 
 ## Phase 0 — Foundation ✅
 
 **Status: complete.**
 - GitHub repository created and cloned.
-- Python virtual environment.
-- Folder structure, `.gitignore`, `requirements.txt`.
+- Python virtual environment; folder structure, `.gitignore`, `requirements.txt`.
+- The stack chosen — GitHub + Cloudflare + Supabase.
 - This documentation set.
 
 ## Phase 1 — The Engine (Proof of Concept)
 
-**Goal:** prove the core computation on real data.
+**Goal:** prove the core computation on real data. *(This is Milestone 1 — the
+current focus.)*
 
 **Deliverables:**
 - Download one season of Retrosheet game logs.
 - Parse it into end-of-inning game-state records.
-- Compute the inning × score-difference win-rate table.
+- Compute the inning × score-difference win-expectancy table.
 - Print it clearly; spot-check a few cells against intuition.
 
-**Definition of done:** the script prints a believable win-rate table from real
-data. Sanity check: a tie in the 1st should sit near 50%; a big lead late
-should be near 100%.
+**Definition of done:** the script prints a believable win-expectancy table
+from real data. Sanity check: a tie in the 1st sits near 50%; a big late lead
+near 100%.
 
-**Size:** Small. **This is the recommended first task for the senior engineer**
-— it doubles as an end-to-end validation of the data source.
+**Size:** Small. The recommended first task — it validates the entire data
+foundation before anything else is built on it.
 
-## Phase 2 — Historical Data Pipeline
+## Phase 2 — The Historical Engine
 
-**Goal:** turn the one-season script into an all-history dataset.
+**Goal:** all of history — win expectancy for any game state, any era.
 
 **Deliverables:**
-- Ingest all available seasons.
-- The **year-range toggle** as a real, first-class parameter.
+- Ingest all available seasons of Retrosheet game logs.
+- The **year-range / era toggle** as a first-class parameter of the aggregation.
 - A processed data store (SQLite is the natural step up from flat files).
-- Basic automated tests on parsing and aggregation.
+- Automated tests on parsing and aggregation.
 
-**Definition of done:** the win-rate table can be produced for any year range —
-a single season to all of history — in seconds.
+**Definition of done:** the win-expectancy table for any year range — a single
+season to all of history — is produced in seconds.
 
-**Size:** Small–Medium.
+**Size:** Small–Medium. Keep it lean — the goal is to reach Phase 3 fast.
 
-## Phase 3 — MVP App
+## Phase 3 — The Live MVP
 
 **Goal:** the first thing a real user can touch. **The validation milestone.**
 
 **Deliverables:**
-- A web app with the **Scoreboard** (pick a season → see games) and the
-  **Game View** (open a game → inning-by-inning historical win rate) — frontend
-  on **Cloudflare Pages**, API on **Cloudflare Workers**, data in **Supabase**.
+- Wire in the **MLB Stats API** live feed — today's schedule and pitch-by-pitch
+  game state.
+- The **Board** (every game now, each tile led by score + win expectancy) and
+  the **Game** (open one → the live win-expectancy story) — frontend on
+  Cloudflare Pages, API on Cloudflare Workers, data in Supabase.
 - Deployed to a public URL.
 - Put in front of 5–20 real baseball fans; reactions gathered.
 
-**Definition of done:** a stranger can open the link, pick a game, and "get it"
-without explanation — and some of them want to come back.
+**Definition of done:** a stranger opens the link on a game night, sees the
+slate, taps the closest game, and "gets it" without explanation — and some of
+them come back tomorrow.
 
 **Size:** Medium. **Do not skip the user feedback** — it decides Phase 4+.
 
-## Phase 4 — Stats Explorer & Model Depth
+## Phase 4 — The Deep Dive
 
-**Goal:** depth — once Phase 3 proves people care.
+**Goal:** depth — the full situational matrix — once Phase 3 proves people care.
 
 **Deliverables:**
-- The **Stats Explorer**: the organized, interactive drill-down.
-- A richer win-rate model using play-by-play data (outs, baserunners) — adopt
-  the Chadwick tooling here.
-- "This season vs. historical" comparison views.
+- Ingest the Retrosheet play-by-play event files (the Chadwick tooling).
+- The **situational splits** — by count, base state, handedness, RISP — and the
+  **matchup likelihood** (the odds-ratio / log5 method).
+- The **relevance engine** in full — surfacing only what matters, per moment.
+- The **Deep Dive** UI — the recursive card, point and axis modes.
 
-**Definition of done:** a user can roam from a single stat to the games behind
-it and back, without getting lost.
+**Definition of done:** a user drills from a live moment into any variation —
+lefty/righty, by count, by era — and never gets lost.
 
 **Size:** Medium–Large.
 
-## Phase 5 — Production Platform
+## Phase 5 — Production & every scale
 
-**Goal:** the real, polished product — the MLB.com-grade vision.
+**Goal:** the real, polished product — the engine pointed at every scale.
 
 **Deliverables:**
-- Harden the Phase 3 app into the production product — same stack (Cloudflare
-  Pages + Workers + Supabase), now polished.
-- The full "everything interactive" interaction model.
-- Visual design / branding; user accounts.
-- Performance, analytics, error monitoring.
+- The other scales — `STANDINGS`, `LEADERS`, `MVP`, record chases — each as a
+  board.
+- WPA, the rarity radar, shareable moments.
+- Visual design / branding; user accounts; performance, analytics, monitoring.
 
 **Definition of done:** a product that looks and feels like something people
 would pay for, or share unprompted.
@@ -116,10 +120,9 @@ would pay for, or share unprompted.
 
 **Possible deliverables:** the chosen monetization model (subscription, API,
 B2B); growth loops (shareable moments, SEO across 230,000 game pages);
-expansion to other sports or to live games.
+expansion to other sports.
 
-**Definition of done:** measurable, repeatable growth and revenue — the
-evidence an investor actually wants.
+**Definition of done:** measurable, repeatable growth and revenue.
 
 **Size:** Ongoing.
 
@@ -137,5 +140,8 @@ early growth. Not before. Full reasoning in
 2. **Let user feedback drive Phase 4+.** The roadmap past Phase 3 is a
    hypothesis; real reactions rewrite it.
 3. **Don't stand up the product stack during Phase 1.** The engine (Phases 1–2)
-   is just local Python — no hosting, no database — until there is something to
+   is local Python — no hosting, no database — until there is something to
    deploy.
+4. **The live feed is a Phase 3 concern.** Phases 1–2 run entirely on free
+   historical Retrosheet data; the MLB feed — and its licensing question — only
+   matters once the live MVP is being built.

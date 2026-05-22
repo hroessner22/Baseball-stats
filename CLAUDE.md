@@ -5,10 +5,11 @@ repository. Keep this file short — put detail in `docs/`.
 
 ## What this project is
 
-**Baseball-stats** (working title) — an interactive platform to explore
-baseball history with live historical context. For any game situation (an
-inning and a score difference), it shows the historical win rate of teams in
-that exact spot, and lets users explore the games, seasons, and stats around it.
+**Baseball-stats** (working title) — a live companion for baseball. Every game
+in progress, each led by an empirical win probability drawn from 150 years of
+history. One product in three layers: the **Board** (every game on now), the
+**Game** (the live win-expectancy story), and the **Deep Dive** (the full
+situational matrix).
 
 Full vision: `docs/` — start with `docs/01-VISION.md`.
 
@@ -27,10 +28,10 @@ GitHub + Cloudflare + Supabase — the standard stack for this project.
 - **API / compute:** Cloudflare Workers.
 - **Frontend hosting:** Cloudflare Pages — all deployments.
 
-The win-rate engine (Phases 1–2) is local Python that deploys nowhere. The
-product (Phase 3 onward) is a Cloudflare Pages frontend and a Cloudflare
-Workers API over data in Supabase. Don't introduce other hosts or databases
-without asking. Detail: `docs/03-ARCHITECTURE.md`.
+The engine (Phases 1–2) is local Python that deploys nowhere. The product
+(Phase 3 onward) is a Cloudflare Pages frontend and a Cloudflare Workers API
+over data in Supabase. Don't introduce other hosts or databases without asking.
+Detail: `docs/03-ARCHITECTURE.md`.
 
 ## Repository structure
 
@@ -47,9 +48,10 @@ Baseball-stats/
 
 ## The documentation set
 
-`docs/01` through `docs/06`, meant to be read in order. `docs/README.md` is the
+`docs/01` through `docs/07`, meant to be read in order. `docs/README.md` is the
 handoff walkthrough; `docs/06-ENGINEERING-HANDOFF.md` holds the consolidated
-list of open questions.
+list of open questions; `docs/07-DESIGN.md` is the visual and interaction
+target.
 
 ## Development environment
 
@@ -71,16 +73,16 @@ pip install -r requirements.txt
 
 ## Recommended first task
 
-Phase 1 — the proof-of-concept win-rate engine: download one season of
-Retrosheet game logs, compute the inning × score-difference win-rate table,
-and print it. Full spec in `docs/06-ENGINEERING-HANDOFF.md`.
+Phase 1 — the proof-of-concept engine: download one season of Retrosheet game
+logs, compute the inning × score-difference win-expectancy table, and print it.
+Full spec in `docs/06-ENGINEERING-HANDOFF.md`.
 
 ## Working principles
 
 - Build in small, working increments. This project's main risk is scope creep —
   favor shipping a real, runnable slice over expanding the vision.
 - Keep it simple: the dataset is small (see `docs/03-ARCHITECTURE.md`).
-- Data licensing (Retrosheet attribution; MLB intellectual property) is a real
+- Data licensing (Retrosheet attribution; the MLB live feed and IP) is a real
   constraint — treat a data-rights review as blocking before any commercial use.
 
 ## Data attribution

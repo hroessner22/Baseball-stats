@@ -1,6 +1,6 @@
 # 05 — Business Case
 
-*Baseball-stats (working title) · Draft v1 · May 2026*
+*Baseball-stats (working title) · Draft v2 · May 2026*
 
 > The most candid document in this set. A planning artifact is only useful if
 > it is honest about risk. Read it that way.
@@ -8,14 +8,14 @@
 ## The opportunity
 
 Baseball fans are unusually engaged with history and numbers — the sport's
-culture *is* its statistics. Around that sit several real tailwinds:
+culture *is* its statistics. Around that sit real tailwinds:
 
 - **Second-screen behavior.** Fans watch games with a phone in hand, wanting
-  context.
+  context in the moment. A live companion meets them exactly there.
 - **Legal sports betting** across much of the US has made win probability and
   live odds mainstream vocabulary.
 - **AI-assisted development** has sharply lowered the cost of building a
-  polished data product — a small team can now realistically attempt this.
+  polished data product — a small team can realistically attempt this.
 
 > *This document deliberately avoids invented market-size figures. Real
 > TAM/SAM numbers must be sourced before any investor conversation — see open
@@ -25,48 +25,54 @@ culture *is* its statistics. Around that sit several real tailwinds:
 
 | Segment | Who | Why they'd care |
 |---------|-----|-----------------|
-| Curious fans | Watch baseball; not stats people | Stories, drama, "wow" moments |
-| Statheads | Already use FanGraphs / Baseball-Reference | Depth, speed, a better interaction model |
-| Content creators | Writers, broadcasters, social accounts | Fast, beautiful historical context |
+| Curious fans | Watch baseball; not stats people | Stories, drama, "wow" — live, in the moment |
+| Stat-heads | Already use FanGraphs / Baseball-Reference | Depth, speed, a friendlier interaction model |
+| Content creators | Writers, broadcasters, social accounts | Fast, beautiful context |
 | Bettors *(optional)* | Sports bettors | Empirical base rates |
 
-The honest primary wedge: **curious fans**, reached through the emotionally
-resonant Game View. Statheads are already well served; bettors are a strategic
-fork, not the default identity.
+The honest primary wedge: **curious fans**, reached through the live companion —
+the game they are already watching, made more meaningful. Stat-heads are a
+strong secondary; bettors are a strategic fork, not the default identity.
 
 ## Competitive landscape (honest)
 
+A live, win-expectancy-led companion sits in a **more crowded space than a
+history explorer would** — that is the honest trade of going live-first.
+
 | Player | Strength | The gap we target |
 |--------|----------|-------------------|
-| Baseball-Reference | The definitive reference; vast | Built to *look up*, not to *explore*; dense |
-| FanGraphs | Deep analytics, advanced metrics | For analysts; steep for casual fans |
-| MLB.com / MLB app | Official, live, polished | Present-focused; not a history explorer |
-| ESPN and similar | Reach, live scores | Shallow historically; not exploratory |
-| Stathead (B-Ref's paid tool) | Powerful historical search | A query tool, not a visual experience |
+| MLB.com / ESPN / Yahoo | Official or huge; live scores, polished | Show the *score*, not the *stakes*; shallow context |
+| Baseball Savant | MLB's Statcast depth | A wall of data, built for analysts |
+| FanGraphs | Deep analytics, live win-probability graphs | For analysts; steep for a casual fan |
+| Baseball-Reference / Stathead | The definitive reference; vast | Built to *look up*, not to *explore*; dense |
 
-**Be clear-eyed:** win probability is **not a new idea.** FanGraphs has shown
-win-probability graphs for years; broadcasts display live odds. The historical
-data is **public** and available to anyone.
+**Be clear-eyed:** win probability is **not a new idea** — FanGraphs has shown
+it for years; broadcasts display live odds. And a live scoreboard is a
+commodity. The product **cannot** be defended by "we have win probability," "we
+have the data," or "we show live scores." Everyone has those.
 
-So the product **cannot** be defended by "we have win probability" or "we have
-the data." Everyone can get the data.
+## Where the defensibility is
 
-## Where the defensibility actually is
+> **We live in the gap between ESPN and Baseball Savant.**
 
-The moat, if it exists, is **built — not found:**
+ESPN is friendly but shallow; Savant is deep but built for analysts. Nobody
+owns *deep* **and** *beautiful* **and** *in-the-moment* — and the gap is
+**structural**: neither incumbent can move into it without betraying its own
+model. ESPN runs on breadth and ad views; Savant is MLB's tool for analysts.
+Neither will become a deep, beautiful companion.
 
-1. **Product & experience.** An interactive, beautiful, emotionally engaging
-   way to explore history that genuinely does not exist today. Execution is the
-   edge.
-2. **Organization & depth.** 230,000 games made to feel effortless to roam —
-   hard to copy well.
-3. **Brand & community.** Becoming *the* place fans go to relive and explore.
-4. **Compounding content.** Every game is a page; at scale that is a large SEO
-   and sharing surface.
+The moat is **built, not found**, across Phases 3–6:
 
-None of these exist on day one. They are *earned* across Phases 3–6. An
-investor will probe this hard; the honest answer is "execution and product,
-proven by traction."
+1. **Product & experience** — a live, beautiful, emotionally engaging way to
+   read a game that genuinely does not exist today. Execution is the edge.
+2. **The relevance engine** — surfacing exactly what matters, per moment. Deep
+   *and* uncluttered is hard to copy well.
+3. **Brand & community** — becoming *the* second screen fans reach for.
+4. **Compounding content** — every game, live and historical, is a page; at
+   scale, a large SEO and sharing surface.
+
+None of these exist on day one. An investor will probe this hard; the honest
+answer is "execution and product, proven by traction."
 
 ## Monetization options
 
@@ -101,7 +107,7 @@ build fast" curve.
 | A technical founder | Owner is early in learning to code | **The key gap — see below** |
 | A big market | Plausible, unquantified | Source real figures; articulate expansion |
 | Speed of progress | To be demonstrated | Show it via the roadmap |
-| A clear wedge | Yes — the Game View | Strong; keep it sharp |
+| A clear wedge | Yes — the live companion | Strong; keep it sharp |
 
 ### The honest, central risk: the team
 YC strongly prefers **technical co-founders** over outsourced or hired
@@ -120,19 +126,18 @@ Without one of these, a YC application is very unlikely to succeed regardless of
 product quality.
 
 ### "Why now?"
-A credible answer exists: legal betting normalized win-probability thinking;
-second-screen fan behavior is now universal; AI-assisted development lets a
-small team build what once took a large one. Sharpen this into one or two
-sentences.
+A credible answer exists, and the live-first product sharpens it: second-screen
+fan behavior is now universal; legal betting normalized win-probability
+thinking; AI-assisted development lets a small team build what once took a large
+one. Sharpen this into one or two sentences.
 
 ### The path to a fundable story
 1. Ship the MVP (Phase 3); get real users who genuinely return.
 2. Show retention and word-of-mouth growth — even small, but real.
 3. Secure a technical co-founder (path 1 above is best).
-4. Articulate the **big-market** story honestly — most likely *expansion
-   beyond baseball to other sports, and toward live games.* "A baseball history
-   site" alone may read as too niche; "the historical-context layer for all of
-   sports" is a venture-scale framing.
+4. Articulate the **big-market** story honestly — expansion beyond baseball to
+   every sport. "A baseball app" alone may read as too niche; "the live
+   historical-context layer for all of sports" is a venture-scale framing.
 5. Apply with a **working product, real traction, and a real team** — then the
    vision in these documents becomes the supporting narrative it is meant to be.
 
@@ -141,10 +146,11 @@ sentences.
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | No technical co-founder | High | Address explicitly (see above) |
-| Core (win probability) not novel | High | Compete on product, UX, brand; prove it with traction |
-| Data licensing for commercial use | High | Full data-rights review before any paid launch |
-| MLB IP (marks, logos, live data) | Medium | Use only licensed assets; avoid implying endorsement |
-| "Too niche" for venture scale | Medium | Frame the multi-sport / live expansion credibly |
+| Win probability / live scores not novel | High | Compete in the ESPN–Savant gap; prove it with traction |
+| Live-data licensing | High | The live MLB feed needs a licensing path before commercial launch (historical data is free); data-rights review first |
+| MLB IP (marks, logos) | Medium | Use only licensed assets; avoid implying endorsement |
+| A crowded live-scores space | Medium | Don't compete on scores — compete on deep + beautiful + in-the-moment |
+| "Too niche" for venture scale | Medium | Frame the multi-sport expansion credibly |
 | Solo, first-time, non-technical founder | Medium | Co-founder; advisors; visible fast execution |
 | Building too much before validating | Medium | The roadmap front-loads validation (Phase 3) |
 

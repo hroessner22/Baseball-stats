@@ -1,136 +1,204 @@
 # 02 — Product Specification
 
-*Baseball-stats (working title) · Draft v1 · May 2026*
+*Baseball-stats (working title) · Draft v2 · May 2026*
 
-> This document describes *what* the product does. For *why*, see
-> [`01-VISION.md`](01-VISION.md); for *how*, see
-> [`03-ARCHITECTURE.md`](03-ARCHITECTURE.md).
+> *What* the product does. For *why*, see [`01-VISION.md`](01-VISION.md); for
+> *how it looks and behaves*, [`07-DESIGN.md`](07-DESIGN.md); for *how it is
+> built*, [`03-ARCHITECTURE.md`](03-ARCHITECTURE.md).
 
-## The core concept: the historical win rate
+## The core concept: win expectancy and the matrix
 
-Almost every feature rests on one computed idea.
+Almost everything rests on one computed idea.
 
-For any **game state** — defined at minimum by *(inning, half-inning, score
-difference)* — look across every historical game that passed through that exact
-state, and compute the percentage that the team went on to win.
+For any **game state** — at minimum an inning, half-inning, and score
+difference; richer still with outs, baserunners, the count, and the matchup —
+look across every historical game that passed through that exact state and
+count the share that went on to win. That is the **win expectancy.**
 
-> Example: *of all the times a team has trailed by 2 runs entering the bottom
-> of the 7th, X% went on to win.*
+Two properties matter:
 
-This is the **historical win rate** (informally, "win probability"). Two
-important properties:
+- It is **empirical** — a direct frequency count of what actually happened, not
+  a prediction from a black box. Transparent, and easy to explain.
+- It is **configurable by era** — a rate from 1995–2024 differs from one from
+  1901–1930. The user controls the year range.
 
-- It is **empirical**, not a predictive model — a direct frequency count of
-  what actually happened. That makes it transparent and easy to explain: a
-  product virtue, not a limitation.
-- It is **configurable by era.** A win rate computed from 1995–2024 differs
-  from one computed from 1901–1930. The user controls the year range (the
-  "toggle"). This is a first-class feature.
+Now extend it. Win expectancy is *one* stat conditioned on game state — and
+**every** stat can be conditioned the same way: batting average by count,
+strikeout rate against left-handers, on-base rate with a runner on second. So
+the product's depth is not a longer list of stats. It is:
 
-Later, the game state can be enriched (outs, baserunners, ballpark, teams) for
-a sharper number — see [`04-ROADMAP.md`](04-ROADMAP.md), Phase 4.
+> **A matrix — every stat × every game situation × every player, team, and
+> matchup × every era.** Millions of cells. A single game is one path through
+> it; history is every path ever walked.
 
-## Pillar 1 — The Scoreboard
+That matrix is the product. Everything below is a way to enter it, read it, or
+drill into it.
 
-**Job:** let the user find and enter any game in history.
+## The three layers
 
-| Aspect | MVP | Full vision |
-|--------|-----|-------------|
-| Browse | Pick a season; see its games in a grid | Pick any date; jump by team, series, or era |
-| Game tile | Teams, final score, date | Mini line score, a "drama score," win-prob thumbnail |
-| Filtering | By season | By team, month, postseason, close games, blowouts, comebacks |
-| Search | — | "Show me the wildest comebacks of the 1980s" |
+One product, experienced as three layers of depth — each a step further into
+the matrix. The casual fan lives on Layer 1; the curious open Layer 2; the
+stat-head disappears into Layer 3. You stop where you want.
 
-User stories:
-- *As a fan, I pick a season and see every game, so I can find one I remember.*
-- *As an explorer, I filter to "biggest comebacks" so the product shows me
-  something I didn't know to look for.*
+### Layer 1 — The Board
 
-## Pillar 2 — The Game View
+**Job:** show every game at once, and which one matters.
 
-**Job:** make a single game an emotional, contextual experience. **This is the
-wedge — the feature the product lives or dies on.**
+The home screen — a compact grid of tiles, one per game, the whole slate
+visible without scrolling. Each tile leads with **score** and **win
+expectancy**; a small diamond shows baserunners; a flag marks high-leverage
+("hot") games.
 
 | Aspect | MVP | Full vision |
 |--------|-----|-------------|
-| Replay | Step through the game inning by inning | Animate; scrub a timeline |
-| Win-prob | Historical win rate per inning, as a number and a line | Full interactive curve; tap any point for detail |
-| Context | "Teams in this spot won X%" | Comparable games, biggest swings, "what usually happens next" |
-| Interactivity | Each inning is clickable | Every team, score, and stat opens its own contextual view |
+| Coverage | Every game live or scheduled today | Any date in history; jump by team, series, era |
+| Tile | Score, inning, win expectancy, baserunner diamond | A drama/leverage score, a win-expectancy sparkline |
+| Pre-game | Head-to-head history of the two teams | Full matchup preview |
+| Sorting | By start time | By leverage — the most dramatic game first |
 
-User stories:
-- *As a fan reliving a game, at each inning I see how unusual the situation
-  was, so the game has stakes even though I know the result.*
-- *As an explorer, I tap a win-probability swing and jump straight to every
-  comparable game.*
+The Board doesn't list games; it tells you, at a glance, which one is a blowout
+and which is history in the making.
 
-The "everything interactive with its own stats" idea lives here: the Game View
-is a web of clickable entities, each a door into the Stats Explorer.
+### Layer 2 — The Game
 
-## Pillar 3 — The Stats Explorer
+**Job:** make a single game an emotional, contextual experience. **The wedge.**
 
-**Job:** let a user roam the whole dataset — "stats on stats, highly organized."
+Tap a tile. Live score and box score, wrapped in the win-expectancy story: the
+curve as it rises and falls, the swing moments, the historical echo at the
+current situation. The companion you keep open next to the game.
 
 | Aspect | MVP | Full vision |
 |--------|-----|-------------|
-| Entry point | The win-rate table: inning × score-difference grid | Any stat, any entity — teams, eras, situations |
-| Organization | One clean, sortable table | A consistent drill-down model: every value expands |
-| Cross-links | — | Every stat links to the games behind it, and back |
-| Comparison | — | Compare eras; "this season vs. historical" side by side |
+| State | Live score, count, outs, baserunners, batter/pitcher | Pitch-by-pitch scrubbing |
+| Win expectancy | The number, plus its sample size | The full interactive curve; tap any point |
+| Context | "Teams in this spot win X%" | Comparable games, biggest swings, what usually happens next |
+| Interactivity | Each entity is tappable | Every player, team, count, situation opens its own card |
 
-The design challenge here is **organization**, not raw capability. The promise
-is *highly organized* — a consistent, predictable way to go deeper that never
-overwhelms the user.
+### Layer 3 — The Deep Dive
 
-## Cross-cutting: "everything interactive"
+**Job:** let a user roam the whole matrix — every variation, beautifully.
 
-One consistent rule across all three pillars:
+Everything in the Game is a door. Tap a hitter, a pitcher, a situation, and
+fall into the situational matrix — batting average in every situation, the
+splits, the history. The depth of Baseball Savant, built for a human being.
 
-> **Every meaningful element — a game, an inning, a team, a score, a stat — is
-> a door. Clicking it opens that element's own contextual stats, with a clear
-> way back.**
+| Aspect | MVP | Full vision |
+|--------|-----|-------------|
+| Entry | The win-expectancy table (inning × score) | Any stat, any entity, any variation |
+| Reading | One slice at a time, calm | Compare a stat across a whole axis at once |
+| Cross-links | — | Every number links to the games behind it, and back |
 
-One interaction model, applied everywhere. That consistency is what makes a
-deep product feel simple.
+## The variations — what "every situation" means
 
-## Cross-cutting: the year-range toggle
+A "situation" is a coordinate in a space of roughly seven families of axes;
+every combination is a cell in the matrix:
 
-Every statistic is computed over a **user-controlled year range**:
+1. **Game state** — inning, outs, base state, score difference, count, times
+   through the order, batting-order spot.
+2. **The matchup** — batter/pitcher handedness and the pairing, the specific
+   batter and pitcher, head-to-head history, pitcher role, pitch type.
+3. **The conditions** — ballpark, home/away, day/night, weather, time of
+   season, rest.
+4. **The stakes** — leverage, regular season vs. postseason, postseason round,
+   elimination games.
+5. **The era** — historical era, rule environment, a specific year or range.
+6. **The lens** — what is measured: win expectancy, run expectancy, the
+   probability of each plate-appearance outcome, the rate stats.
+7. **The population** — whose number: the league baseline, this hitter, this
+   pitcher, the matchup, a team, a class of players.
 
-- **"This season"** — the most recent completed season.
-- **"Historical"** — a wide range, up to all of recorded history.
-- **Custom** — any span the user picks.
+Not every axis reaches equally far back — game state, handedness, and outcomes
+go deepest; pitch type, contact quality, and weather are the modern era. The
+product is honest about that (see *the yardstick*, [`07-DESIGN.md`](07-DESIGN.md)).
 
-In the MVP this can be a simple control; in the full product it is a prominent,
-always-available toggle, because comparing *this season vs. history* is one of
-the most compelling things the product can do.
+## The relevance engine
+
+The matrix has millions of cells; a screen must show only a few. Every moment,
+the product scores every candidate fact and shows the top:
+
+- **Surprise** — how far it deviates from the baseline. Flat numbers never
+  appear; deviations rise.
+- **Trust** — sample size. Thin samples are discounted; they cannot headline.
+- **Proximity** — does it bear on the imminent pitch or play?
+
+The amount shown flexes with leverage: a tie game in the 9th surfaces a lot; a
+blowout goes nearly silent. "Only relevant information on screen" is not a
+filter applied to a list — it is the natural top of this ranking. The relevance
+engine is the product's editor, and the hardest, most valuable computation in
+it.
+
+## One engine, every scale
+
+A game state is a *state* — and a state exists at every scale. The same engine
+runs at all of them; the bottom navigation is one engine at four zoom levels.
+
+| Scale | The state | The number |
+|-------|-----------|------------|
+| **Live** — a pitch / game | inning, score, matchup | Win expectancy |
+| **Standings** — a season | games up, games to play | Playoff & World Series odds |
+| **Leaders / MVP** — a race | the gap, games left | Probability of finishing first |
+| **Records** — a career pace | the pace, time remaining | Probability of reaching the milestone |
+
+Standings are win expectancy for the *season*; a pennant race is a long game;
+"records being broken" is the relevance engine at the season scale. The
+`STANDINGS`, `LEADERS`, and `MVP` screens are not plain tables — each is a
+*board*: every row alive with its probability, every row a door into its card.
+
+## The stat set
+
+Everything is win expectancy and its relatives, computed empirically:
+
+- **Win expectancy** — the spine. Every game state → the share that win.
+- **Win Probability Added (WPA)** — each play's swing in win expectancy, summed
+  per player: the live hero-and-goat of every game.
+- **Situational splits** — any rate stat (AVG, OBP, SLG, strikeout/walk rates)
+  across any axis: by count, by base state, by handedness, RISP, and so on.
+- **The matchup likelihood** — this hitter vs. this pitcher, combining the
+  hitter's rate, the pitcher's rate, and the league baseline (the established
+  odds-ratio / log5 method).
+- **Run expectancy** — expected runs from any base-out state.
+- **The rarity radar** — when the live game does something historically rare,
+  the product catches it: "no team has come back from here since 1968."
+
+## Cross-cutting rules
+
+**Everything is a door.** Every meaningful element — a game, a player, a count,
+a score, a standings row — opens its own contextual card, with a clear way
+back. One interaction model, applied everywhere ([`07-DESIGN.md`](07-DESIGN.md)).
+
+**The era toggle.** Every statistic is computed over a user-controlled year
+range — "this season," "all-time," or any custom span. Comparing this season to
+history is one of the most compelling things the product does.
+
+**Never silent.** When no game is live — the off-season, a quiet afternoon —
+the Board becomes history: "on this day," yesterday's drama, the deep dive. The
+product is alive 365 days a year.
 
 ## Personas
 
 - **The Curious Fan** — watches baseball, not a stats person. Wants stories and
-  "wow." The Game View is for her.
-- **The Stathead** — already uses FanGraphs. Wants depth and speed. The Stats
-  Explorer is for him.
+  "wow." Lives on the Board and the Game.
+- **The Stat-head** — already uses FanGraphs or Baseball Savant. Wants depth
+  and speed. Disappears into the Deep Dive.
 - **The Content Creator** *(future)* — writers, broadcasters, social accounts
-  needing fast, beautiful historical context.
-- **The Bettor** *(future, optional)* — see [`05-BUSINESS-CASE.md`](05-BUSINESS-CASE.md).
+  needing fast, beautiful context.
+- **The Bettor** *(future, optional)* — empirical base rates; a strategic fork,
+  see [`05-BUSINESS-CASE.md`](05-BUSINESS-CASE.md).
 
 ## The MVP — the smallest lovable product
 
-The smallest thing worth shipping:
+> **The Board and the Game, live, led by win expectancy.** A user opens the
+> app, sees every game on right now, taps the closest one, and watches it with
+> real historical context.
 
-> **The Scoreboard for one era of seasons, plus the Game View with an
-> inning-level historical win rate.** A user can pick a season, open a game,
-> and relive it with real historical context.
-
-That is enough to test the core question: *does the historical echo make people
-care?* The richer Stats Explorer, advanced filtering, and the deeper model all
-come **after** that question is answered.
+That is enough to test the core question: *does the live historical echo make
+people care?* The Deep Dive's full breadth, the other scales (standings,
+records), and the richest model all come **after** that question is answered.
 
 ## Out of scope for v1
 
-- Live / in-progress games
-- User accounts, saved views, social features
+- The full Deep Dive breadth (the MVP drills shallow; depth grows after)
 - Sports other than baseball
-- A predictive model (ship the empirical rate first)
+- User accounts, saved views, social features
 - Native mobile apps (responsive web first)
+- A predictive model (ship the empirical rate first)
