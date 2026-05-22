@@ -1,0 +1,13 @@
+# The Python sandbox — large, machine-specific, and rebuildable
+venv/
+
+# Downloaded data files — large, and freely re-downloadable
+data/*
+!data/.gitkeep
+
+# Python's auto-generated cache
+__pycache__/
+*.pyc
+
+# macOS clutter
+.DS_Store

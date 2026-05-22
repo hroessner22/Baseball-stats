@@ -1,0 +1,3 @@
+# Helper libraries this project needs.
+# Add one package name per line, then run:  pip install -r requirements.txt
+# (empty for now — packages will be added during Milestone 1)
