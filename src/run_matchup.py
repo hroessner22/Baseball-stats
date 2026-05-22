@@ -18,8 +18,7 @@ from src.engine.matchup import Matchup, predict_matchup
 from src.engine.rates import (
     open_rate_store,
     stored_rate_years,
-    tally_season,
-    write_season,
+    write_at_bats,
 )
 from src.ingest.download import download_event_seasons
 from src.ingest.events import OUTCOMES, load_rosters, parse_events
@@ -51,7 +50,7 @@ def ingest(conn: sqlite3.Connection) -> None:
             print(f"  {year}: could not parse — {error}")
             continue
         if at_bats:
-            write_season(conn, year, tally_season(at_bats))
+            write_at_bats(conn, year, at_bats)
             print(f"  {year}: {len(at_bats):>7,} plate appearances")
         else:
             print(f"  {year}: no event data — skipped")

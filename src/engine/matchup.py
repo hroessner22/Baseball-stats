@@ -88,18 +88,28 @@ def predict_matchup(
     start_year: int,
     end_year: int,
     regression_pa: float = REGRESSION_PA,
+    **filters,
 ) -> Matchup:
     """Look up both players over [start_year, end_year] and predict the matchup.
 
     The pitcher's throwing hand selects which of the batter's platoon splits to
     use, and the batter's side selects the pitcher's — so the prediction always
-    rests on the handedness-appropriate records.
+    rests on the handedness-appropriate records. Any extra ``filters`` (e.g.
+    ``count=(3, 1)``, ``risp=True``, ``outs=2``) are applied to all four
+    lookups for a situational prediction.
     """
-    throws = pitcher_line(conn, pitcher, start_year, end_year).hand
-    batter_rates = batter_line(conn, batter, start_year, end_year, vs_hand=throws)
+    year_range = (start_year, end_year)
+    throws = pitcher_line(conn, pitcher, year_range=year_range, **filters).hand
+    batter_rates = batter_line(
+        conn, batter, year_range=year_range, throws=throws, **filters,
+    )
     bats = batter_rates.hand
-    pitcher_rates = pitcher_line(conn, pitcher, start_year, end_year, vs_hand=bats)
-    league = league_line(conn, bats, throws, start_year, end_year)
+    pitcher_rates = pitcher_line(
+        conn, pitcher, year_range=year_range, bats=bats, **filters,
+    )
+    league = league_line(
+        conn, year_range=year_range, bats=bats, throws=throws, **filters,
+    )
 
     predicted = predict(batter_rates, pitcher_rates, league, regression_pa)
     return Matchup(
