@@ -5,10 +5,12 @@ from src.engine.rates import (
     open_rate_store,
     pitcher_line,
     query_outcomes,
+    stored_game_years,
     stored_rate_years,
     write_at_bats,
+    write_games,
 )
-from src.ingest.events import AtBat
+from src.ingest.events import AtBat, Game
 
 
 def _ab(batter="bttr", bats="R", pitcher="ptch", throws="R", outcome="OUT",
@@ -22,6 +24,21 @@ def _ab(batter="bttr", bats="R", pitcher="ptch", throws="R", outcome="OUT",
         outcome=outcome, inning=inning, half=half,
         outs=outs, bases=bases, home_lead=home_lead,
         balls=balls, strikes=strikes, sh_fl=sh_fl, sf_fl=sf_fl,
+    )
+
+
+def _game(game_id="TST202404010", year=2024, date=20240401,
+          daynight="D", home_team="HOM", away_team="AWY", park_id="PARK01",
+          temp=72, wind_speed=5, attendance=30000, sky=1,
+          day_of_week="Monday", innings=9):
+    """A Game with sensible defaults; tests override only what they need."""
+    return Game(
+        game_id=game_id, year=year, date=date,
+        day_of_week=day_of_week, start_time=1900, daynight=daynight,
+        away_team=away_team, home_team=home_team, park_id=park_id,
+        attendance=attendance, temp=temp, wind_dir=0, wind_speed=wind_speed,
+        field_cond=0, precip=0, sky=sky, game_minutes=180, innings=innings,
+        away_score=0, home_score=0,
     )
 
 
@@ -146,4 +163,79 @@ def test_stored_rate_years(tmp_path):
     write_at_bats(conn, 2022, [_ab()])
     write_at_bats(conn, 2024, [_ab()])
     assert stored_rate_years(conn) == (2022, 2024, 2)
+    conn.close()
+
+
+# ── Game-level filters (Stage 2) ────────────────────────────────────────
+
+
+def test_write_and_read_games(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_games(conn, 2024, [_game(game_id="HOM202404010", daynight="N", temp=68)])
+    assert stored_game_years(conn) == (2024, 2024, 1)
+    conn.close()
+
+
+def test_filter_by_daynight(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_games(conn, 2024, [
+        _game(game_id="HOM202404010", daynight="D"),
+        _game(game_id="HOM202404020", daynight="N"),
+    ])
+    write_at_bats(conn, 2024, [
+        _ab(game_id="HOM202404010", outcome="HR"),
+        _ab(game_id="HOM202404020", outcome="K"),
+        _ab(game_id="HOM202404020", outcome="K"),
+    ])
+    assert query_outcomes(conn, daynight="D").counts == {"HR": 1}
+    assert query_outcomes(conn, daynight="N").counts == {"K": 2}
+    conn.close()
+
+
+def test_filter_by_temperature_range(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_games(conn, 2024, [
+        _game(game_id="HOT202404010", temp=92),
+        _game(game_id="COLD202404020", temp=45),
+    ])
+    write_at_bats(conn, 2024, [
+        _ab(game_id="HOT202404010", outcome="HR"),
+        _ab(game_id="COLD202404020", outcome="OUT"),
+    ])
+    hot = query_outcomes(conn, temp_range=(80, 100))
+    cold = query_outcomes(conn, temp_range=(0, 60))
+    assert hot.counts == {"HR": 1}
+    assert cold.counts == {"OUT": 1}
+    conn.close()
+
+
+def test_filter_by_home_team(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_games(conn, 2024, [
+        _game(game_id="NYA202404010", home_team="NYA"),
+        _game(game_id="LAN202404020", home_team="LAN"),
+    ])
+    write_at_bats(conn, 2024, [
+        _ab(game_id="NYA202404010", batter="judge", outcome="HR"),
+        _ab(game_id="LAN202404020", batter="judge", outcome="K"),
+    ])
+    judge_at_yankee = batter_line(conn, "judge", home_team="NYA")
+    assert judge_at_yankee.counts == {"HR": 1}
+    conn.close()
+
+
+def test_at_bats_without_games_still_work(tmp_path):
+    # If games are not yet ingested, at-bat-only queries still work — the
+    # LEFT JOIN supplies NULLs that non-game filters don't constrain.
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_at_bats(conn, 2024, [_ab(batter="judge", outcome="HR")])
+    assert batter_line(conn, "judge").counts == {"HR": 1}
+    conn.close()
+
+
+def test_write_games_is_idempotent(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_games(conn, 2024, [_game(game_id="X1")])
+    write_games(conn, 2024, [_game(game_id="X1")])
+    assert stored_game_years(conn) == (2024, 2024, 1)
     conn.close()

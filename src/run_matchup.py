@@ -19,9 +19,10 @@ from src.engine.rates import (
     open_rate_store,
     stored_rate_years,
     write_at_bats,
+    write_games,
 )
 from src.ingest.download import download_event_seasons
-from src.ingest.events import OUTCOMES, load_rosters, parse_events
+from src.ingest.events import OUTCOMES, load_rosters, parse_events, parse_games
 
 FIRST_SEASON = 1910
 LAST_SEASON = 2024
@@ -46,12 +47,14 @@ def ingest(conn: sqlite3.Connection) -> None:
     ):
         try:
             at_bats = parse_events(events_dir, year)
+            games = parse_games(events_dir, year)
         except Exception as error:  # one bad season must not stop the run
             print(f"  {year}: could not parse — {error}")
             continue
         if at_bats:
             write_at_bats(conn, year, at_bats)
-            print(f"  {year}: {len(at_bats):>7,} plate appearances")
+            write_games(conn, year, games)
+            print(f"  {year}: {len(at_bats):>7,} PA, {len(games):>5,} games")
         else:
             print(f"  {year}: no event data — skipped")
 
