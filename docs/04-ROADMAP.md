@@ -67,8 +67,9 @@ a single season to all of history — in seconds.
 **Goal:** the first thing a real user can touch. **The validation milestone.**
 
 **Deliverables:**
-- A Streamlit app with the **Scoreboard** (pick a season → see games) and the
-  **Game View** (open a game → inning-by-inning historical win rate).
+- A web app with the **Scoreboard** (pick a season → see games) and the
+  **Game View** (open a game → inning-by-inning historical win rate) — frontend
+  on **Cloudflare Pages**, API on **Cloudflare Workers**, data in **Supabase**.
 - Deployed to a public URL.
 - Put in front of 5–20 real baseball fans; reactions gathered.
 
@@ -97,7 +98,8 @@ it and back, without getting lost.
 **Goal:** the real, polished product — the MLB.com-grade vision.
 
 **Deliverables:**
-- Rebuild the frontend in Next.js/React; move data to Supabase.
+- Harden the Phase 3 app into the production product — same stack (Cloudflare
+  Pages + Workers + Supabase), now polished.
 - The full "everything interactive" interaction model.
 - Visual design / branding; user accounts.
 - Performance, analytics, error monitoring.
@@ -134,5 +136,6 @@ early growth. Not before. Full reasoning in
    until a real user touches it.
 2. **Let user feedback drive Phase 4+.** The roadmap past Phase 3 is a
    hypothesis; real reactions rewrite it.
-3. **Don't build Phase 5 infrastructure during Phase 1.** Small data, simple
-   tools, until the product earns more.
+3. **Don't stand up the product stack during Phase 1.** The engine (Phases 1–2)
+   is just local Python — no hosting, no database — until there is something to
+   deploy.

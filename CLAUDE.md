@@ -18,6 +18,20 @@ Full vision: `docs/` — start with `docs/01-VISION.md`.
   yet.** Implementation begins at Phase 1 (`docs/04-ROADMAP.md`).
 - Repository: https://github.com/hroessner22/Baseball-stats
 
+## Tech stack
+
+GitHub + Cloudflare + Supabase — the standard stack for this project.
+
+- **Source & CI:** GitHub.
+- **Database & backend:** Supabase (hosted Postgres) — all data, auth, storage.
+- **API / compute:** Cloudflare Workers.
+- **Frontend hosting:** Cloudflare Pages — all deployments.
+
+The win-rate engine (Phases 1–2) is local Python that deploys nowhere. The
+product (Phase 3 onward) is a Cloudflare Pages frontend and a Cloudflare
+Workers API over data in Supabase. Don't introduce other hosts or databases
+without asking. Detail: `docs/03-ARCHITECTURE.md`.
+
 ## Repository structure
 
 ```
