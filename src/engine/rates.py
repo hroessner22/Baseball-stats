@@ -2,21 +2,26 @@
 
 Every parsed plate appearance is kept in a SQLite table (``at_bats``) with all
 of its situational fields — handedness, count, base-out state, inning, score
-margin, and the sacrifice flags. Queries roll up outcome counts under any
+margin, and the sacrifice flags. A parallel ``games`` table carries one row
+per game — schedule, park, weather, attendance, summary score — joined to
+``at_bats`` by ``game_id``. Queries roll up outcome counts under any
 combination of filters; the matchup engine builds on these.
 
 Filters accepted by ``query_outcomes`` / ``batter_line`` / ``pitcher_line`` /
 ``league_line``:
 
-  exact match    batter, pitcher, bats, throws, half, inning, outs, balls,
+  at-bat exact   batter, pitcher, bats, throws, half, inning, outs, balls,
                  strikes
-  bases          int or tuple of ints (0-7 — the base-out code)
-  risp           True → bases in {2, 3, 4, 5, 6, 7} (runner on 2B or 3B)
-  count          (balls, strikes) — e.g. (3, 1) for a 3-1 count
-  year_range     (low, high) — inclusive
-  date_range     (low, high) — YYYYMMDD ints
-  home_lead_range  (low, high) — score margin from the home team's view
-  sh_fl, sf_fl   bool — sacrifice hit / fly
+  at-bat bases   int or tuple of ints (0-7 — the base-out code)
+  at-bat risp    True → bases in {2, 3, 4, 5, 6, 7} (runner on 2B or 3B)
+  at-bat count   (balls, strikes) — e.g. (3, 1) for a 3-1 count
+  at-bat ranges  year_range, date_range, home_lead_range
+  at-bat sacs    sh_fl, sf_fl (bool)
+
+  game exact     daynight ("D"/"N"), home_team, away_team, park_id,
+                 day_of_week, sky, precip, field_cond, wind_dir
+  game ranges    temp_range, wind_speed_range, attendance_range,
+                 innings_range, start_time_range, game_minutes_range
 """
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.ingest.events import AtBat
+from src.ingest.events import AtBat, Game
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS at_bats (
@@ -49,6 +54,33 @@ CREATE TABLE IF NOT EXISTS at_bats (
 CREATE INDEX IF NOT EXISTS idx_at_bats_batter  ON at_bats (batter, year);
 CREATE INDEX IF NOT EXISTS idx_at_bats_pitcher ON at_bats (pitcher, year);
 CREATE INDEX IF NOT EXISTS idx_at_bats_game    ON at_bats (game_id);
+
+CREATE TABLE IF NOT EXISTS games (
+    game_id       TEXT    PRIMARY KEY,
+    year          INTEGER NOT NULL,
+    date          INTEGER NOT NULL,
+    day_of_week   TEXT,
+    start_time    INTEGER,
+    daynight      TEXT,
+    away_team     TEXT,
+    home_team     TEXT,
+    park_id       TEXT,
+    attendance    INTEGER,
+    temp          INTEGER,
+    wind_dir      INTEGER,
+    wind_speed    INTEGER,
+    field_cond    INTEGER,
+    precip        INTEGER,
+    sky           INTEGER,
+    game_minutes  INTEGER,
+    innings       INTEGER,
+    away_score    INTEGER,
+    home_score    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_games_year      ON games (year);
+CREATE INDEX IF NOT EXISTS idx_games_date      ON games (date);
+CREATE INDEX IF NOT EXISTS idx_games_home_team ON games (home_team);
+CREATE INDEX IF NOT EXISTS idx_games_park      ON games (park_id);
 """
 
 
@@ -69,7 +101,7 @@ class RateLine:
 
 
 def open_rate_store(path: Path) -> sqlite3.Connection:
-    """Open the at-bats store, creating the file, table, and indexes."""
+    """Open the store, creating the file, tables, and indexes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.executescript(_SCHEMA)
@@ -103,21 +135,74 @@ def write_at_bats(
     conn.commit()
 
 
+def write_games(
+    conn: sqlite3.Connection, year: int, games: list[Game]
+) -> None:
+    """Persist one season's game records.
+
+    Existing rows for the year are deleted first, so re-ingesting a season is
+    idempotent.
+    """
+    conn.execute("DELETE FROM games WHERE year = ?", (year,))
+    conn.executemany(
+        "INSERT OR REPLACE INTO games "
+        "(game_id, year, date, day_of_week, start_time, daynight, "
+        " away_team, home_team, park_id, attendance, "
+        " temp, wind_dir, wind_speed, field_cond, precip, sky, "
+        " game_minutes, innings, away_score, home_score) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                g.game_id, year, g.date, g.day_of_week, g.start_time,
+                g.daynight, g.away_team, g.home_team, g.park_id, g.attendance,
+                g.temp, g.wind_dir, g.wind_speed, g.field_cond, g.precip,
+                g.sky, g.game_minutes, g.innings, g.away_score, g.home_score,
+            )
+            for g in games
+        ],
+    )
+    conn.commit()
+
+
 def stored_rate_years(
     conn: sqlite3.Connection,
 ) -> tuple[int | None, int | None, int]:
-    """Return (earliest year, latest year, distinct year count) in the store."""
+    """Return (earliest year, latest year, distinct year count) in ``at_bats``."""
     low, high, count = conn.execute(
         "SELECT MIN(year), MAX(year), COUNT(DISTINCT year) FROM at_bats"
     ).fetchone()
     return low, high, count
 
 
-# Filter keys that translate to ``column = ?``.
-_EXACT_FILTERS = (
+def stored_game_years(
+    conn: sqlite3.Connection,
+) -> tuple[int | None, int | None, int]:
+    """Return (earliest year, latest year, distinct year count) in ``games``."""
+    low, high, count = conn.execute(
+        "SELECT MIN(year), MAX(year), COUNT(DISTINCT year) FROM games"
+    ).fetchone()
+    return low, high, count
+
+
+# Filter keys that translate to ``at_bats.column = ?``.
+_AT_BAT_EXACT = (
     "batter", "pitcher", "bats", "throws", "half",
     "inning", "outs", "balls", "strikes",
 )
+# Filter keys that translate to ``games.column = ?``.
+_GAME_EXACT = (
+    "daynight", "home_team", "away_team", "park_id", "day_of_week",
+    "sky", "precip", "field_cond", "wind_dir",
+)
+# Game-level range filters: maps filter key → games column.
+_GAME_RANGES = {
+    "temp_range": "temp",
+    "wind_speed_range": "wind_speed",
+    "attendance_range": "attendance",
+    "innings_range": "innings",
+    "start_time_range": "start_time",
+    "game_minutes_range": "game_minutes",
+}
 
 
 def _build_where(filters: dict) -> tuple[list[str], list]:
@@ -127,41 +212,48 @@ def _build_where(filters: dict) -> tuple[list[str], list]:
     for key, value in filters.items():
         if value is None:
             continue
-        if key in _EXACT_FILTERS:
-            parts.append(f"{key} = ?")
+        if key in _AT_BAT_EXACT:
+            parts.append(f"at_bats.{key} = ?")
+            params.append(value)
+        elif key in _GAME_EXACT:
+            parts.append(f"games.{key} = ?")
             params.append(value)
         elif key == "bases":
             if isinstance(value, int):
-                parts.append("bases = ?")
+                parts.append("at_bats.bases = ?")
                 params.append(value)
             else:
                 placeholders = ",".join("?" * len(value))
-                parts.append(f"bases IN ({placeholders})")
+                parts.append(f"at_bats.bases IN ({placeholders})")
                 params.extend(value)
         elif key == "risp" and value:
             # Runner in scoring position — any base-out code with 2B or 3B set.
-            parts.append("bases >= 2")
+            parts.append("at_bats.bases >= 2")
         elif key == "count":
             balls, strikes = value
-            parts.append("balls = ?")
+            parts.append("at_bats.balls = ?")
             params.append(balls)
-            parts.append("strikes = ?")
+            parts.append("at_bats.strikes = ?")
             params.append(strikes)
         elif key == "year_range":
             lo, hi = value
-            parts.append("year BETWEEN ? AND ?")
+            parts.append("at_bats.year BETWEEN ? AND ?")
             params.extend([lo, hi])
         elif key == "date_range":
             lo, hi = value
-            parts.append("date BETWEEN ? AND ?")
+            parts.append("at_bats.date BETWEEN ? AND ?")
             params.extend([lo, hi])
         elif key == "home_lead_range":
             lo, hi = value
-            parts.append("home_lead BETWEEN ? AND ?")
+            parts.append("at_bats.home_lead BETWEEN ? AND ?")
             params.extend([lo, hi])
         elif key in ("sh_fl", "sf_fl"):
-            parts.append(f"{key} = ?")
+            parts.append(f"at_bats.{key} = ?")
             params.append(1 if value else 0)
+        elif key in _GAME_RANGES:
+            lo, hi = value
+            parts.append(f"games.{_GAME_RANGES[key]} BETWEEN ? AND ?")
+            params.extend([lo, hi])
         else:
             raise ValueError(f"unknown filter: {key!r}")
     return parts, params
@@ -178,18 +270,22 @@ def _one_hand(hands: set[str]) -> str:
     return "B" if hands else ""
 
 
+# Every query joins the at-bats to their games — LEFT JOIN, so at-bats without
+# a corresponding game record (e.g. before games are ingested) still appear in
+# results that don't filter on game fields.
+_FROM = "FROM at_bats LEFT JOIN games ON at_bats.game_id = games.game_id"
+
+
 def query_outcomes(conn: sqlite3.Connection, **filters) -> RateLine:
     """Sum outcomes across every at-bat that matches the given filters.
 
-    See the module docstring for the accepted filter keys. Returns a
-    ``RateLine`` without a player hand (use ``batter_line``/``pitcher_line``
-    when that matters).
+    See the module docstring for the accepted filter keys.
     """
     where_parts, params = _build_where(filters)
-    sql = "SELECT outcome, COUNT(*) FROM at_bats"
+    sql = f"SELECT at_bats.outcome, COUNT(*) {_FROM}"
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
-    sql += " GROUP BY outcome"
+    sql += " GROUP BY at_bats.outcome"
     counts: dict[str, int] = {}
     for outcome, total in conn.execute(sql, params):
         counts[outcome] = total
@@ -206,9 +302,9 @@ def batter_line(
     """
     where_parts, params = _build_where({**filters, "batter": batter})
     sql = (
-        "SELECT bats, outcome, COUNT(*) FROM at_bats "
+        f"SELECT at_bats.bats, at_bats.outcome, COUNT(*) {_FROM} "
         f"WHERE {' AND '.join(where_parts)} "
-        "GROUP BY bats, outcome"
+        "GROUP BY at_bats.bats, at_bats.outcome"
     )
     counts: dict[str, int] = {}
     hands: set[str] = set()
@@ -224,9 +320,9 @@ def pitcher_line(
     """A pitcher's outcome counts, with any additional filters."""
     where_parts, params = _build_where({**filters, "pitcher": pitcher})
     sql = (
-        "SELECT throws, outcome, COUNT(*) FROM at_bats "
+        f"SELECT at_bats.throws, at_bats.outcome, COUNT(*) {_FROM} "
         f"WHERE {' AND '.join(where_parts)} "
-        "GROUP BY throws, outcome"
+        "GROUP BY at_bats.throws, at_bats.outcome"
     )
     counts: dict[str, int] = {}
     hands: set[str] = set()

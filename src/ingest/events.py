@@ -85,20 +85,20 @@ class AtBat:
     sf_fl: bool       # sacrifice fly (separates sac flies from in-play outs)
 
 
-def _cwevent_path() -> str:
-    """Locate the Chadwick ``cwevent`` executable.
+def _chadwick_tool(name: str) -> str:
+    """Locate a Chadwick executable (``cwevent``, ``cwgame``, …).
 
     Looks on the PATH first, then in the usual Homebrew locations. Raises a
     clear error — naming the install command — when it cannot be found.
     """
-    found = shutil.which("cwevent")
+    found = shutil.which(name)
     if found:
         return found
-    for candidate in ("/opt/homebrew/bin/cwevent", "/usr/local/bin/cwevent"):
+    for candidate in (f"/opt/homebrew/bin/{name}", f"/usr/local/bin/{name}"):
         if Path(candidate).exists():
             return candidate
     raise FileNotFoundError(
-        "cwevent (Chadwick) not found. Install it with 'brew install chadwick' "
+        f"{name} (Chadwick) not found. Install it with 'brew install chadwick' "
         "on macOS, or see https://chadwick.readthedocs.io."
     )
 
@@ -164,7 +164,7 @@ def parse_events(events_dir: Path, year: int) -> list[AtBat]:
     # cwevent reads the roster files from its working directory, so it must be
     # run there. -f 0-35 selects the columns indexed by the constants above.
     result = subprocess.run(
-        [_cwevent_path(), "-y", str(year), "-f", _FIELD_RANGE, *event_files],
+        [_chadwick_tool("cwevent"), "-y", str(year), "-f", _FIELD_RANGE, *event_files],
         cwd=events_dir,
         capture_output=True,
         text=True,
@@ -191,3 +191,114 @@ def load_rosters(events_dir: Path) -> dict[str, str]:
                 if len(row) >= 3:
                     names[row[0]] = f"{row[2]} {row[1]}"
     return names
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Game-level data (cwgame) — weather, day/night, park, attendance, scores.
+# ──────────────────────────────────────────────────────────────────────────
+
+# cwgame output columns we read, by index.
+_G_GAME_ID = 0
+_G_DATE = 1             # "YYYYMMDD"
+_G_DAY_OF_WEEK = 3      # "Monday" .. "Sunday"
+_G_START_TIME = 4       # HHMM (0 = unknown)
+_G_DAYNIGHT = 6         # "D" / "N" / "" (unknown)
+_G_AWAY_TEAM = 7
+_G_HOME_TEAM = 8
+_G_PARK_ID = 9          # stadium id (e.g. "ANA01")
+_G_ATTENDANCE = 18
+_G_TEMP = 26            # F, 0 = unknown
+_G_WIND_DIR = 27        # code 0-8 (0 = unknown)
+_G_WIND_SPEED = 28      # mph
+_G_FIELD_COND = 29      # code 0-4
+_G_PRECIP = 30          # code 0-5
+_G_SKY = 31             # code 0-5
+_G_GAME_MINUTES = 32
+_G_INNINGS = 33
+_G_AWAY_SCORE = 34
+_G_HOME_SCORE = 35
+_G_FIELD_RANGE = "0-35"
+
+
+@dataclass(frozen=True)
+class Game:
+    """One game's metadata — schedule, park, weather, summary scores."""
+
+    game_id: str
+    year: int
+    date: int           # YYYYMMDD
+    day_of_week: str    # "Monday" through "Sunday"
+    start_time: int     # HHMM; 0 = unknown
+    daynight: str       # "D", "N", or "" (unknown)
+    away_team: str
+    home_team: str
+    park_id: str        # the stadium id (e.g. "ANA01")
+    attendance: int
+    temp: int           # F; 0 = unknown
+    wind_dir: int       # code 0-8
+    wind_speed: int     # mph
+    field_cond: int     # code 0-4
+    precip: int         # code 0-5
+    sky: int            # code 0-5
+    game_minutes: int
+    innings: int
+    away_score: int
+    home_score: int
+
+
+def _maybe_int(value: str) -> int:
+    """Parse ``value`` as int, returning 0 on empty or malformed input."""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
+
+
+def parse_games(events_dir: Path, year: int) -> list[Game]:
+    """Parse one season's Retrosheet event files into game records.
+
+    Runs Chadwick's ``cwgame`` over the .EV* files in ``events_dir``; one row
+    per game, carrying the schedule, park, weather, and final score.
+    """
+    event_files = sorted(
+        path.name for path in events_dir.iterdir()
+        if path.suffix.upper().startswith(".EV")
+    )
+    if not event_files:
+        return []
+
+    result = subprocess.run(
+        [_chadwick_tool("cwgame"), "-y", str(year),
+         "-f", _G_FIELD_RANGE, *event_files],
+        cwd=events_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    games: list[Game] = []
+    for row in csv.reader(result.stdout.splitlines()):
+        if len(row) <= _G_HOME_SCORE:
+            continue
+        games.append(Game(
+            game_id=row[_G_GAME_ID],
+            year=year,
+            date=_maybe_int(row[_G_DATE]),
+            day_of_week=row[_G_DAY_OF_WEEK],
+            start_time=_maybe_int(row[_G_START_TIME]),
+            daynight=row[_G_DAYNIGHT],
+            away_team=row[_G_AWAY_TEAM],
+            home_team=row[_G_HOME_TEAM],
+            park_id=row[_G_PARK_ID],
+            attendance=_maybe_int(row[_G_ATTENDANCE]),
+            temp=_maybe_int(row[_G_TEMP]),
+            wind_dir=_maybe_int(row[_G_WIND_DIR]),
+            wind_speed=_maybe_int(row[_G_WIND_SPEED]),
+            field_cond=_maybe_int(row[_G_FIELD_COND]),
+            precip=_maybe_int(row[_G_PRECIP]),
+            sky=_maybe_int(row[_G_SKY]),
+            game_minutes=_maybe_int(row[_G_GAME_MINUTES]),
+            innings=_maybe_int(row[_G_INNINGS]),
+            away_score=_maybe_int(row[_G_AWAY_SCORE]),
+            home_score=_maybe_int(row[_G_HOME_SCORE]),
+        ))
+    return games
