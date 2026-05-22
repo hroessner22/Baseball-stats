@@ -1,107 +1,148 @@
 # 01 — Vision
 
-*Baseball-stats (working title) · Draft v1 · May 2026*
+*Baseball-stats (working title) · Draft v2 · May 2026*
 
 ## One-line pitch
 
-**A living, interactive encyclopedia of baseball — where every game in history
-can be explored with the historical context that makes it meaningful.**
+**A live companion for baseball. Every game in progress, each led by its score
+and a win probability counted from 150 years of history — so you can see, in
+one glance, which game matters and why.**
 
 ## The problem
 
-Baseball has the deepest, best-recorded history of any sport on earth. Every
-game played since 1871 — over 230,000 of them — is documented, inning by inning.
+On any given night, a dozen baseball games are in progress. Every scoreboard on
+earth will tell you the score of each one.
 
-And yet that history is **inert**. It lives in:
+None of them tells you the thing you actually want to know: **which game should
+I be watching, and how much does this moment matter?**
 
-- dense statistical tables built for analysts, not explorers;
-- archives and spreadsheets that assume you already know what you want;
-- the memories of fans, with no easy way to verify, compare, or relive.
+A 5–0 lead in the 9th and a 5–4 lead in the 9th look almost identical on a
+scoreboard — same inning, same team ahead. One game is effectively decided; the
+other can still go either way. The score cannot tell them apart. A win
+probability, drawn from every comparable game in history, can — and that
+difference is the whole story no product surfaces.
 
-When a team falls behind by three runs in the 8th inning, a question naturally
-forms: *"Has anyone ever come back from this?"* Today, answering that is
-genuinely hard. The data exists — but no product makes it feel **alive,
-immediate, and explorable.**
+The data to close that gap exists. But today it is split in two:
+
+- **Scoreboards** (MLB.com, ESPN) are live and friendly — and shallow. They
+  show the score, not the stakes.
+- **Analytics tools** (Baseball Savant, FanGraphs) are deep — and built for
+  analysts. A wall of numbers a normal fan will not wade into.
+
+Nobody has fused them. Nobody has made *live, history-grounded context*
+something a regular fan can simply feel.
 
 ## The insight
 
-Every moment in a baseball game has thousands of historical echoes — past games
-that passed through the exact same situation: the score, the inning, who was
-ahead.
+Every moment of every game has thousands of historical echoes — past games that
+passed through the exact same situation: this inning, this score, this matchup.
 
-Surface that echo instantly and beautifully — *"teams trailing by 3 entering
-the 8th have come back to win 14% of the time"* — and you turn a raw number
-into **story, drama, and understanding.** That single statistic is context,
-suspense, and education at once.
+Count them, and you get a **win probability**: *of every team that has ever
+stood exactly here, this share went on to win.* It is empirical — a direct
+frequency count of what truly happened — not a prediction from a black box.
 
-That echo is the heart of this product.
+That single number is the most powerful thing in the sport, because it does
+three jobs at once:
+
+1. **It measures drama.** A win probability near 50% late in a game *is* a
+   nail-biter, by definition. The number tells you what to watch.
+2. **It carries emotion.** *"Teams trailing by three in the 8th come back 14%
+   of the time"* turns a score into suspense — live, while it is still
+   undecided.
+3. **It is a door into history.** The number exists only *because* of 150 years
+   of games. Touch it, and the whole archive opens behind it.
+
+So we lead with it. Score and win probability, on every game, front and center.
+Everything else in the product hangs off that one number.
 
 ## What we're building
 
-An interactive platform with **three connected pillars**:
+One product, experienced in **three layers of depth** — each a step further in,
+all anchored on win probability.
 
-### 1. The Scoreboard
-A visual board of games — like the scoreboard on MLB.com — but for any date in
-baseball history. Browse a day, a season, a team. Every game is a tile you can
-open.
+### Layer 1 — The Board
+The front door: every game on right now, plus every game scheduled today, as a
+living grid of tiles. Each tile leads with the **score** and the **win
+probability** — and, before first pitch, the head-to-head history of the two
+teams. The Board does not just list games; it tells you instantly which one is a
+blowout and which one is history in the making.
 
-### 2. The Game View
-Open any game and watch it unfold inning by inning, with **live historical
-context** at every step: the win probability, how the game compares to history,
-the moments that mattered. This is the emotional core of the product.
+### Layer 2 — The Game
+Tap any game. Live score and box score — but wrapped in the win-probability
+story: the curve as it rises and falls, the swing moments, the historical echo
+at the current situation. This is the live companion — the thing you keep open
+next to the game itself.
 
-### 3. The Stats Explorer
-A deeply organized, interactive space to travel through the data itself —
-historical stats and season stats, every value clickable, every view leading
-naturally to the next. "Stats on stats," highly organized.
+### Layer 3 — The Deep Dive
+Everything in the Game is a door. Tap a hitter, a team, a situation, and fall
+into the deep-stats world — batting average in *every* situation, the splits,
+the history, the full picture. As much depth as Baseball Savant holds — but
+beautiful, browsable, and built for a human being rather than an analyst.
 
-These are not three separate apps. They are one connected experience: the
-Scoreboard leads into a Game; a moment in the Game leads into the Stats
-Explorer; a stat in the Explorer leads back to the games that produced it.
+You can stop at any layer. A casual fan lives on the Board; a curious one opens
+a Game; a stat-head disappears into the Deep Dive. Win probability is the thread
+that ties all three together.
 
 ## The experience (a vignette)
 
-> A fan opens the platform and picks October 2016. The Scoreboard shows that
-> postseason. She opens Game 7 of the World Series. The Game View replays it
-> inning by inning — and as the score swings, a quiet line of context appears:
-> *"Teams leading after 6 have won 81% of the time."* The number climbs, then
-> the rain delay, then the swing. She taps the win-probability line, and the
-> Stats Explorer opens every comparable comeback in history. Twenty minutes
-> later she has fallen down a century-deep rabbit hole — and loved every second.
+> It is a Saturday in July; nine games are in progress. A fan opens the app to
+> the Board. Eight tiles are calm — and one is lit up: a 4–4 game, bottom of the
+> 8th, win probability swinging between 46% and 61% pitch to pitch. She taps it.
+>
+> The Game opens. The win-probability curve looks like a heartbeat. A line
+> reads: *"Teams tied entering the 9th at home win 53% of the time."* The batter
+> steps in; she taps his name and drops into the Deep Dive — he hits .311, but
+> .347 with a runner on second. She surfaces just in time to watch him line one
+> into the gap. The curve spikes. Twenty minutes later she is still there — and
+> she opened the app for a single tile.
 
-That feeling — *history made explorable* — is the product.
+That pull — *the score told me to look, the history told me why it mattered* —
+is the product.
+
+## Positioning
+
+> **We live in the gap between ESPN and Baseball Savant.**
+
+ESPN is friendly but shallow. Baseball Savant is deep but built for analysts.
+Nobody owns *deep* **and** *beautiful* **and** *in-the-moment* — and neither
+incumbent can move into that gap without betraying its own model: ESPN lives on
+breadth and ad views; Savant is MLB's tool for analysts. The gap is structural.
+That gap is the company.
 
 ## The north star
 
-> **Every game. Every stat. Every moment. Explorable, interactive, and alive.**
+> **Open it during any game, and instantly feel exactly how much this moment
+> matters.**
 
-In the long run this need not be only baseball, and not only historical. The
-same engine — *surface the historical echo of any live situation* — extends to
-other sports and to live games. **Baseball history is the wedge, not the
-ceiling.**
+Baseball is the start, not the boundary. The engine — *surface the historical
+echo of any live situation* — is the same for basketball, football, and soccer.
+**Baseball is the wedge; live sports made meaningful is the ceiling.**
 
 ## Principles
 
-1. **Context over raw numbers.** A number alone is trivia. A number *in
-   context* is insight. Always show the echo.
-2. **Interactive by default.** Every element is a door to somewhere deeper.
-3. **Beautiful and accessible.** Powerful enough for a stathead, inviting
-   enough for a casual fan. Not another wall of tables.
-4. **Honest data.** Our statistics are empirical and transparent — derived
-   directly from what actually happened, not a black box.
-5. **Depth is the moat.** 150 years of history, organized so well it feels
-   effortless, is hard to copy.
+1. **Lead with the one number.** Score and win probability come first,
+   everywhere. The product has a spine, and that is it.
+2. **Context over raw numbers.** A number alone is trivia; a number against
+   history is a story. Always show the echo.
+3. **Everything is a door.** Every game, player, team, and situation opens
+   something deeper — with a clear way back.
+4. **Beautiful, or it doesn't count.** The depth already exists elsewhere; our
+   job is to be the first place a normal fan actually enjoys reaching it.
+5. **Honest data.** Our numbers are empirical — counted from what truly
+   happened, transparent and explainable. Never a black box.
 
-## What this is *not* (for now)
+## What this is *not*
 
-- **Not a betting product.** Win probability has obvious betting adjacency;
-  that is a deliberate strategic *option* (see the business case), not the v1
-  identity.
-- **Not a live in-game product first.** We start with history, where the data
-  is complete and free. Live games come later.
-- **Not another dense analytics table.** Baseball-Reference and FanGraphs
-  already serve analysts superbly. We build for *exploration and engagement* —
-  a different job.
+- **Not a scoreboard.** We show scores, but we are not competing to be your
+  source of record. We are the companion you open *because the score alone is
+  not enough.*
+- **Not another analytics wall.** Baseball Savant and FanGraphs serve analysts
+  superbly; we serve the fan who wants that depth without the barrier.
+- **Not a betting product.** Live win probability sits close to betting — a
+  deliberate strategic *option* (see the business case), not the v1 identity.
+- **Not everything at once.** The vision is three layers and, one day, every
+  sport. The *first build* is one layer — the Board, a handful of live games,
+  win probability done beautifully. Depth and breadth are earned after that.
 
 ## Related documents
 
