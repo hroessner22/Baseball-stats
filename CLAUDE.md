@@ -15,11 +15,15 @@ Full vision: `docs/` — start with `docs/01-VISION.md`.
 
 ## Current state
 
-- **Phases 1–2 complete** — the win-expectancy engine: it ingests 132 seasons
-  of Retrosheet history into a SQLite store and produces the win-expectancy
-  table for any era. Code in `src/`, tests in `tests/`.
-- **Next: Phase 3** — the live MVP (`docs/04-ROADMAP.md`).
-- Repository: https://github.com/hroessner22/Baseball-stats
+Two historical engines are built and tested (code in `src/`, tests in `tests/`):
+
+- the **win-expectancy engine** (Phases 1–2) — inning and score → the home
+  team's win %, from 132 seasons of Retrosheet game logs.
+- the **matchup engine** — batter vs. pitcher → a predicted outcome
+  distribution, from play-by-play (1910–2024), with handedness splits.
+
+**Next: Phase 3** — the live MVP (`docs/04-ROADMAP.md`).
+Repository: https://github.com/hroessner22/Baseball-stats
 
 ## Tech stack
 
@@ -64,6 +68,9 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+The matchup engine also needs **Chadwick** to parse Retrosheet play-by-play —
+`brew install chadwick` on macOS (https://chadwick.readthedocs.io).
+
 `venv/` and `data/` are git-ignored — never commit them.
 
 ## Conventions
@@ -76,10 +83,11 @@ pip install -r requirements.txt
 
 ## Running it
 
-- The engine: `python -m src.run_phase2` ingests all of history and prints the
-  win-expectancy table; `python -m src.run_phase1` is the single-season proof
-  of concept.
-- The tests: `pytest`.
+- `python -m src.run_phase2` — the win-expectancy engine (all of history).
+- `python -m src.run_matchup` — the matchup engine (play-by-play; batter-vs-
+  pitcher predictions). Needs Chadwick — see below.
+- `python -m src.run_phase1` — the single-season win-expectancy proof of concept.
+- `pytest` — the tests.
 
 Next up is Phase 3 — the live MVP (`docs/04-ROADMAP.md`).
 

@@ -11,16 +11,21 @@
 
 ```
 Phase 0   Foundation                ✅ complete
-Phase 1   The Engine (PoC)          ← Milestone 1 — current focus
-Phase 2   The Historical Engine
+Phase 1   The Engine (PoC)          ✅ complete
+Phase 2   The Historical Engine     ✅ complete
 Phase 3   The Live MVP  ──────────── first real users; validate the idea
-Phase 4   The Deep Dive
+Phase 4   The Deep Dive             ◐ matchup engine built; UI remains
 Phase 5   Production & every scale    first investor-ready product
 Phase 6   Growth & monetization
 ```
 
 The most important line is **Phase 3.** Everything before it is setup;
-everything after depends on what real users do. **Get to Phase 3 fast.**
+everything after depends on what real users do.
+
+**Plan reordered:** at the founder's direction, the historical depth came
+first — Phase 4's data engine (play-by-play ingestion and the batter-vs-pitcher
+matchup engine) was built ahead of Phase 3. The live MVP now launches on top of
+both engines, and Phase 3 is the next milestone.
 
 ## Phase 0 — Foundation ✅
 
@@ -32,8 +37,7 @@ everything after depends on what real users do. **Get to Phase 3 fast.**
 
 ## Phase 1 — The Engine (Proof of Concept)
 
-**Goal:** prove the core computation on real data. *(This is Milestone 1 — the
-current focus.)*
+**Goal:** prove the core computation on real data. **Status: complete.**
 
 **Deliverables:**
 - Download one season of Retrosheet game logs.
@@ -51,6 +55,7 @@ foundation before anything else is built on it.
 ## Phase 2 — The Historical Engine
 
 **Goal:** all of history — win expectancy for any game state, any era.
+**Status: complete.**
 
 **Deliverables:**
 - Ingest all available seasons of Retrosheet game logs.
@@ -84,12 +89,16 @@ them come back tomorrow.
 
 ## Phase 4 — The Deep Dive
 
-**Goal:** depth — the full situational matrix — once Phase 3 proves people care.
+**Goal:** depth — the full situational matrix.
+
+**The data engine is already built** (ahead of Phase 3): play-by-play ingestion
+via the Chadwick tooling, and the batter-vs-pitcher matchup engine — the
+odds-ratio / log5 method with handedness splits, over 1910–2024.
 
 **Deliverables:**
-- Ingest the Retrosheet play-by-play event files (the Chadwick tooling).
-- The **situational splits** — by count, base state, handedness, RISP — and the
-  **matchup likelihood** (the odds-ratio / log5 method).
+- ✅ Ingest the Retrosheet play-by-play event files (the Chadwick tooling).
+- The **situational splits** — handedness is done; by count, base state, and
+  RISP remain — and ✅ the **matchup likelihood** (the odds-ratio / log5 method).
 - The **relevance engine** in full — surfacing only what matters, per moment.
 - The **Deep Dive** UI — the recursive card, point and axis modes.
 

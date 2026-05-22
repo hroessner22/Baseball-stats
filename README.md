@@ -11,14 +11,14 @@ matrix.
 
 ## What's in this repository right now
 
-The repo holds the **vision and planning documentation** and the **win-
-expectancy engine** — Phases 1–2 of the roadmap, complete. Phase 3 turns the
-engine into the live product.
+The repo holds the **vision and planning documentation** and two working
+**historical engines** — the win-expectancy engine (Phases 1–2) and the
+batter-vs-pitcher matchup engine. Phase 3 turns them into the live product.
 
 | | |
 |---|---|
-| **Current phase** | Phases 1–2 complete — the win-expectancy engine |
-| **Application code** | `src/` — ingests 132 seasons; serves the win-expectancy table |
+| **Current phase** | Phases 1–2 complete; the matchup engine built (Phase 4's data work) |
+| **Application code** | `src/` — the win-expectancy engine and the batter-vs-pitcher matchup engine |
 | **Documentation** | Complete — the planning set (`docs/01`–`07`) |
 | **Stack** | GitHub + Cloudflare + Supabase |
 | **Repository** | https://github.com/hroessner22/Baseball-stats |
