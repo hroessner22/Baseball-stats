@@ -92,36 +92,42 @@ Key decisions:
 └─────────────┘   └──────────────┘   └──────────┘   └─────────────┘
 ```
 
-## Recommended technology stack (staged)
+## Technology stack
 
-The stack should grow with the product. Two clear stages.
+**GitHub + Cloudflare + Supabase** — this project's standard stack, and the
+standard across all of the founder's projects. One stack carries the product
+from the first deployed MVP to production: there is no throwaway prototype
+framework and no later migration, because this infrastructure is cheap, fast to
+deploy, and generous on free tiers.
 
-### Stage A — Proof of concept & MVP (Phases 1–3)
+### The engine (Phases 1–2) — local Python
+
+The win-rate engine is data processing, not a deployed service. It runs on a
+laptop and produces a small set of output tables.
 
 | Layer | Choice | Why |
 |-------|--------|-----|
 | Language | Python 3.10+ | Already set up; ideal for data work |
 | Ingestion / engine | Plain Python; `pandas` optional | Dataset is small; clarity first |
-| Data store | CSV / SQLite files | Zero infrastructure; easy to inspect |
-| Frontend | **Streamlit** | Build an interactive web UI in pure Python — no HTML/CSS/JavaScript. Fastest path to a usable, shareable product |
-| Hosting | Streamlit Community Cloud (free) | One-click deploy for early users |
+| Local store | CSV, then SQLite, in `data/` | Zero infrastructure; easy to inspect |
 
-Streamlit will **not** match MLB.com's polish — and that is the correct
-trade-off for Phases 1–3. The goal there is to validate the *idea* fast and
-cheap, not to ship final UI.
-
-### Stage B — Production platform (Phase 5+)
+### The product (Phase 3 onward) — GitHub + Cloudflare + Supabase
 
 | Layer | Choice | Why |
 |-------|--------|-----|
-| Database | **Supabase** (hosted PostgreSQL) | Managed Postgres, auth, and APIs; an account is already connected to this project |
-| Backend / API | Supabase APIs, or a thin Python **FastAPI** service | Serve the precomputed data cleanly |
-| Frontend | **Next.js / React** | The polished, MLB.com-grade, "everything interactive" UI |
-| Hosting | Vercel (frontend) + Supabase (data) | Standard, scalable, generous free tiers |
+| Source & CI | **GitHub** | Already in use; deploys trigger from here |
+| Database & backend | **Supabase** (hosted PostgreSQL) | Managed Postgres, auth, storage, auto-generated APIs; an account is already connected |
+| API / compute | **Cloudflare Workers** | Serverless API layer — serves the precomputed win-rate data and queries |
+| Frontend | **Cloudflare Pages** | Hosts the web frontend — Scoreboard, Game View, Explorer; all deployments |
 
-The migration from Streamlit to Next.js happens **only after the idea is
-validated** with real users. Rebuilding a validated product is cheap; building
-the wrong product beautifully is not.
+The engine's output — the win-rate tables and game/season data — is loaded into
+Supabase; Cloudflare Workers serve it to the Cloudflare Pages frontend.
+
+> **On the frontend.** Cloudflare Pages serves a real web app (HTML/CSS/JS,
+> typically a framework such as React or Svelte) — not a pure-Python tool like
+> Streamlit. The trade-off is deliberate: the MVP is a genuine web app from day
+> one, more capable and already on the production path, rather than a Python
+> prototype that would later be rebuilt. Claude Code handles the web build.
 
 ## Proposed repository structure
 
@@ -134,7 +140,7 @@ Baseball-stats/
 ├── src/
 │   ├── ingest/            Download + parse Retrosheet data
 │   ├── engine/            Win-rate aggregation
-│   └── app/               Frontend (Streamlit now, Next.js later)
+│   └── app/               Cloudflare Pages web app
 ├── tests/                 Automated tests
 ├── requirements.txt
 └── README.md
@@ -151,4 +157,4 @@ Consolidated with all other decisions in
   tied/suspended games.
 - `pandas` vs. plain Python for the engine (team preference).
 - When to introduce SQLite vs. staying with flat files.
-- The Streamlit → Next.js migration trigger and timing.
+- The Supabase schema for the game, season, and win-rate tables.

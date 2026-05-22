@@ -111,8 +111,8 @@ the founder and engineer together.
   home team not batting in the bottom of the 9th; extra innings;
   tied/suspended games.
 - `pandas` vs. plain Python for the engine.
-- When to move from flat files to SQLite, and later to Supabase.
-- The Streamlit → Next.js migration trigger.
+- When the engine's local store moves from flat files to SQLite.
+- The **Supabase schema** for the game, season, and win-rate tables.
 
 ### Business / strategic *(owner = founder)*
 - **Data licensing review** — Retrosheet's terms for any commercial use, and
