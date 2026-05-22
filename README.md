@@ -1,22 +1,67 @@
 # Baseball-stats
 
-A learning project that builds baseball statistics tables from Retrosheet
-play-by-play data.
+> **Working title.** An interactive baseball analytics platform.
+> Naming is an open decision — see [`docs/05-BUSINESS-CASE.md`](docs/05-BUSINESS-CASE.md).
 
-## Milestone 1
+Explore every game in baseball history with live historical context: win
+probabilities, season statistics, and a deeply organized, interactive way to
+travel through 150+ years of the sport.
 
-Build a win-probability lookup table: for every combination of inning and
-score difference, compute the historical percentage of games that the team
-in that situation went on to win, using the 2024 MLB season.
+## What's in this repository right now
 
-## Project layout
+This repo currently holds the **vision and planning documentation** for the
+project, prepared for handoff to a senior engineer. **No application code
+exists yet** — implementation begins at Phase 1 of the roadmap.
 
-- `data/` — downloaded Retrosheet CSV data files
-- `src/` — Python source code
-- `venv/` — the project's private Python sandbox (not uploaded to GitHub)
+| | |
+|---|---|
+| **Current phase** | Phase 0 — Foundation (project scaffolding complete) |
+| **Application code** | None yet (begins Phase 1) |
+| **Documentation** | Complete — this planning set |
+| **Repository** | https://github.com/hroessner22/Baseball-stats |
 
-## Setup
+## Planning documents
 
-1. Create the sandbox:  `python3 -m venv venv`
-2. Activate it:         `source venv/bin/activate`
-3. Install libraries:   `pip install -r requirements.txt`
+Read in order:
+
+| # | Document | What it covers |
+|---|----------|----------------|
+| 1 | [`docs/01-VISION.md`](docs/01-VISION.md) | The product, the problem, the north star |
+| 2 | [`docs/02-PRODUCT-SPEC.md`](docs/02-PRODUCT-SPEC.md) | Every feature, in detail |
+| 3 | [`docs/03-ARCHITECTURE.md`](docs/03-ARCHITECTURE.md) | Technical design, data, recommended stack |
+| 4 | [`docs/04-ROADMAP.md`](docs/04-ROADMAP.md) | The phased build process, foundation to launch |
+| 5 | [`docs/05-BUSINESS-CASE.md`](docs/05-BUSINESS-CASE.md) | Market, competition, monetization, the YC lens |
+| 6 | [`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md) | Senior-engineer onboarding + open decisions |
+
+**Senior engineer joining the project? Start with
+[`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md).**
+
+## Repository layout
+
+```
+Baseball-stats/
+├── README.md            This file
+├── docs/                Vision & planning documentation
+├── data/                Datasets (downloaded; not committed to git)
+├── src/                 Application source code (begins Phase 1)
+├── requirements.txt     Python dependencies
+└── venv/                Local Python environment (not committed)
+```
+
+## Data & attribution
+
+The project is built on historical data from **Retrosheet**
+(https://www.retrosheet.org).
+
+> The information used here was obtained free of charge from and is copyrighted
+> by Retrosheet. Interested parties may contact Retrosheet at 20 Sunset Rd.,
+> Newark, DE 19711.
+
+Retrosheet places conditions on the use of its data. **A data-licensing review
+is a required pre-commercialization task** — see
+[`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md).
+
+---
+
+*Documentation drafted May 2026 · Draft v1 — a starting point for discussion,
+not a final specification.*
