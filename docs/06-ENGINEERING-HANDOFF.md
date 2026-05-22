@@ -41,11 +41,12 @@ in [`02-PRODUCT-SPEC.md`](02-PRODUCT-SPEC.md).
 | Stack | GitHub + Cloudflare + Supabase — decided ([`03-ARCHITECTURE.md`](03-ARCHITECTURE.md)) |
 | Python | 3.10, virtual environment at `venv/` |
 | Documentation | Complete — the planning set, `docs/01`–`07` |
-| Application code | The win-expectancy engine — `src/` (Phases 1–2 complete) |
-| Tests | `pytest` — parsing, aggregation, and the store |
+| Application code | Two historical engines — `src/` (win expectancy + matchups) |
+| Tests | `pytest` — parsing, aggregation, the store, and the matchup math |
 
-Phases 0–2 are done: the engine ingests 132 seasons of Retrosheet history and
-serves the win-expectancy table for any era. Phase 3 — the live MVP — is next.
+Phases 0–2 are done, and the batter-vs-pitcher matchup engine (Phase 4's data
+work) was built early — play-by-play ingestion via Chadwick, handedness splits,
+and the odds-ratio matchup prediction. Phase 3 — the live MVP — is next.
 
 ## Environment setup
 
@@ -60,6 +61,10 @@ source venv/bin/activate          # macOS / Linux
 
 # 3. Install dependencies (certifi and pytest)
 pip install -r requirements.txt
+
+# 4. Install Chadwick — used by the matchup engine to parse Retrosheet
+#    play-by-play. macOS: brew install chadwick
+
 ```
 
 Note: `venv/` and `data/` are intentionally git-ignored.
@@ -68,11 +73,11 @@ Note: `venv/` and `data/` are intentionally git-ignored.
 
 **Phase 3 — the live MVP** (see [`04-ROADMAP.md`](04-ROADMAP.md)).
 
-Phases 1–2 are done: the win-expectancy engine (`src/`) ingests every Retrosheet
-season into a SQLite store and serves the table for any year range. Run it with
-`python -m src.run_phase2`; run the tests with `pytest`.
+The historical engines are built: the win-expectancy engine
+(`python -m src.run_phase2`) and the batter-vs-pitcher matchup engine
+(`python -m src.run_matchup`); the tests run with `pytest`.
 
-Phase 3 turns the engine into a product — the live **Board** and **Game** views,
+Phase 3 turns them into a product — the live **Board** and **Game** views,
 wired to the MLB Stats API and deployed on Cloudflare. It is the validation
 milestone.
 

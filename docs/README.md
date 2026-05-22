@@ -15,14 +15,15 @@ layers of depth: the Board, the Game, and the Deep Dive. Full vision in
 
 | | |
 |---|---|
-| Phase | Phases 1–2 complete (see [`04-ROADMAP.md`](04-ROADMAP.md)) |
-| Application code | The win-expectancy engine — `src/`, tests in `tests/` |
-| What exists | The planning set, and an engine serving the win-expectancy table for any era |
+| Phase | Phases 1–2 complete; the matchup engine built (see [`04-ROADMAP.md`](04-ROADMAP.md)) |
+| Application code | Two historical engines — `src/`, tests in `tests/` |
+| What exists | The planning set; the win-expectancy engine and the batter-vs-pitcher matchup engine |
 | Stack | GitHub + Cloudflare + Supabase |
 | Repository | https://github.com/hroessner22/Baseball-stats |
 
-The engine ingests 132 seasons of Retrosheet history and produces the win-
-expectancy table for any year range. Phase 3 — the live MVP — is next.
+The win-expectancy engine covers 132 seasons; the matchup engine predicts
+batter-vs-pitcher outcomes from play-by-play (1910–2024). Phase 3 — the live
+MVP — is next.
 
 ## The documents, in reading order
 
@@ -52,9 +53,9 @@ pip install -r requirements.txt
 
 ## The recommended next task
 
-**Phase 3 — the live MVP.** Phases 1–2 are done: the engine (`src/`) ingests
-every Retrosheet season and serves the win-expectancy table for any era. Run it
-with `python -m src.run_phase2`. Phase 3 turns it into a product — see
+**Phase 3 — the live MVP.** The historical engines are built — win expectancy
+(`python -m src.run_phase2`) and the batter-vs-pitcher matchup engine
+(`python -m src.run_matchup`). Phase 3 turns them into a product — see
 [`06-ENGINEERING-HANDOFF.md`](06-ENGINEERING-HANDOFF.md).
 
 ## Open questions
