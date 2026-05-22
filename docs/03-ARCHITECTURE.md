@@ -1,95 +1,151 @@
 # 03 — Architecture
 
-*Baseball-stats (working title) · Draft v1 · May 2026*
+*Baseball-stats (working title) · Draft v2 · May 2026*
 
 > Recommendations, not commandments. The incoming senior engineer owns final
 > technical decisions and should treat this as a well-researched starting point.
 
 ## Guiding principles
 
-1. **Start simple; earn complexity.** The early phases need almost no
-   infrastructure. Do not build a platform before there is a product.
-2. **Precompute, don't recompute.** The historical win rate is the same for
-   everyone. Compute it once; serve it instantly.
-3. **The dataset is small** (see below). Favor clarity over cleverness.
-4. **Separate the engine from the interface.** The win-rate computation is the
-   asset; the UI is replaceable. Keep a clean boundary between them.
+1. **Precompute, don't recompute.** History doesn't change. Crunch it once into
+   lookup tables; at game time, *look up* — never recompute.
+2. **Start simple; earn complexity.** The early phases need almost no
+   infrastructure. Don't build a platform before there is a product.
+3. **Separate the engine from the interface.** The computed matrix is the
+   asset; the UI is replaceable. Keep a clean boundary.
+4. **The historical dataset is small.** Favor clarity over cleverness.
 
 ## Data sources
 
-### Primary: Retrosheet game logs
-- One file per season, covering essentially all of MLB history (1871–present).
-- Each row is one game: date, teams, final score, and a **line score** (runs
-  per inning) for each team.
-- Plain, comma-separated text — straightforward to parse.
-- Sufficient to build the Scoreboard and the inning-level win rate for the
-  entire product through Phase 3.
+The product has two data needs — historical and live — sourced very
+differently.
 
-### Later: Retrosheet play-by-play event files
-- Every individual play, from ~1914 onward (complete for modern decades).
-- Stored in Retrosheet's custom event-file format; converting to tabular data
-  needs tooling — the open-source **Chadwick** tools (`cwevent`).
-- Needed only when the win-rate model is enriched with outs and baserunners
-  (Phase 4).
+### Retrosheet — the historical foundation *(free)*
+- Game logs covering all of MLB history (1871–present): one row per game —
+  date, teams, score, line score.
+- Play-by-play event files from ~1914 onward (complete for modern decades) —
+  every plate appearance, with count, base-out state, and outcome. Parsing the
+  event format uses the open-source **Chadwick** tools (`cwevent`).
+- Free, and the basis of every historical calculation. Carries a required
+  attribution notice (see below).
 
-### Later: live / current-season data
-- Retrosheet publishes only completed seasons, with a lag. The most recent
-  fully published season is approximately 2024 — **verify on retrosheet.org**
-  (2025 may be available).
-- A genuine *live* product would need a different feed (e.g. MLB's data). This
-  is post-MVP and carries its own licensing considerations.
+### MLB Stats API — the live feed
+- `statsapi.mlb.com` — the backend behind MLB.com and the MLB app. Today's
+  schedule, live scores, box scores, and pitch-by-pitch game state, in
+  near-real-time.
+- Publicly reachable and used by essentially every baseball app — perfect for
+  building and validating. It is MLB's data and API; a commercial product needs
+  a licensing answer (see below).
 
-> **Data licensing is a real constraint, not a footnote.** Retrosheet data is
-> free but carries a required attribution notice and conditions on use. MLB
-> marks, logos, and live data are separately and more strictly licensed. Treat
-> a full data-rights review as **blocking before any commercial launch** — see
-> the open questions in [`06-ENGINEERING-HANDOFF.md`](06-ENGINEERING-HANDOFF.md).
+### Baseball Savant — Statcast *(later)*
+- MLB's Statcast site — exit velocity, launch angle, expected stats; modern era
+  (~2015+). Consumed as-is (MLB's measurements). Not needed early.
 
-## How big is the data, really?
+> **Data licensing is a real constraint, not a footnote.** Retrosheet is free
+> but requires its attribution notice. The MLB Stats API and Statcast are MLB's
+> intellectual property — fine for building and validating now; a licensed feed
+> (or an MLB agreement) is required before commercial launch. Treat a full
+> data-rights review as **blocking before commercialization** — see the open
+> questions in [`06-ENGINEERING-HANDOFF.md`](06-ENGINEERING-HANDOFF.md).
 
-Reassuringly small:
+## Calculations — borrow the methods, compute the numbers
 
-- All Retrosheet game logs, all of history: on the order of **tens of
-  megabytes** of text.
-- The computed win-rate lookup table: **kilobytes**.
-- Play-by-play event files, all of history: a few hundred megabytes — still
-  modest.
+Three kinds of "thing," each handled differently:
 
-Implication: through Phase 3 this runs comfortably on a laptop and a free-tier
-host. **Do not over-engineer for scale that does not exist.**
+1. **Raw feeds and measurements** — *consumed* from the authoritative source.
+   You don't recompute a score or a 98-mph reading.
+2. **Methods** — the proven, public sabermetric ones are *borrowed.* We don't
+   reinvent the math.
+3. **The probabilistic numbers** — *computed ourselves.* That engine is the
+   asset, and our own computation is the only way to be transparent — to show
+   the sample size and the method behind every number.
 
-## The win-rate engine
+| Thing | Source | Ours or theirs |
+|-------|--------|----------------|
+| Live game state, schedule, rosters | MLB Stats API | Consume |
+| All historical games & plays | Retrosheet | Consume — raw material |
+| Win expectancy | Retrosheet | **Ours** — empirical frequency |
+| Run expectancy | Retrosheet | **Ours** — standard method |
+| Situational splits | Retrosheet + current-season feed | **Ours** |
+| Matchup likelihood (hitter × pitcher) | Retrosheet | **Ours** — odds-ratio / log5 |
+| Leverage | Retrosheet | **Ours** — leverage index |
+| Playoff & World Series odds | Retrosheet + live standings | **Ours** — Monte Carlo |
+| Records / milestone probability | Retrosheet | **Ours** |
+| Statcast (exit velocity, xBA) | Baseball Savant | Theirs — MLB measurements |
 
-The core asset — a pipeline:
+The numbers are ours, computed on our own data — and **cross-checked against the
+trusted public references** (FanGraphs win probability, Baseball Prospectus
+playoff odds) so we know they are right.
+
+## Real-time architecture — precompute, then look up
+
+The expensive work — crunching 150 years of Retrosheet into every
+win-expectancy and situational cell — is a **batch job.** It runs on a
+schedule; the result is a set of compact lookup tables (kilobytes to a few
+megabytes) stored in Supabase. History doesn't change, so it is computed once.
+
+Live:
+
+- The **MLB Stats API feed** pushes game state pitch by pitch (seconds of
+  latency — genuinely real-time).
+- For each new state, a **Cloudflare Worker** *looks up* the precomputed cells
+  and does light live math — the log5 blend, the relevance ranking. No heavy
+  computation in the live path.
+- Current-season numbers update incrementally as games finish.
+- Playoff odds re-run the Monte Carlo simulation periodically (after each game,
+  a few times a day) — they don't need pitch-granularity.
+
+Real time is not recomputing history every pitch; it is *looking up* against
+history every pitch. Fast, and cheap.
+
+## The engine
+
+The core asset — a pipeline from raw data to the matrix:
 
 ```
-Retrosheet game logs
+Retrosheet game logs + event files
         │  download
         ▼
    raw data (data/raw/)
-        │  parse: one record per (game, end-of-inning) state
+        │  parse: one record per game state
         ▼
-   game-state records   →   (year, inning, score_diff, team_won?)
-        │  aggregate over the chosen year range
+   game-state records  →  (era, inning, score_diff, outs, bases, … , won?)
+        │  aggregate over the chosen axes and year range
         ▼
-   WIN-RATE LOOKUP TABLE   (inning × score_diff → win %)
+   LOOKUP TABLES   (win expectancy · run expectancy · situational splits)
 ```
 
 Key decisions:
-- **Precompute** the lookup table; the UI only ever reads it.
-- Make the **year range a parameter** of the aggregation from day one.
+- **Precompute** the tables; the live layer only ever reads them.
+- Make the **year range and the axes parameters** of the aggregation from day
+  one.
 - Keep parsing and aggregation as **separate, testable steps.**
+
+Phase 1 builds the smallest slice of this — the inning × score-difference win
+table from one season. The full matrix is the same pipeline, widened.
+
+## How big is the data?
+
+Reassuringly small:
+
+- All Retrosheet game logs: **tens of megabytes** of text.
+- Play-by-play event files, all history: a few hundred megabytes.
+- The computed lookup tables: **kilobytes to a few megabytes.**
+- The live feed: a trickle — one game state per pitch.
+
+The historical engine runs comfortably on a laptop; the live product runs on
+free-tier infrastructure. **Do not over-engineer for scale that doesn't exist.**
 
 ## System components
 
 ```
-┌─────────────┐   ┌──────────────┐   ┌──────────┐   ┌─────────────┐
-│ Ingestion   │──▶│ Processed    │──▶│ API /    │──▶│ Frontend    │
-│ (Python):   │   │ data store:  │   │ data     │   │ scoreboard, │
-│ download +  │   │ tables +     │   │ access   │   │ game view,  │
-│ parse +     │   │ win-rate     │   │ layer    │   │ explorer    │
-│ aggregate   │   │ lookup       │   │          │   │             │
-└─────────────┘   └──────────────┘   └──────────┘   └─────────────┘
+Batch (history)
+  Retrosheet  →  Python: parse + aggregate  →  lookup tables in Supabase
+
+Live (per pitch)
+  MLB Stats API  →  Cloudflare Worker: look up the tables · log5 blend ·
+                    relevance ranking  →  Cloudflare Pages: Board / Game /
+                    Deep Dive
 ```
 
 ## Technology stack
@@ -102,8 +158,8 @@ deploy, and generous on free tiers.
 
 ### The engine (Phases 1–2) — local Python
 
-The win-rate engine is data processing, not a deployed service. It runs on a
-laptop and produces a small set of output tables.
+The engine is data processing, not a deployed service. It runs on a laptop and
+produces a small set of output tables.
 
 | Layer | Choice | Why |
 |-------|--------|-----|
@@ -117,10 +173,10 @@ laptop and produces a small set of output tables.
 |-------|--------|-----|
 | Source & CI | **GitHub** | Already in use; deploys trigger from here |
 | Database & backend | **Supabase** (hosted PostgreSQL) | Managed Postgres, auth, storage, auto-generated APIs; an account is already connected |
-| API / compute | **Cloudflare Workers** | Serverless API layer — serves the precomputed win-rate data and queries |
-| Frontend | **Cloudflare Pages** | Hosts the web frontend — Scoreboard, Game View, Explorer; all deployments |
+| API / compute | **Cloudflare Workers** | Serverless API layer — serves the precomputed matrix and the live blends |
+| Frontend | **Cloudflare Pages** | Hosts the web frontend — the Board, the Game, the Deep Dive; all deployments |
 
-The engine's output — the win-rate tables and game/season data — is loaded into
+The engine's output — the lookup tables and game/season data — is loaded into
 Supabase; Cloudflare Workers serve it to the Cloudflare Pages frontend.
 
 > **On the frontend.** Cloudflare Pages serves a real web app (HTML/CSS/JS,
@@ -136,11 +192,12 @@ Baseball-stats/
 ├── docs/                  Planning documentation
 ├── data/                  Downloaded + processed data (git-ignored)
 │   ├── raw/               As downloaded from Retrosheet
-│   └── processed/         Parsed records, win-rate tables
+│   └── processed/         Parsed records, lookup tables
 ├── src/
 │   ├── ingest/            Download + parse Retrosheet data
-│   ├── engine/            Win-rate aggregation
-│   └── app/               Cloudflare Pages web app
+│   ├── engine/            Matrix aggregation (win expectancy, splits)
+│   ├── api/               Cloudflare Workers — the API + live layer
+│   └── app/               Cloudflare Pages — the web frontend
 ├── tests/                 Automated tests
 ├── requirements.txt
 └── README.md
@@ -151,10 +208,13 @@ Baseball-stats/
 Consolidated with all other decisions in
 [`06-ENGINEERING-HANDOFF.md`](06-ENGINEERING-HANDOFF.md). The technical ones:
 
-- Confirm the Retrosheet game-log format and current coverage years.
-- Confirm the exact win-rate definition: state at the *start* vs. *end* of an
-  inning; the home team not batting in the bottom of the 9th; extra innings;
-  tied/suspended games.
-- `pandas` vs. plain Python for the engine (team preference).
-- When to introduce SQLite vs. staying with flat files.
-- The Supabase schema for the game, season, and win-rate tables.
+- Confirm the Retrosheet game-log and event-file formats and coverage years.
+- Confirm the exact win-expectancy definition: state at the *start* vs. *end*
+  of an inning; the home team not batting in the bottom of the 9th; extra
+  innings; tied/suspended games.
+- Integrating the MLB Stats API live feed — polling vs. streaming, latency,
+  rate limits.
+- `pandas` vs. plain Python for the engine.
+- When the engine's local store moves from flat files to SQLite.
+- The **Supabase schema** for the matrix, game, and season data.
+- Tuning the relevance engine — the weighting of surprise, trust, and proximity.

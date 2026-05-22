@@ -147,6 +147,7 @@ echo of any live situation* — is the same for basketball, football, and soccer
 ## Related documents
 
 - Features in detail → [`02-PRODUCT-SPEC.md`](02-PRODUCT-SPEC.md)
+- How it looks and behaves → [`07-DESIGN.md`](07-DESIGN.md)
 - How it gets built → [`03-ARCHITECTURE.md`](03-ARCHITECTURE.md) ·
   [`04-ROADMAP.md`](04-ROADMAP.md)
 - Market & funding → [`05-BUSINESS-CASE.md`](05-BUSINESS-CASE.md)

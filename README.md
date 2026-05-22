@@ -1,11 +1,13 @@
 # Baseball-stats
 
-> **Working title.** An interactive baseball analytics platform.
-> Naming is an open decision — see [`docs/05-BUSINESS-CASE.md`](docs/05-BUSINESS-CASE.md).
+> **Working title.** A live companion for baseball.
+> Naming is an open decision — the design uses `DIAMOND:CONTEXT`; see
+> [`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md).
 
-Explore every game in baseball history with live historical context: win
-probabilities, season statistics, and a deeply organized, interactive way to
-travel through 150+ years of the sport.
+Every game in progress, each led by an empirical win probability drawn from
+150 years of history — so you can see, at a glance, which game matters and why.
+Tap in for the live win-expectancy story; drill down into the full situational
+matrix.
 
 ## What's in this repository right now
 
@@ -18,6 +20,7 @@ exists yet** — implementation begins at Phase 1 of the roadmap.
 | **Current phase** | Phase 0 — Foundation (project scaffolding complete) |
 | **Application code** | None yet (begins Phase 1) |
 | **Documentation** | Complete — this planning set |
+| **Stack** | GitHub + Cloudflare + Supabase |
 | **Repository** | https://github.com/hroessner22/Baseball-stats |
 
 ## Planning documents
@@ -27,11 +30,12 @@ Read in order:
 | # | Document | What it covers |
 |---|----------|----------------|
 | 1 | [`docs/01-VISION.md`](docs/01-VISION.md) | The product, the problem, the north star |
-| 2 | [`docs/02-PRODUCT-SPEC.md`](docs/02-PRODUCT-SPEC.md) | Every feature, in detail |
-| 3 | [`docs/03-ARCHITECTURE.md`](docs/03-ARCHITECTURE.md) | Technical design, data, recommended stack |
-| 4 | [`docs/04-ROADMAP.md`](docs/04-ROADMAP.md) | The phased build process, foundation to launch |
-| 5 | [`docs/05-BUSINESS-CASE.md`](docs/05-BUSINESS-CASE.md) | Market, competition, monetization, the YC lens |
-| 6 | [`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md) | Senior-engineer onboarding + open decisions |
+| 2 | [`docs/02-PRODUCT-SPEC.md`](docs/02-PRODUCT-SPEC.md) | The three layers, the matrix, the relevance engine |
+| 3 | [`docs/03-ARCHITECTURE.md`](docs/03-ARCHITECTURE.md) | Data sources, the engine, the stack, real-time |
+| 4 | [`docs/07-DESIGN.md`](docs/07-DESIGN.md) | The visual and interaction design |
+| 5 | [`docs/04-ROADMAP.md`](docs/04-ROADMAP.md) | The phased build process, foundation to launch |
+| 6 | [`docs/05-BUSINESS-CASE.md`](docs/05-BUSINESS-CASE.md) | Market, competition, monetization, the YC lens |
+| 7 | [`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md) | Senior-engineer onboarding + open decisions |
 
 **Senior engineer joining the project? Start with
 [`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md).**
@@ -50,18 +54,18 @@ Baseball-stats/
 
 ## Data & attribution
 
-The project is built on historical data from **Retrosheet**
-(https://www.retrosheet.org).
+Historical data comes from **Retrosheet** (https://www.retrosheet.org); live
+game data comes from the **MLB Stats API**.
 
 > The information used here was obtained free of charge from and is copyrighted
 > by Retrosheet. Interested parties may contact Retrosheet at 20 Sunset Rd.,
 > Newark, DE 19711.
 
-Retrosheet places conditions on the use of its data. **A data-licensing review
-is a required pre-commercialization task** — see
-[`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md).
+Retrosheet requires the attribution above; the MLB live feed carries its own
+licensing terms. **A data-rights review is a required pre-commercialization
+task** — see [`docs/06-ENGINEERING-HANDOFF.md`](docs/06-ENGINEERING-HANDOFF.md).
 
 ---
 
-*Documentation drafted May 2026 · Draft v1 — a starting point for discussion,
-not a final specification.*
+*Documentation · Draft v2 · May 2026 — a starting point for discussion, not a
+final specification.*
