@@ -1,3 +1,7 @@
-# Helper libraries this project needs.
-# Add one package name per line, then run:  pip install -r requirements.txt
-# (empty for now — packages will be added during Milestone 1)
+# Python dependencies. Install with:  pip install -r requirements.txt
+#
+# The engine uses the Python standard library plus two small packages:
+# certifi for HTTPS certificate verification, and pytest as the test runner.
+
+certifi==2026.5.20
+pytest==9.0.3

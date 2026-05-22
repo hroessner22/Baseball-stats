@@ -11,15 +11,15 @@ matrix.
 
 ## What's in this repository right now
 
-This repo currently holds the **vision and planning documentation** for the
-project, prepared for handoff to a senior engineer. **No application code
-exists yet** — implementation begins at Phase 1 of the roadmap.
+The repo holds the **vision and planning documentation** and the **win-
+expectancy engine** — Phases 1–2 of the roadmap, complete. Phase 3 turns the
+engine into the live product.
 
 | | |
 |---|---|
-| **Current phase** | Phase 0 — Foundation (project scaffolding complete) |
-| **Application code** | None yet (begins Phase 1) |
-| **Documentation** | Complete — this planning set |
+| **Current phase** | Phases 1–2 complete — the win-expectancy engine |
+| **Application code** | `src/` — ingests 132 seasons; serves the win-expectancy table |
+| **Documentation** | Complete — the planning set (`docs/01`–`07`) |
 | **Stack** | GitHub + Cloudflare + Supabase |
 | **Repository** | https://github.com/hroessner22/Baseball-stats |
 
@@ -47,7 +47,8 @@ Baseball-stats/
 ├── README.md            This file
 ├── docs/                Vision & planning documentation
 ├── data/                Datasets (downloaded; not committed to git)
-├── src/                 Application source code (begins Phase 1)
+├── src/                 Application source code — the win-expectancy engine
+├── tests/               Automated tests (pytest)
 ├── requirements.txt     Python dependencies
 └── venv/                Local Python environment (not committed)
 ```

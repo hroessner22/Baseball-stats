@@ -15,15 +15,14 @@ layers of depth: the Board, the Game, and the Deep Dive. Full vision in
 
 | | |
 |---|---|
-| Phase | 0 — Foundation (see [`04-ROADMAP.md`](04-ROADMAP.md)) |
-| Application code | **None yet.** Implementation begins at Phase 1 |
-| What exists | This planning documentation; a clean, scaffolded repository |
+| Phase | Phases 1–2 complete (see [`04-ROADMAP.md`](04-ROADMAP.md)) |
+| Application code | The win-expectancy engine — `src/`, tests in `tests/` |
+| What exists | The planning set, and an engine serving the win-expectancy table for any era |
 | Stack | GitHub + Cloudflare + Supabase |
 | Repository | https://github.com/hroessner22/Baseball-stats |
 
-This is an honest starting point: a clear vision and a clean repo, with the
-build still ahead. There is no code to review yet — and that is expected at
-Phase 0.
+The engine ingests 132 seasons of Retrosheet history and produces the win-
+expectancy table for any year range. Phase 3 — the live MVP — is next.
 
 ## The documents, in reading order
 
@@ -51,12 +50,11 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## The recommended first task
+## The recommended next task
 
-**Phase 1 — the proof-of-concept engine:** download one season of Retrosheet
-game logs, compute the inning × score-difference win-expectancy table, and print
-it. It is small, and it validates the entire data foundation before anything
-larger is built on it. Full spec in
+**Phase 3 — the live MVP.** Phases 1–2 are done: the engine (`src/`) ingests
+every Retrosheet season and serves the win-expectancy table for any era. Run it
+with `python -m src.run_phase2`. Phase 3 turns it into a product — see
 [`06-ENGINEERING-HANDOFF.md`](06-ENGINEERING-HANDOFF.md).
 
 ## Open questions

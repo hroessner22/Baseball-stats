@@ -15,8 +15,10 @@ Full vision: `docs/` — start with `docs/01-VISION.md`.
 
 ## Current state
 
-- **Phase 0 — Foundation.** Planning documentation only; **no application code
-  yet.** Implementation begins at Phase 1 (`docs/04-ROADMAP.md`).
+- **Phases 1–2 complete** — the win-expectancy engine: it ingests 132 seasons
+  of Retrosheet history into a SQLite store and produces the win-expectancy
+  table for any era. Code in `src/`, tests in `tests/`.
+- **Next: Phase 3** — the live MVP (`docs/04-ROADMAP.md`).
 - Repository: https://github.com/hroessner22/Baseball-stats
 
 ## Tech stack
@@ -41,7 +43,8 @@ Baseball-stats/
 ├── README.md            Repository front page
 ├── docs/                Vision & planning docs — start at docs/README.md
 ├── data/                Datasets — downloaded; git-ignored
-├── src/                 Application source code — begins Phase 1
+├── src/                 Application source code — ingest + engine
+├── tests/               Automated tests (pytest)
 ├── requirements.txt     Python dependencies
 └── venv/                Local Python environment; git-ignored
 ```
@@ -71,11 +74,14 @@ pip install -r requirements.txt
 - Small, descriptive commits; feature branches; pull requests into `main`.
 - Tests (`pytest`) for parsing and aggregation from Phase 2 onward.
 
-## Recommended first task
+## Running it
 
-Phase 1 — the proof-of-concept engine: download one season of Retrosheet game
-logs, compute the inning × score-difference win-expectancy table, and print it.
-Full spec in `docs/06-ENGINEERING-HANDOFF.md`.
+- The engine: `python -m src.run_phase2` ingests all of history and prints the
+  win-expectancy table; `python -m src.run_phase1` is the single-season proof
+  of concept.
+- The tests: `pytest`.
+
+Next up is Phase 3 — the live MVP (`docs/04-ROADMAP.md`).
 
 ## Working principles
 

@@ -3,7 +3,7 @@
 A game log is a CSV with one row per game. The fields used here (1-indexed,
 per ``glfields.txt``):
 
-      1   date
+      1   date ("yyyymmdd" — the season year is the first four digits)
       4   visiting team
       7   home team
      10   visiting team final score
@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Zero-based field indices into a game-log row.
+_DATE = 0
 _VISITOR_SCORE = 9
 _HOME_SCORE = 10
 _VISITOR_LINE = 19
@@ -33,6 +34,7 @@ _HOME_LINE = 20
 class GameState:
     """The game at the end of one half-inning, from the home team's view."""
 
+    year: int
     inning: int
     half: str  # "top" or "bottom"
     home_lead: int  # home score minus visitor score
@@ -74,6 +76,7 @@ def _game_states(row: list[str]) -> list[GameState]:
     if len(row) <= _HOME_LINE:
         return []
     try:
+        year = int(row[_DATE][:4])
         visitor_final = int(row[_VISITOR_SCORE])
         home_final = int(row[_HOME_SCORE])
         visitor_line = parse_line_score(row[_VISITOR_LINE])
@@ -97,30 +100,28 @@ def _game_states(row: list[str]) -> list[GameState]:
         # Top of the inning — the visitor bats.
         if idx < len(visitor_line) and visitor_line[idx] is not None:
             visitor_cum += visitor_line[idx]
-        states.append(GameState(inning, "top", home_cum - visitor_cum, home_won))
+        states.append(
+            GameState(year, inning, "top", home_cum - visitor_cum, home_won)
+        )
         # Bottom of the inning — the home team bats, unless it did not.
         if idx < len(home_line) and home_line[idx] is not None:
             home_cum += home_line[idx]
             states.append(
-                GameState(inning, "bottom", home_cum - visitor_cum, home_won)
+                GameState(year, inning, "bottom", home_cum - visitor_cum, home_won)
             )
     return states
 
 
 def parse_gamelog(path: Path) -> list[GameState]:
-    """Parse every game in a Retrosheet game-log file into game states."""
+    """Parse every game in a Retrosheet game-log file into game states.
+
+    Games that cannot be trusted are dropped (see ``_game_states``). A file
+    with no usable line scores — as in some 19th-century seasons, where
+    Retrosheet has only final scores — yields an empty list.
+    """
     states: list[GameState] = []
-    games = 0
-    skipped = 0
     with open(path, newline="", encoding="latin-1") as handle:
         for row in csv.reader(handle):
-            if not row:
-                continue
-            game = _game_states(row)
-            if game:
-                states.extend(game)
-                games += 1
-            else:
-                skipped += 1
-    print(f"Parsed {games} games ({skipped} skipped) -> {len(states)} game states.")
+            if row:
+                states.extend(_game_states(row))
     return states

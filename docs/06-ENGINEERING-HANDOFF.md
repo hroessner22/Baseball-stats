@@ -41,9 +41,11 @@ in [`02-PRODUCT-SPEC.md`](02-PRODUCT-SPEC.md).
 | Stack | GitHub + Cloudflare + Supabase — decided ([`03-ARCHITECTURE.md`](03-ARCHITECTURE.md)) |
 | Python | 3.10, virtual environment at `venv/` |
 | Documentation | Complete — the planning set, `docs/01`–`07` |
-| Application code | **None yet** — implementation begins at Phase 1 |
+| Application code | The win-expectancy engine — `src/` (Phases 1–2 complete) |
+| Tests | `pytest` — parsing, aggregation, and the store |
 
-There is no code to review. You are starting from a clean, documented Phase 0.
+Phases 0–2 are done: the engine ingests 132 seasons of Retrosheet history and
+serves the win-expectancy table for any era. Phase 3 — the live MVP — is next.
 
 ## Environment setup
 
@@ -56,27 +58,23 @@ cd Baseball-stats
 python3 -m venv venv
 source venv/bin/activate          # macOS / Linux
 
-# 3. Install dependencies (currently none beyond the standard library)
+# 3. Install dependencies (certifi and pytest)
 pip install -r requirements.txt
 ```
 
 Note: `venv/` and `data/` are intentionally git-ignored.
 
-## Recommended first task
+## Recommended next task
 
-**Phase 1 — the Proof-of-Concept engine** (see [`04-ROADMAP.md`](04-ROADMAP.md)).
-This is Milestone 1 — the current focus.
+**Phase 3 — the live MVP** (see [`04-ROADMAP.md`](04-ROADMAP.md)).
 
-Concretely:
-1. Download one season (e.g. 2024) of Retrosheet game logs into `data/raw/`.
-2. Parse each game into end-of-inning state records:
-   `(year, inning, half, score_difference, team_eventually_won)`.
-3. Aggregate into the win-expectancy table: inning × score-difference → win %.
-4. Print it; spot-check it (≈50% for a 1st-inning tie; ≈100% for a big late
-   lead).
+Phases 1–2 are done: the win-expectancy engine (`src/`) ingests every Retrosheet
+season into a SQLite store and serves the table for any year range. Run it with
+`python -m src.run_phase2`; run the tests with `pytest`.
 
-This task is small, and it validates the entire data foundation before anything
-larger is built on it. It also resolves several of the open questions below.
+Phase 3 turns the engine into a product — the live **Board** and **Game** views,
+wired to the MLB Stats API and deployed on Cloudflare. It is the validation
+milestone.
 
 ## Suggested conventions
 
