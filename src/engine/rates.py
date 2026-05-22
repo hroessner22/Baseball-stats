@@ -1,149 +1,215 @@
-"""Handedness-split rate tables — the at-bat outcome data.
+"""Plate-appearance store and queries.
 
-Aggregates plate appearances into outcome counts and stores them in SQLite:
+Every parsed plate appearance is kept in a SQLite table (``at_bats``) with all
+of its situational fields — handedness, count, base-out state, inning, score
+margin, and the sacrifice flags. Queries roll up outcome counts under any
+combination of filters; the matchup engine builds on these.
 
-  * ``batting``  — per batter, split by the pitcher's throwing hand
-  * ``pitching`` — per pitcher, split by the batter's batting side
-  * ``league``   — the baseline, by the handedness matchup
+Filters accepted by ``query_outcomes`` / ``batter_line`` / ``pitcher_line`` /
+``league_line``:
 
-Counts are kept per season, so any year range is a ``SUM`` over the matching
-rows. The matchup engine (``matchup.py``) reads these tables to predict a
-batter-versus-pitcher outcome distribution.
+  exact match    batter, pitcher, bats, throws, half, inning, outs, balls,
+                 strikes
+  bases          int or tuple of ints (0-7 — the base-out code)
+  risp           True → bases in {2, 3, 4, 5, 6, 7} (runner on 2B or 3B)
+  count          (balls, strikes) — e.g. (3, 1) for a 3-1 count
+  year_range     (low, high) — inclusive
+  date_range     (low, high) — YYYYMMDD ints
+  home_lead_range  (low, high) — score margin from the home team's view
+  sh_fl, sf_fl   bool — sacrifice hit / fly
 """
 from __future__ import annotations
 
 import sqlite3
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 from src.ingest.events import AtBat
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS batting (
-    year     INTEGER NOT NULL,
-    batter   TEXT    NOT NULL,
-    bats     TEXT    NOT NULL,
-    vs_hand  TEXT    NOT NULL,
-    outcome  TEXT    NOT NULL,
-    count    INTEGER NOT NULL,
-    PRIMARY KEY (year, batter, bats, vs_hand, outcome)
+CREATE TABLE IF NOT EXISTS at_bats (
+    year      INTEGER NOT NULL,
+    date      INTEGER NOT NULL,
+    game_id   TEXT    NOT NULL,
+    batter    TEXT    NOT NULL,
+    bats      TEXT    NOT NULL,
+    pitcher   TEXT    NOT NULL,
+    throws    TEXT    NOT NULL,
+    outcome   TEXT    NOT NULL,
+    inning    INTEGER NOT NULL,
+    half      TEXT    NOT NULL,
+    outs      INTEGER NOT NULL,
+    bases     INTEGER NOT NULL,
+    home_lead INTEGER NOT NULL,
+    balls     INTEGER NOT NULL,
+    strikes   INTEGER NOT NULL,
+    sh_fl     INTEGER NOT NULL,
+    sf_fl     INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS pitching (
-    year     INTEGER NOT NULL,
-    pitcher  TEXT    NOT NULL,
-    throws   TEXT    NOT NULL,
-    vs_hand  TEXT    NOT NULL,
-    outcome  TEXT    NOT NULL,
-    count    INTEGER NOT NULL,
-    PRIMARY KEY (year, pitcher, throws, vs_hand, outcome)
-);
-CREATE TABLE IF NOT EXISTS league (
-    year     INTEGER NOT NULL,
-    bats     TEXT    NOT NULL,
-    throws   TEXT    NOT NULL,
-    outcome  TEXT    NOT NULL,
-    count    INTEGER NOT NULL,
-    PRIMARY KEY (year, bats, throws, outcome)
-);
-CREATE INDEX IF NOT EXISTS idx_batting_batter ON batting (batter, vs_hand);
-CREATE INDEX IF NOT EXISTS idx_pitching_pitcher ON pitching (pitcher, vs_hand);
+CREATE INDEX IF NOT EXISTS idx_at_bats_batter  ON at_bats (batter, year);
+CREATE INDEX IF NOT EXISTS idx_at_bats_pitcher ON at_bats (pitcher, year);
+CREATE INDEX IF NOT EXISTS idx_at_bats_game    ON at_bats (game_id);
 """
 
 
 @dataclass
-class SeasonTally:
-    """One season's outcome counts, keyed and ready to persist."""
-
-    batting: dict[tuple[str, str, str, str], int]   # (batter, bats, vs_hand, outcome)
-    pitching: dict[tuple[str, str, str, str], int]  # (pitcher, throws, vs_hand, outcome)
-    league: dict[tuple[str, str, str], int]         # (bats, throws, outcome)
-
-
-@dataclass
 class RateLine:
-    """Outcome counts for one player, or the league, within one split."""
+    """Outcome counts for one player or split."""
 
     counts: dict[str, int]
-    hand: str = ""  # the player's own hand; "" for a league line
+    hand: str = ""  # the player's own hand within the filtered data
 
     @property
     def total(self) -> int:
         return sum(self.counts.values())
 
     def rate(self, outcome: str) -> float:
-        """The share of plate appearances ending in ``outcome`` (0.0-1.0)."""
+        """The share of plate appearances ending in ``outcome`` (0.0–1.0)."""
         return self.counts.get(outcome, 0) / self.total if self.total else 0.0
 
 
-def tally_season(at_bats: list[AtBat]) -> SeasonTally:
-    """Aggregate one season's plate appearances into outcome counts."""
-    batting: dict[tuple[str, str, str, str], int] = defaultdict(int)
-    pitching: dict[tuple[str, str, str, str], int] = defaultdict(int)
-    league: dict[tuple[str, str, str], int] = defaultdict(int)
-    for ab in at_bats:
-        batting[(ab.batter, ab.bats, ab.throws, ab.outcome)] += 1
-        pitching[(ab.pitcher, ab.throws, ab.bats, ab.outcome)] += 1
-        league[(ab.bats, ab.throws, ab.outcome)] += 1
-    return SeasonTally(dict(batting), dict(pitching), dict(league))
-
-
 def open_rate_store(path: Path) -> sqlite3.Connection:
-    """Open the rate store, creating the file, tables, and indexes if needed."""
+    """Open the at-bats store, creating the file, table, and indexes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.executescript(_SCHEMA)
     return conn
 
 
-def write_season(conn: sqlite3.Connection, year: int, tally: SeasonTally) -> None:
-    """Persist one season's tally.
+def write_at_bats(
+    conn: sqlite3.Connection, year: int, at_bats: list[AtBat]
+) -> None:
+    """Persist one season's plate appearances.
 
-    Existing rows for the year are replaced first, so re-ingesting a season is
+    Existing rows for the year are deleted first, so re-ingesting a season is
     idempotent.
     """
-    for table in ("batting", "pitching", "league"):
-        conn.execute(f"DELETE FROM {table} WHERE year = ?", (year,))
+    conn.execute("DELETE FROM at_bats WHERE year = ?", (year,))
     conn.executemany(
-        "INSERT INTO batting (year, batter, bats, vs_hand, outcome, count) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [(year, *key, count) for key, count in tally.batting.items()],
-    )
-    conn.executemany(
-        "INSERT INTO pitching (year, pitcher, throws, vs_hand, outcome, count) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [(year, *key, count) for key, count in tally.pitching.items()],
-    )
-    conn.executemany(
-        "INSERT INTO league (year, bats, throws, outcome, count) "
-        "VALUES (?, ?, ?, ?, ?)",
-        [(year, *key, count) for key, count in tally.league.items()],
+        "INSERT INTO at_bats "
+        "(year, date, game_id, batter, bats, pitcher, throws, outcome, "
+        " inning, half, outs, bases, home_lead, balls, strikes, sh_fl, sf_fl) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                year, ab.date, ab.game_id, ab.batter, ab.bats, ab.pitcher,
+                ab.throws, ab.outcome, ab.inning, ab.half, ab.outs, ab.bases,
+                ab.home_lead, ab.balls, ab.strikes,
+                int(ab.sh_fl), int(ab.sf_fl),
+            )
+            for ab in at_bats
+        ],
     )
     conn.commit()
 
 
-def batter_line(
+def stored_rate_years(
     conn: sqlite3.Connection,
-    batter: str,
-    start_year: int,
-    end_year: int,
-    vs_hand: str | None = None,
-) -> RateLine:
-    """A batter's outcome counts over [start_year, end_year].
+) -> tuple[int | None, int | None, int]:
+    """Return (earliest year, latest year, distinct year count) in the store."""
+    low, high, count = conn.execute(
+        "SELECT MIN(year), MAX(year), COUNT(DISTINCT year) FROM at_bats"
+    ).fetchone()
+    return low, high, count
 
-    With ``vs_hand`` ("L" or "R"), restricts to plate appearances against
-    pitchers of that throwing hand.
+
+# Filter keys that translate to ``column = ?``.
+_EXACT_FILTERS = (
+    "batter", "pitcher", "bats", "throws", "half",
+    "inning", "outs", "balls", "strikes",
+)
+
+
+def _build_where(filters: dict) -> tuple[list[str], list]:
+    """Translate a filter dict into a list of SQL conditions plus parameters."""
+    parts: list[str] = []
+    params: list = []
+    for key, value in filters.items():
+        if value is None:
+            continue
+        if key in _EXACT_FILTERS:
+            parts.append(f"{key} = ?")
+            params.append(value)
+        elif key == "bases":
+            if isinstance(value, int):
+                parts.append("bases = ?")
+                params.append(value)
+            else:
+                placeholders = ",".join("?" * len(value))
+                parts.append(f"bases IN ({placeholders})")
+                params.extend(value)
+        elif key == "risp" and value:
+            # Runner in scoring position — any base-out code with 2B or 3B set.
+            parts.append("bases >= 2")
+        elif key == "count":
+            balls, strikes = value
+            parts.append("balls = ?")
+            params.append(balls)
+            parts.append("strikes = ?")
+            params.append(strikes)
+        elif key == "year_range":
+            lo, hi = value
+            parts.append("year BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key == "date_range":
+            lo, hi = value
+            parts.append("date BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key == "home_lead_range":
+            lo, hi = value
+            parts.append("home_lead BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key in ("sh_fl", "sf_fl"):
+            parts.append(f"{key} = ?")
+            params.append(1 if value else 0)
+        else:
+            raise ValueError(f"unknown filter: {key!r}")
+    return parts, params
+
+
+def _one_hand(hands: set[str]) -> str:
+    """Collapse the hands seen in a query result to a single code.
+
+    One hand for an ordinary player; "B" when both appear (a switch hitter
+    spanning both pitcher hands); "" when there is no data.
     """
-    sql = (
-        "SELECT bats, outcome, SUM(count) FROM batting "
-        "WHERE batter = ? AND year BETWEEN ? AND ?"
-    )
-    params: list = [batter, start_year, end_year]
-    if vs_hand is not None:
-        sql += " AND vs_hand = ?"
-        params.append(vs_hand)
-    sql += " GROUP BY bats, outcome"
+    if len(hands) == 1:
+        return next(iter(hands))
+    return "B" if hands else ""
 
+
+def query_outcomes(conn: sqlite3.Connection, **filters) -> RateLine:
+    """Sum outcomes across every at-bat that matches the given filters.
+
+    See the module docstring for the accepted filter keys. Returns a
+    ``RateLine`` without a player hand (use ``batter_line``/``pitcher_line``
+    when that matters).
+    """
+    where_parts, params = _build_where(filters)
+    sql = "SELECT outcome, COUNT(*) FROM at_bats"
+    if where_parts:
+        sql += " WHERE " + " AND ".join(where_parts)
+    sql += " GROUP BY outcome"
+    counts: dict[str, int] = {}
+    for outcome, total in conn.execute(sql, params):
+        counts[outcome] = total
+    return RateLine(counts=counts)
+
+
+def batter_line(
+    conn: sqlite3.Connection, batter: str, **filters,
+) -> RateLine:
+    """A batter's outcome counts, with any additional filters.
+
+    The returned ``RateLine.hand`` is the batter's batting side seen in the
+    filtered data — one of "L", "R", "B" (switch spanning both), or "".
+    """
+    where_parts, params = _build_where({**filters, "batter": batter})
+    sql = (
+        "SELECT bats, outcome, COUNT(*) FROM at_bats "
+        f"WHERE {' AND '.join(where_parts)} "
+        "GROUP BY bats, outcome"
+    )
     counts: dict[str, int] = {}
     hands: set[str] = set()
     for bats, outcome, total in conn.execute(sql, params):
@@ -153,27 +219,15 @@ def batter_line(
 
 
 def pitcher_line(
-    conn: sqlite3.Connection,
-    pitcher: str,
-    start_year: int,
-    end_year: int,
-    vs_hand: str | None = None,
+    conn: sqlite3.Connection, pitcher: str, **filters,
 ) -> RateLine:
-    """A pitcher's outcome counts over [start_year, end_year].
-
-    With ``vs_hand`` ("L" or "R"), restricts to plate appearances against
-    batters batting from that side.
-    """
+    """A pitcher's outcome counts, with any additional filters."""
+    where_parts, params = _build_where({**filters, "pitcher": pitcher})
     sql = (
-        "SELECT throws, outcome, SUM(count) FROM pitching "
-        "WHERE pitcher = ? AND year BETWEEN ? AND ?"
+        "SELECT throws, outcome, COUNT(*) FROM at_bats "
+        f"WHERE {' AND '.join(where_parts)} "
+        "GROUP BY throws, outcome"
     )
-    params: list = [pitcher, start_year, end_year]
-    if vs_hand is not None:
-        sql += " AND vs_hand = ?"
-        params.append(vs_hand)
-    sql += " GROUP BY throws, outcome"
-
     counts: dict[str, int] = {}
     hands: set[str] = set()
     for throws, outcome, total in conn.execute(sql, params):
@@ -182,39 +236,9 @@ def pitcher_line(
     return RateLine(counts=counts, hand=_one_hand(hands))
 
 
-def league_line(
-    conn: sqlite3.Connection,
-    bats: str,
-    throws: str,
-    start_year: int,
-    end_year: int,
-) -> RateLine:
-    """The league baseline for one handedness matchup over a year range."""
-    counts: dict[str, int] = {}
-    for outcome, total in conn.execute(
-        "SELECT outcome, SUM(count) FROM league "
-        "WHERE bats = ? AND throws = ? AND year BETWEEN ? AND ? "
-        "GROUP BY outcome",
-        (bats, throws, start_year, end_year),
-    ):
-        counts[outcome] = total
-    return RateLine(counts=counts, hand="")
+def league_line(conn: sqlite3.Connection, **filters) -> RateLine:
+    """The league baseline for the given filters.
 
-
-def stored_rate_years(conn: sqlite3.Connection) -> tuple[int | None, int | None, int]:
-    """Return (earliest year, latest year, distinct year count) in the store."""
-    low, high, count = conn.execute(
-        "SELECT MIN(year), MAX(year), COUNT(DISTINCT year) FROM league"
-    ).fetchone()
-    return low, high, count
-
-
-def _one_hand(hands: set[str]) -> str:
-    """Collapse the hands seen in a query to a single code.
-
-    One hand for an ordinary player; "B" when both appear (a switch hitter
-    queried across both pitcher hands); "" when there is no data.
+    Pass ``bats=`` and/or ``throws=`` for a handedness-matchup baseline.
     """
-    if len(hands) == 1:
-        return next(iter(hands))
-    return "B" if hands else ""
+    return query_outcomes(conn, **filters)

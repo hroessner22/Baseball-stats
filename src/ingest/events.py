@@ -19,11 +19,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # cwevent output columns we read, by index. The ingestion requests fields
-# 0-35 (``cwevent -f 0-35``), so a column's index is its cwevent field number.
-_GAME_ID = 0
+# 0-39 (``cwevent -f 0-39``), so a column's index is its cwevent field number.
+_GAME_ID = 0           # e.g. "ANA202404050" — the date is chars 3-10
 _INNING = 2
 _BAT_HOME_ID = 3       # "0" = visitor batting, "1" = home team batting
 _OUTS = 4
+_BALLS = 5             # balls in the count when the play ended
+_STRIKES = 6           # strikes in the count when the play ended
 _AWAY_SCORE = 8        # running score, before the play
 _HOME_SCORE = 9
 _BAT_ID = 10
@@ -35,7 +37,9 @@ _BASE2_RUN = 27
 _BASE3_RUN = 28
 _EVENT_CD = 34         # the play's outcome code (see _OUTCOME_BY_EVENT_CD)
 _BAT_EVENT_FL = 35     # "T" on the play that ends a plate appearance
-_FIELD_RANGE = "0-35"
+_SH_FL = 38            # sacrifice hit flag — separates sac bunts from outs
+_SF_FL = 39            # sacrifice fly flag — separates sac flies from outs
+_FIELD_RANGE = "0-39"
 
 # cwevent EVENT_CD values mapped to the plate-appearance outcome we record.
 # Codes not listed never end a plate appearance (stolen bases, balks, ...).
@@ -63,6 +67,8 @@ class AtBat:
     """One completed plate appearance, from the play-by-play record."""
 
     year: int
+    date: int         # YYYYMMDD, derived from the game id (for date filters)
+    game_id: str      # Retrosheet game id — joins to game-level data
     batter: str       # Retrosheet player id
     bats: str         # "L" or "R" — the side actually batted from
     pitcher: str
@@ -73,6 +79,10 @@ class AtBat:
     outs: int         # outs before the plate appearance (0-2)
     bases: int        # runners on base, 0-7 (bit 0 = 1B, 1 = 2B, 2 = 3B)
     home_lead: int    # home score minus visitor score, before the play
+    balls: int        # balls in the count when the plate appearance ended
+    strikes: int      # strikes in the count when the plate appearance ended
+    sh_fl: bool       # sacrifice hit (separates sac bunts from in-play outs)
+    sf_fl: bool       # sacrifice fly (separates sac flies from in-play outs)
 
 
 def _cwevent_path() -> str:
@@ -99,7 +109,7 @@ def _at_bat(row: list[str], year: int) -> AtBat | None:
     Returns ``None`` when the row is not a completed plate appearance, or when
     the batter or pitcher hand is unknown so it cannot be placed in a split.
     """
-    if len(row) <= _BAT_EVENT_FL or row[_BAT_EVENT_FL] != "T":
+    if len(row) <= _SF_FL or row[_BAT_EVENT_FL] != "T":
         return None  # not the play that ends a plate appearance
     outcome = _OUTCOME_BY_EVENT_CD.get(int(row[_EVENT_CD]))
     if outcome is None:
@@ -112,8 +122,13 @@ def _at_bat(row: list[str], year: int) -> AtBat | None:
         | (2 if row[_BASE2_RUN] else 0)
         | (4 if row[_BASE3_RUN] else 0)
     )
+    game_id = row[_GAME_ID]
+    # Retrosheet game ids embed the date — "ANA202404050" → 2024-04-05.
+    date = int(game_id[3:11]) if len(game_id) >= 11 else year * 10000
     return AtBat(
         year=year,
+        date=date,
+        game_id=game_id,
         batter=row[_BAT_ID],
         bats=bats,
         pitcher=row[_PIT_ID],
@@ -124,6 +139,10 @@ def _at_bat(row: list[str], year: int) -> AtBat | None:
         outs=int(row[_OUTS]),
         bases=bases,
         home_lead=int(row[_HOME_SCORE]) - int(row[_AWAY_SCORE]),
+        balls=int(row[_BALLS]),
+        strikes=int(row[_STRIKES]),
+        sh_fl=row[_SH_FL] == "T",
+        sf_fl=row[_SF_FL] == "T",
     )
 
 

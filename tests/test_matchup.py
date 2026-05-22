@@ -1,6 +1,6 @@
 """Tests for the batter-versus-pitcher matchup engine."""
 from src.engine.matchup import _regressed, predict, predict_matchup
-from src.engine.rates import RateLine, open_rate_store, tally_season, write_season
+from src.engine.rates import RateLine, open_rate_store, write_at_bats
 from src.ingest.events import AtBat
 
 
@@ -12,8 +12,10 @@ def _line(**counts):
 def _ab(batter, bats, pitcher, throws, outcome):
     """An AtBat carrying only the fields the rate tables read."""
     return AtBat(
-        year=2024, batter=batter, bats=bats, pitcher=pitcher, throws=throws,
+        year=2024, date=20240401, game_id="TST202404010",
+        batter=batter, bats=bats, pitcher=pitcher, throws=throws,
         outcome=outcome, inning=1, half="top", outs=0, bases=0, home_lead=0,
+        balls=0, strikes=0, sh_fl=False, sf_fl=False,
     )
 
 
@@ -71,13 +73,13 @@ def test_regressed_with_no_data_is_the_league():
 def test_predict_matchup_uses_handedness_splits(tmp_path):
     conn = open_rate_store(tmp_path / "rates.db")
     # "slug" bats right; he homers off lefties but strikes out against righties.
-    write_season(conn, 2024, tally_season(
+    write_at_bats(conn, 2024,
         [_ab("slug", "R", "lefty", "L", "HR")] * 40
         + [_ab("slug", "R", "lefty", "L", "OUT")] * 10
         + [_ab("slug", "R", "righty", "R", "K")] * 50
         + [_ab("filler", "L", "lefty", "L", "OUT")] * 50
-        + [_ab("filler", "R", "lefty", "L", "K")] * 50
-    ))
+        + [_ab("filler", "R", "lefty", "L", "K")] * 50,
+    )
     matchup = predict_matchup(conn, "slug", "lefty", 2024, 2024, regression_pa=0)
     assert matchup.bats == "R"
     assert matchup.throws == "L"
