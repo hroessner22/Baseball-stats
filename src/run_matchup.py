@@ -1,9 +1,11 @@
-"""The batter-versus-pitcher matchup engine — ingest and demonstration.
+"""The batter-versus-pitcher matchup engine — ingest, scouting, predictions.
 
-Ingests every available Retrosheet event season (play-by-play) into the rate
-store, then predicts plate-appearance outcomes for a handful of marquee
-matchups — each shown beside the batter's, the pitcher's, and the league's own
-rates, so the prediction explains itself.
+Ingests every available Retrosheet event season (play-by-play and game info)
+into the rate store, then for each marquee batter prints a multi-dimensional
+**scouting report** — traditional BA / OBP / SLG / OPS / wOBA across every
+matrix dimension we capture (handedness, count, base-out, rest, day/night) —
+and for each marquee matchup prints the engine's predicted plate-appearance
+outcome distribution, side-by-side with the rates that produced it.
 
 Run from the repository root:
 
@@ -16,6 +18,8 @@ from pathlib import Path
 
 from src.engine.matchup import Matchup, predict_matchup
 from src.engine.rates import (
+    RateLine,
+    batter_line,
     open_rate_store,
     stored_rate_years,
     write_at_bats,
@@ -36,11 +40,31 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = REPO_ROOT / "data" / "raw"
 RATE_STORE_PATH = REPO_ROOT / "data" / "processed" / "rates.db"
 
-# Marquee matchups to demonstrate — (batter id, pitcher id), Retrosheet ids.
+# Marquee players for the scouting reports.
+DEMO_BATTERS = ["judga001", "ohtas001", "sotoj001"]
+# Marquee matchups to predict — (batter id, pitcher id).
 DEMO_MATCHUPS = [
     ("judga001", "skubt001"),  # Aaron Judge   vs Tarik Skubal
     ("ohtas001", "ceasd001"),  # Shohei Ohtani vs Dylan Cease
     ("sotoj001", "salec001"),  # Juan Soto     vs Chris Sale
+]
+
+# The splits each scouting report shows. Each entry is a label + filter dict
+# passed to ``batter_line``. Empty splits (no PA matched) are skipped.
+SCOUTING_SPLITS = [
+    ("Overall",            {}),
+    ("vs RHP",             {"throws": "R"}),
+    ("vs LHP",             {"throws": "L"}),
+    ("Runners in scoring", {"risp": True}),
+    ("With 2 outs",        {"outs": 2}),
+    ("0-strike counts",    {"strikes": 0}),
+    ("2-strike counts",    {"strikes": 2}),
+    ("3-1 count",          {"count": (3, 1)}),
+    ("0 days rest",        {"batter_days_rest": 0}),
+    ("1 day rest",         {"batter_days_rest": 1}),
+    ("2+ days rest",       {"batter_days_rest_range": (2, 30)}),
+    ("Day games",          {"daynight": "D"}),
+    ("Night games",        {"daynight": "N"}),
 ]
 
 
@@ -66,11 +90,48 @@ def ingest(conn: sqlite3.Connection) -> None:
             print(f"  {year}: no event data — skipped")
 
 
+def _three(value: float) -> str:
+    """Format a rate stat as the classic three-decimal baseball line.
+
+    ``.284`` for sub-1.0 rates; ``1.351`` when the rate exceeds 1.0
+    (slugging in select situations can; on-base mathematically cannot).
+    """
+    if value >= 1.0:
+        return f"{value:.3f}"
+    return f".{int(round(value * 1000)):03d}"
+
+
+def _slash_line(line: RateLine) -> str:
+    """Render a RateLine as ``PA  .BA/.OBP/.SLG  OPS x.xxx  wOBA x.xxx``."""
+    return (
+        f"{line.total:>5,} PA  "
+        f"{_three(line.ba)}/{_three(line.obp)}/{_three(line.slg)}  "
+        f"OPS {line.ops:5.3f}  wOBA {line.woba:5.3f}"
+    )
+
+
+def print_scouting_report(
+    conn: sqlite3.Connection,
+    batter: str,
+    names: dict[str, str],
+    year_range: tuple[int, int],
+) -> None:
+    """Print a multi-dimensional scouting report for a batter."""
+    name = names.get(batter, batter)
+    start, end = year_range
+    print(f"\n── {name} ({batter}) — scouting report  {start}-{end}")
+    for label, filters in SCOUTING_SPLITS:
+        line = batter_line(conn, batter, year_range=year_range, **filters)
+        if line.total == 0:
+            continue
+        print(f"  {label:24}  {_slash_line(line)}")
+
+
 def _print_matchup(matchup: Matchup, names: dict[str, str]) -> None:
     """Print one matchup — the prediction beside the rates that produced it."""
     batter = names.get(matchup.batter, matchup.batter)
     pitcher = names.get(matchup.pitcher, matchup.pitcher)
-    print(f"{batter} ({matchup.bats}HB)  vs  {pitcher} ({matchup.throws}HP)")
+    print(f"\n{batter} ({matchup.bats}HB)  vs  {pitcher} ({matchup.throws}HP)")
     print(f"  {matchup.batter_rates.total:,} PA vs {matchup.throws}HP   |   "
           f"{matchup.pitcher_rates.total:,} batters faced vs {matchup.bats}HB")
     print(f"  {'':9}{'batter':>9}{'pitcher':>9}{'league':>9}{'PREDICT':>9}")
@@ -80,7 +141,6 @@ def _print_matchup(matchup: Matchup, names: dict[str, str]) -> None:
               f"{100 * matchup.pitcher_rates.rate(outcome):8.1f}%"
               f"{100 * matchup.league.rate(outcome):8.1f}%"
               f"{100 * matchup.chance(outcome):8.1f}%")
-    print()
 
 
 def main() -> None:
@@ -98,7 +158,12 @@ def main() -> None:
 
     names = load_rosters(RAW_DIR / f"events{high}")
     demo_start = max(low, high - 4)
-    print(f"\nPredicted plate-appearance outcomes, {demo_start}-{high}:\n")
+
+    print(f"\n┃ Scouting reports, {demo_start}-{high}")
+    for batter in DEMO_BATTERS:
+        print_scouting_report(conn, batter, names, (demo_start, high))
+
+    print(f"\n┃ Predicted plate-appearance outcomes, {demo_start}-{high}")
     for batter, pitcher in DEMO_MATCHUPS:
         matchup = predict_matchup(conn, batter, pitcher, demo_start, high)
         _print_matchup(matchup, names)

@@ -1,5 +1,6 @@
 """Tests for the at-bats store and queries."""
 from src.engine.rates import (
+    RateLine,
     batter_line,
     league_line,
     open_rate_store,
@@ -284,3 +285,65 @@ def test_filter_by_pitcher_days_rest(tmp_path):
     ])
     rested = pitcher_line(conn, "sale", pitcher_days_rest_range=(3, 10))
     assert rested.counts == {"K": 1}
+
+
+# ── Traditional stats (Stage 4) ─────────────────────────────────────────
+
+
+def test_rate_line_traditional_stats():
+    """Hand-computed BA / OBP / SLG / OPS / ISO on a known line."""
+    line = RateLine(
+        counts={"1B": 10, "2B": 5, "3B": 1, "HR": 3, "BB": 5, "HBP": 1, "OUT": 25},
+        sh=1, sf=2,
+    )
+    # PA = 50; AB = 50 - 5 BB - 1 HBP - 1 SH - 2 SF = 41
+    # Hits = 1B + 2B + 3B + HR = 19
+    assert line.total == 50
+    assert line.ab == 41
+    assert line.hits == 19
+    assert abs(line.ba - 19 / 41) < 1e-9
+    # OBP = (H + BB + HBP) / (AB + BB + HBP + SF) = 25 / 49
+    assert abs(line.obp - 25 / 49) < 1e-9
+    # SLG = (10 + 2*5 + 3*1 + 4*3) / 41 = 35 / 41
+    assert abs(line.slg - 35 / 41) < 1e-9
+    # OPS = OBP + SLG
+    assert abs(line.ops - (25 / 49 + 35 / 41)) < 1e-9
+    # ISO = SLG - BA
+    assert abs(line.iso - (35 / 41 - 19 / 41)) < 1e-9
+
+
+def test_rate_line_woba_known_value():
+    """wOBA on a small known line — verify the weighted sum / denominator."""
+    line = RateLine(counts={"BB": 1, "1B": 1, "HR": 1, "OUT": 1})
+    # AB = 4 - 1 BB = 3. denom = AB + BB + SF + HBP = 3 + 1 + 0 + 0 = 4.
+    # num = 0.69*1 + 0.89*1 + 2.10*1 = 3.68.  wOBA = 3.68 / 4 = 0.92.
+    assert abs(line.woba - 0.92) < 1e-9
+
+
+def test_query_populates_sh_and_sf(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_at_bats(conn, 2024, [
+        _ab(batter="x", outcome="OUT", sh_fl=True),
+        _ab(batter="x", outcome="OUT", sf_fl=True),
+        _ab(batter="x", outcome="OUT"),
+        _ab(batter="x", outcome="HR"),
+    ])
+    line = batter_line(conn, "x")
+    assert line.total == 4
+    assert line.sh == 1
+    assert line.sf == 1
+    # AB = 4 - 0 BB - 0 HBP - 1 SH - 1 SF = 2.  Hits = 1 (the HR).
+    assert line.ab == 2
+    assert line.hits == 1
+    assert abs(line.ba - 0.5) < 1e-9
+    conn.close()
+
+
+def test_rate_line_handles_walk_only_player():
+    """A walk-only player has 0 AB; rates that need AB should be 0 (not crash)."""
+    line = RateLine(counts={"BB": 1})
+    assert line.ab == 0
+    assert line.ba == 0.0
+    assert line.slg == 0.0
+    # OBP denom = AB + BB + HBP + SF = 0 + 1 + 0 + 0 = 1; numerator = 1.
+    assert line.obp == 1.0
