@@ -2,20 +2,24 @@
 
 Every parsed plate appearance is kept in a SQLite table (``at_bats``) with all
 of its situational fields — handedness, count, base-out state, inning, score
-margin, and the sacrifice flags. A parallel ``games`` table carries one row
-per game — schedule, park, weather, attendance, summary score — joined to
-``at_bats`` by ``game_id``. Queries roll up outcome counts under any
-combination of filters; the matchup engine builds on these.
+margin, sacrifice flags, and the schedule-density fields (days rest, games
+in the last 7 days). A parallel ``games`` table carries one row per game —
+schedule, park, weather, attendance, summary score — joined to ``at_bats`` by
+``game_id``. Queries roll up outcome counts under any combination of filters;
+the matchup engine builds on these.
 
 Filters accepted by ``query_outcomes`` / ``batter_line`` / ``pitcher_line`` /
 ``league_line``:
 
   at-bat exact   batter, pitcher, bats, throws, half, inning, outs, balls,
-                 strikes
+                 strikes, batter_days_rest, pitcher_days_rest,
+                 batter_games_last_7, pitcher_games_last_7
   at-bat bases   int or tuple of ints (0-7 — the base-out code)
   at-bat risp    True → bases in {2, 3, 4, 5, 6, 7} (runner on 2B or 3B)
   at-bat count   (balls, strikes) — e.g. (3, 1) for a 3-1 count
-  at-bat ranges  year_range, date_range, home_lead_range
+  at-bat ranges  year_range, date_range, home_lead_range,
+                 batter_days_rest_range, pitcher_days_rest_range,
+                 batter_games_last_7_range, pitcher_games_last_7_range
   at-bat sacs    sh_fl, sf_fl (bool)
 
   game exact     daynight ("D"/"N"), home_team, away_team, park_id,
@@ -90,17 +94,100 @@ CREATE INDEX IF NOT EXISTS idx_games_park      ON games (park_id);
 
 @dataclass
 class RateLine:
-    """Outcome counts for one player or split."""
+    """Outcome counts for one player or split, with traditional rate stats.
+
+    ``counts`` holds plate-appearance outcomes (K, BB, 1B, 2B, 3B, HR, OUT, …).
+    ``sh`` and ``sf`` count sacrifice hits and sacrifice flies separately —
+    they are also counted in ``counts['OUT']``, but distinguished so the
+    classic batting-average formula (AB excludes sacrifices) is exact.
+    """
 
     counts: dict[str, int]
-    hand: str = ""  # the player's own hand within the filtered data
+    sh: int = 0
+    sf: int = 0
+    hand: str = ""
 
     @property
     def total(self) -> int:
+        """Plate appearances."""
         return sum(self.counts.values())
 
+    @property
+    def hits(self) -> int:
+        c = self.counts
+        return c.get("1B", 0) + c.get("2B", 0) + c.get("3B", 0) + c.get("HR", 0)
+
+    @property
+    def ab(self) -> int:
+        """At-bats — plate appearances minus walks, HBP, and sacrifices."""
+        return (
+            self.total
+            - self.counts.get("BB", 0)
+            - self.counts.get("HBP", 0)
+            - self.sh
+            - self.sf
+        )
+
+    @property
+    def total_bases(self) -> int:
+        c = self.counts
+        return (
+            c.get("1B", 0)
+            + 2 * c.get("2B", 0)
+            + 3 * c.get("3B", 0)
+            + 4 * c.get("HR", 0)
+        )
+
+    @property
+    def ba(self) -> float:
+        """Batting average — hits per at-bat."""
+        return self.hits / self.ab if self.ab else 0.0
+
+    @property
+    def obp(self) -> float:
+        """On-base percentage."""
+        bb = self.counts.get("BB", 0)
+        hbp = self.counts.get("HBP", 0)
+        denom = self.ab + bb + hbp + self.sf
+        return (self.hits + bb + hbp) / denom if denom else 0.0
+
+    @property
+    def slg(self) -> float:
+        """Slugging average — total bases per at-bat."""
+        return self.total_bases / self.ab if self.ab else 0.0
+
+    @property
+    def ops(self) -> float:
+        return self.obp + self.slg
+
+    @property
+    def iso(self) -> float:
+        """Isolated power — extra-base power per at-bat."""
+        return self.slg - self.ba
+
+    @property
+    def woba(self) -> float:
+        """Weighted on-base average (linear weights, modern-era constants).
+
+        The weights vary slightly by run environment in rigorous sabermetrics;
+        the fixed values used here are accurate to within a few thousandths.
+        """
+        c = self.counts
+        bb = c.get("BB", 0)
+        hbp = c.get("HBP", 0)
+        num = (
+            0.69 * bb
+            + 0.72 * hbp
+            + 0.89 * c.get("1B", 0)
+            + 1.27 * c.get("2B", 0)
+            + 1.62 * c.get("3B", 0)
+            + 2.10 * c.get("HR", 0)
+        )
+        denom = self.ab + bb + self.sf + hbp
+        return num / denom if denom else 0.0
+
     def rate(self, outcome: str) -> float:
-        """The share of plate appearances ending in ``outcome`` (0.0–1.0)."""
+        """Share of plate appearances ending in ``outcome`` (0.0–1.0)."""
         return self.counts.get(outcome, 0) / self.total if self.total else 0.0
 
 
@@ -334,17 +421,26 @@ _FROM = "FROM at_bats LEFT JOIN games ON at_bats.game_id = games.game_id"
 def query_outcomes(conn: sqlite3.Connection, **filters) -> RateLine:
     """Sum outcomes across every at-bat that matches the given filters.
 
-    See the module docstring for the accepted filter keys.
+    See the module docstring for the accepted filter keys. The returned
+    ``RateLine`` also carries ``sh`` and ``sf`` totals so it can compute
+    classical batting average / OBP / SLG / wOBA correctly.
     """
     where_parts, params = _build_where(filters)
-    sql = f"SELECT at_bats.outcome, COUNT(*) {_FROM}"
+    sql = (
+        f"SELECT at_bats.outcome, COUNT(*), "
+        f"SUM(at_bats.sh_fl), SUM(at_bats.sf_fl) {_FROM}"
+    )
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
     sql += " GROUP BY at_bats.outcome"
     counts: dict[str, int] = {}
-    for outcome, total in conn.execute(sql, params):
+    sh_total = 0
+    sf_total = 0
+    for outcome, total, sh_sum, sf_sum in conn.execute(sql, params):
         counts[outcome] = total
-    return RateLine(counts=counts)
+        sh_total += sh_sum or 0
+        sf_total += sf_sum or 0
+    return RateLine(counts=counts, sh=sh_total, sf=sf_total)
 
 
 def batter_line(
@@ -357,16 +453,21 @@ def batter_line(
     """
     where_parts, params = _build_where({**filters, "batter": batter})
     sql = (
-        f"SELECT at_bats.bats, at_bats.outcome, COUNT(*) {_FROM} "
+        f"SELECT at_bats.bats, at_bats.outcome, COUNT(*), "
+        f"SUM(at_bats.sh_fl), SUM(at_bats.sf_fl) {_FROM} "
         f"WHERE {' AND '.join(where_parts)} "
         "GROUP BY at_bats.bats, at_bats.outcome"
     )
     counts: dict[str, int] = {}
     hands: set[str] = set()
-    for bats, outcome, total in conn.execute(sql, params):
+    sh_total = 0
+    sf_total = 0
+    for bats, outcome, total, sh_sum, sf_sum in conn.execute(sql, params):
         counts[outcome] = counts.get(outcome, 0) + total
         hands.add(bats)
-    return RateLine(counts=counts, hand=_one_hand(hands))
+        sh_total += sh_sum or 0
+        sf_total += sf_sum or 0
+    return RateLine(counts=counts, sh=sh_total, sf=sf_total, hand=_one_hand(hands))
 
 
 def pitcher_line(
@@ -375,16 +476,21 @@ def pitcher_line(
     """A pitcher's outcome counts, with any additional filters."""
     where_parts, params = _build_where({**filters, "pitcher": pitcher})
     sql = (
-        f"SELECT at_bats.throws, at_bats.outcome, COUNT(*) {_FROM} "
+        f"SELECT at_bats.throws, at_bats.outcome, COUNT(*), "
+        f"SUM(at_bats.sh_fl), SUM(at_bats.sf_fl) {_FROM} "
         f"WHERE {' AND '.join(where_parts)} "
         "GROUP BY at_bats.throws, at_bats.outcome"
     )
     counts: dict[str, int] = {}
     hands: set[str] = set()
-    for throws, outcome, total in conn.execute(sql, params):
+    sh_total = 0
+    sf_total = 0
+    for throws, outcome, total, sh_sum, sf_sum in conn.execute(sql, params):
         counts[outcome] = counts.get(outcome, 0) + total
         hands.add(throws)
-    return RateLine(counts=counts, hand=_one_hand(hands))
+        sh_total += sh_sum or 0
+        sf_total += sf_sum or 0
+    return RateLine(counts=counts, sh=sh_total, sf=sf_total, hand=_one_hand(hands))
 
 
 def league_line(conn: sqlite3.Connection, **filters) -> RateLine:
