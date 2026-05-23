@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0c0e0c">
+    <title>DIAMOND:CONTEXT</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>DIAMOND<span class="colon">:</span>CONTEXT</h1>
+        <div class="live-indicator" aria-label="Live">
+            <span class="dot"></span><span class="label">LIVE</span>
+        </div>
+    </header>
+
+    <main id="board" class="board"></main>
+
+    <nav aria-label="sections">
+        <a href="#live" class="nav-item active"><span class="num">01</span> LIVE</a>
+        <a href="#standings" class="nav-item disabled"><span class="num">02</span> STANDINGS</a>
+        <a href="#leaders" class="nav-item disabled"><span class="num">03</span> LEADERS</a>
+        <a href="#mvp" class="nav-item disabled"><span class="num">04</span> MVP</a>
+    </nav>
+
+    <script src="app.js"></script>
+</body>
+</html>
