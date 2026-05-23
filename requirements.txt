@@ -1,7 +1,9 @@
 # Python dependencies. Install with:  pip install -r requirements.txt
 #
-# The engine uses the Python standard library plus two small packages:
-# certifi for HTTPS certificate verification, and pytest as the test runner.
+# certifi — HTTPS certificate verification for Retrosheet downloads.
+# pybaseball — Baseball Savant / Statcast pitch-level downloads (modern era).
+# pytest — test runner.
 
 certifi==2026.5.20
+pybaseball==2.2.7
 pytest==9.0.3

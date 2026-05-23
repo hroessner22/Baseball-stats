@@ -5,8 +5,11 @@ from src.engine.rates import (
     league_line,
     open_rate_store,
     pitcher_line,
+    pitcher_pitch_mix,
+    pitcher_velocity,
     query_outcomes,
     stored_game_years,
+    stored_pitch_years,
     stored_rate_years,
     write_at_bats,
     write_games,
@@ -347,3 +350,51 @@ def test_rate_line_handles_walk_only_player():
     assert line.slg == 0.0
     # OBP denom = AB + BB + HBP + SF = 0 + 1 + 0 + 0 = 1; numerator = 1.
     assert line.obp == 1.0
+
+
+# ── Statcast pitches (Stage 5) ──────────────────────────────────────────
+
+
+def _insert_pitch(conn, *, pitcher_mlbam, batter_mlbam=1, stand="R",
+                  pitch_name="4-Seam Fastball", release_speed=95.0,
+                  year=2024, game_pk=1):
+    conn.execute(
+        "INSERT INTO pitches (year, date, game_pk, batter_mlbam, pitcher_mlbam, "
+        "stand, p_throws, pitch_name, release_speed) "
+        "VALUES (?, 20240601, ?, ?, ?, ?, 'L', ?, ?)",
+        (year, game_pk, batter_mlbam, pitcher_mlbam, stand, pitch_name, release_speed),
+    )
+
+
+def test_pitcher_pitch_mix(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    for stand, name, vel in [
+        ("R", "4-Seam Fastball", 95.5),
+        ("R", "4-Seam Fastball", 95.0),
+        ("L", "Slider", 88.0),
+        ("L", "Slider", 88.2),
+        ("R", "Changeup", 84.0),
+    ]:
+        _insert_pitch(conn, pitcher_mlbam=100, stand=stand,
+                      pitch_name=name, release_speed=vel)
+    conn.commit()
+
+    overall = pitcher_pitch_mix(conn, 100, (2024, 2024))
+    assert overall == {"4-Seam Fastball": 2, "Slider": 2, "Changeup": 1}
+
+    vs_lhb = pitcher_pitch_mix(conn, 100, (2024, 2024), bats="L")
+    assert vs_lhb == {"Slider": 2}
+
+    velos = pitcher_velocity(conn, 100, (2024, 2024))
+    assert abs(velos["4-Seam Fastball"] - 95.25) < 1e-9
+    assert abs(velos["Slider"] - 88.1) < 1e-9
+    conn.close()
+
+
+def test_stored_pitch_years(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    _insert_pitch(conn, pitcher_mlbam=100, year=2023, game_pk=1)
+    _insert_pitch(conn, pitcher_mlbam=100, year=2024, game_pk=2)
+    conn.commit()
+    assert stored_pitch_years(conn) == (2023, 2024, 2)
+    conn.close()
