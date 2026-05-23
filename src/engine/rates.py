@@ -49,7 +49,11 @@ CREATE TABLE IF NOT EXISTS at_bats (
     balls     INTEGER NOT NULL,
     strikes   INTEGER NOT NULL,
     sh_fl     INTEGER NOT NULL,
-    sf_fl     INTEGER NOT NULL
+    sf_fl     INTEGER NOT NULL,
+    batter_days_rest     INTEGER NOT NULL DEFAULT 0,
+    pitcher_days_rest    INTEGER NOT NULL DEFAULT 0,
+    batter_games_last_7  INTEGER NOT NULL DEFAULT 0,
+    pitcher_games_last_7 INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_at_bats_batter  ON at_bats (batter, year);
 CREATE INDEX IF NOT EXISTS idx_at_bats_pitcher ON at_bats (pitcher, year);
@@ -101,11 +105,40 @@ class RateLine:
 
 
 def open_rate_store(path: Path) -> sqlite3.Connection:
-    """Open the store, creating the file, tables, and indexes."""
+    """Open the store, creating the file, tables, and indexes.
+
+    Enables WAL journal mode so a reader (a status check, a query) can run
+    while the ingest is writing — without WAL, SQLite serialises and the
+    writer errors out on any concurrent read lock.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=15000")
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after a database was first created.
+
+    SQLite's ``CREATE TABLE IF NOT EXISTS`` leaves an existing table untouched,
+    so new columns must be added separately. Each ``ALTER TABLE ADD COLUMN``
+    here is idempotent — already-present columns raise ``OperationalError``
+    which we swallow.
+    """
+    additions = [
+        ("at_bats", "batter_days_rest",     "INTEGER NOT NULL DEFAULT 0"),
+        ("at_bats", "pitcher_days_rest",    "INTEGER NOT NULL DEFAULT 0"),
+        ("at_bats", "batter_games_last_7",  "INTEGER NOT NULL DEFAULT 0"),
+        ("at_bats", "pitcher_games_last_7", "INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for table, column, definition in additions:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def write_at_bats(
@@ -120,14 +153,18 @@ def write_at_bats(
     conn.executemany(
         "INSERT INTO at_bats "
         "(year, date, game_id, batter, bats, pitcher, throws, outcome, "
-        " inning, half, outs, bases, home_lead, balls, strikes, sh_fl, sf_fl) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " inning, half, outs, bases, home_lead, balls, strikes, sh_fl, sf_fl, "
+        " batter_days_rest, pitcher_days_rest, "
+        " batter_games_last_7, pitcher_games_last_7) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 year, ab.date, ab.game_id, ab.batter, ab.bats, ab.pitcher,
                 ab.throws, ab.outcome, ab.inning, ab.half, ab.outs, ab.bases,
                 ab.home_lead, ab.balls, ab.strikes,
                 int(ab.sh_fl), int(ab.sf_fl),
+                ab.batter_days_rest, ab.pitcher_days_rest,
+                ab.batter_games_last_7, ab.pitcher_games_last_7,
             )
             for ab in at_bats
         ],
@@ -188,6 +225,8 @@ def stored_game_years(
 _AT_BAT_EXACT = (
     "batter", "pitcher", "bats", "throws", "half",
     "inning", "outs", "balls", "strikes",
+    "batter_days_rest", "pitcher_days_rest",
+    "batter_games_last_7", "pitcher_games_last_7",
 )
 # Filter keys that translate to ``games.column = ?``.
 _GAME_EXACT = (
@@ -246,6 +285,22 @@ def _build_where(filters: dict) -> tuple[list[str], list]:
         elif key == "home_lead_range":
             lo, hi = value
             parts.append("at_bats.home_lead BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key == "batter_days_rest_range":
+            lo, hi = value
+            parts.append("at_bats.batter_days_rest BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key == "pitcher_days_rest_range":
+            lo, hi = value
+            parts.append("at_bats.pitcher_days_rest BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key == "batter_games_last_7_range":
+            lo, hi = value
+            parts.append("at_bats.batter_games_last_7 BETWEEN ? AND ?")
+            params.extend([lo, hi])
+        elif key == "pitcher_games_last_7_range":
+            lo, hi = value
+            parts.append("at_bats.pitcher_games_last_7 BETWEEN ? AND ?")
             params.extend([lo, hi])
         elif key in ("sh_fl", "sf_fl"):
             parts.append(f"at_bats.{key} = ?")
