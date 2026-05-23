@@ -16,7 +16,9 @@ from src.ingest.events import AtBat, Game
 def _ab(batter="bttr", bats="R", pitcher="ptch", throws="R", outcome="OUT",
         year=2024, inning=1, outs=0, bases=0, balls=0, strikes=0,
         home_lead=0, half="top", sh_fl=False, sf_fl=False,
-        game_id="TST202404010", date=20240401):
+        game_id="TST202404010", date=20240401,
+        batter_days_rest=0, pitcher_days_rest=0,
+        batter_games_last_7=0, pitcher_games_last_7=0):
     """An AtBat with sensible defaults; tests override only what they need."""
     return AtBat(
         year=year, date=date, game_id=game_id,
@@ -24,6 +26,10 @@ def _ab(batter="bttr", bats="R", pitcher="ptch", throws="R", outcome="OUT",
         outcome=outcome, inning=inning, half=half,
         outs=outs, bases=bases, home_lead=home_lead,
         balls=balls, strikes=strikes, sh_fl=sh_fl, sf_fl=sf_fl,
+        batter_days_rest=batter_days_rest,
+        pitcher_days_rest=pitcher_days_rest,
+        batter_games_last_7=batter_games_last_7,
+        pitcher_games_last_7=pitcher_games_last_7,
     )
 
 
@@ -239,3 +245,42 @@ def test_write_games_is_idempotent(tmp_path):
     write_games(conn, 2024, [_game(game_id="X1")])
     assert stored_game_years(conn) == (2024, 2024, 1)
     conn.close()
+
+
+# ── Schedule density (Stage 3) ──────────────────────────────────────────
+
+
+def test_filter_by_days_rest(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_at_bats(conn, 2024, [
+        _ab(batter="judge", outcome="HR", batter_days_rest=4),
+        _ab(batter="judge", outcome="K", batter_days_rest=1),
+        _ab(batter="judge", outcome="K", batter_days_rest=0),
+    ])
+    rested = batter_line(conn, "judge", batter_days_rest_range=(3, 7))
+    tired = batter_line(conn, "judge", batter_days_rest_range=(0, 1))
+    assert rested.counts == {"HR": 1}
+    assert tired.total == 2
+
+
+def test_filter_by_games_last_7(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_at_bats(conn, 2024, [
+        _ab(batter="judge", outcome="HR", batter_games_last_7=0),
+        _ab(batter="judge", outcome="OUT", batter_games_last_7=5),
+        _ab(batter="judge", outcome="OUT", batter_games_last_7=6),
+    ])
+    busy = batter_line(conn, "judge", batter_games_last_7_range=(5, 7))
+    fresh = batter_line(conn, "judge", batter_games_last_7=0)
+    assert busy.total == 2
+    assert fresh.counts == {"HR": 1}
+
+
+def test_filter_by_pitcher_days_rest(tmp_path):
+    conn = open_rate_store(tmp_path / "rates.db")
+    write_at_bats(conn, 2024, [
+        _ab(pitcher="sale", outcome="K", pitcher_days_rest=4),
+        _ab(pitcher="sale", outcome="HR", pitcher_days_rest=0),
+    ])
+    rested = pitcher_line(conn, "sale", pitcher_days_rest_range=(3, 10))
+    assert rested.counts == {"K": 1}

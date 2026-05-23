@@ -15,7 +15,10 @@ from __future__ import annotations
 import csv
 import shutil
 import subprocess
-from dataclasses import dataclass
+from bisect import bisect_left
+from collections import defaultdict
+from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 
 # cwevent output columns we read, by index. The ingestion requests fields
@@ -83,6 +86,14 @@ class AtBat:
     strikes: int      # strikes in the count when the plate appearance ended
     sh_fl: bool       # sacrifice hit (separates sac bunts from in-play outs)
     sf_fl: bool       # sacrifice fly (separates sac flies from in-play outs)
+    # Schedule-density fields — populated by ``compute_rest`` after parsing.
+    # Within-season only: 0 means "no prior in-season game" (the very first
+    # game of the season, or a same-day prior game — a doubleheader's
+    # second leg).
+    batter_days_rest: int = 0
+    pitcher_days_rest: int = 0
+    batter_games_last_7: int = 0
+    pitcher_games_last_7: int = 0
 
 
 def _chadwick_tool(name: str) -> str:
@@ -176,6 +187,69 @@ def parse_events(events_dir: Path, year: int) -> list[AtBat]:
         if at_bat is not None:
             at_bats.append(at_bat)
     return at_bats
+
+
+def _ordinal(d: int) -> int:
+    """Convert a YYYYMMDD integer to a serial day number."""
+    return date(d // 10000, (d // 100) % 100, d % 100).toordinal()
+
+
+def _rest_for(
+    appearances: list[tuple[int, str]],
+    current: tuple[int, str],
+    ordinals: dict[int, int],
+) -> tuple[int, int]:
+    """For a sorted list of ``(date, game_id)`` tuples a player appeared in,
+    return ``(days_rest, games_in_last_7_days)`` for the current appearance.
+
+    Same-day prior games (doubleheaders) give ``days_rest = 0``; the very
+    first appearance of the season also reports 0 (no in-season prior).
+    """
+    idx = bisect_left(appearances, current)
+    if idx == 0:
+        return (0, 0)
+    prior = appearances[:idx]
+    last_date = prior[-1][0]
+    current_ord = ordinals[current[0]]
+    days_rest = current_ord - ordinals[last_date]
+    cutoff = current_ord - 6   # the 7-day window: today and the prior 6 days
+    games_7 = sum(1 for d, _ in prior if ordinals[d] >= cutoff)
+    return (days_rest, games_7)
+
+
+def compute_rest(at_bats: list[AtBat]) -> list[AtBat]:
+    """Populate the schedule-density fields on each plate appearance.
+
+    Returns a new list of ``AtBat`` records with ``batter_days_rest``,
+    ``pitcher_days_rest``, ``batter_games_last_7``, and
+    ``pitcher_games_last_7`` filled in. Within-season only — prior seasons
+    are not consulted, so the very first games of each year carry rest = 0.
+    """
+    if not at_bats:
+        return []
+
+    unique_dates = {ab.date for ab in at_bats}
+    ordinals = {d: _ordinal(d) for d in unique_dates}
+
+    appearances: dict[str, set[tuple[int, str]]] = defaultdict(set)
+    for ab in at_bats:
+        appearances[ab.batter].add((ab.date, ab.game_id))
+        appearances[ab.pitcher].add((ab.date, ab.game_id))
+    sorted_app = {player: sorted(games) for player, games in appearances.items()}
+
+    enriched: list[AtBat] = []
+    for ab in at_bats:
+        key = (ab.date, ab.game_id)
+        b_rest, b_g7 = _rest_for(sorted_app[ab.batter], key, ordinals)
+        p_rest, p_g7 = _rest_for(sorted_app[ab.pitcher], key, ordinals)
+        enriched.append(replace(
+            ab,
+            batter_days_rest=b_rest,
+            pitcher_days_rest=p_rest,
+            batter_games_last_7=b_g7,
+            pitcher_games_last_7=p_g7,
+        ))
+    return enriched
 
 
 def load_rosters(events_dir: Path) -> dict[str, str]:

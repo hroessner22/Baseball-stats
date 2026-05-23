@@ -98,3 +98,50 @@ def test_at_bat_captures_game_id_and_date():
     at_bat = _at_bat(_row(3, game_id="NYA202405150"), 2024)
     assert at_bat.game_id == "NYA202405150"
     assert at_bat.date == 20240515
+
+
+# ── compute_rest (Stage 3) ──────────────────────────────────────────────
+
+
+def _bare(date, game_id):
+    """An AtBat with stable filler fields, for compute_rest tests."""
+    from src.ingest.events import AtBat
+    return AtBat(
+        year=2024, date=date, game_id=game_id,
+        batter="b", bats="R", pitcher="p", throws="R",
+        outcome="OUT", inning=1, half="top",
+        outs=0, bases=0, home_lead=0,
+        balls=0, strikes=0, sh_fl=False, sf_fl=False,
+    )
+
+
+def test_compute_rest_first_appearance_has_zero_rest():
+    from src.ingest.events import compute_rest
+    enriched = compute_rest([_bare(20240401, "G1")])
+    assert enriched[0].batter_days_rest == 0
+    assert enriched[0].batter_games_last_7 == 0
+
+
+def test_compute_rest_back_to_back_dates():
+    # The 1st game on 4/1, the next on 4/3 — second PA: 2 days, 1 prior game.
+    from src.ingest.events import compute_rest
+    enriched = compute_rest([_bare(20240401, "G1"), _bare(20240403, "G2")])
+    assert enriched[1].batter_days_rest == 2
+    assert enriched[1].batter_games_last_7 == 1
+
+
+def test_compute_rest_doubleheader_same_day():
+    # Doubleheader: second leg has 0 days rest, the first leg counts in last-7.
+    from src.ingest.events import compute_rest
+    enriched = compute_rest([_bare(20240615, "G1"), _bare(20240615, "G2")])
+    assert enriched[1].batter_days_rest == 0
+    assert enriched[1].batter_games_last_7 == 1
+
+
+def test_compute_rest_window_excludes_games_more_than_seven_days_ago():
+    # A game on 4/1 and a game on 4/10 — the older game is outside the 7-day
+    # window (10 - 6 = 4; 4/1 < 4/4), so games_last_7 = 0.
+    from src.ingest.events import compute_rest
+    enriched = compute_rest([_bare(20240401, "G1"), _bare(20240410, "G2")])
+    assert enriched[1].batter_days_rest == 9
+    assert enriched[1].batter_games_last_7 == 0
