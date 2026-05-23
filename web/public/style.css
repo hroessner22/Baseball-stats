@@ -147,7 +147,18 @@ main.board {
     width: 40px;
     height: 40px;
     align-self: center;
-    opacity: 0.85;
+    opacity: 0.9;
+    color: var(--border-strong);
+}
+
+.tile .base {
+    fill: var(--text-dim);
+    transition: fill 200ms ease;
+}
+
+.tile .base.occupied {
+    fill: var(--fg);
+    filter: drop-shadow(0 0 3px rgba(61, 220, 132, 0.5));
 }
 
 .tile .we {
@@ -156,7 +167,11 @@ main.board {
     font-size: 20px;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em;
+    margin-top: auto;
 }
+
+.tile[data-status="Final"] .we { color: var(--text-dim); }
+.tile[data-status="Preview"] .we { display: none; }
 
 .tile .we .label {
     display: block;
