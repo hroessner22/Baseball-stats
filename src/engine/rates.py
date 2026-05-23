@@ -89,6 +89,38 @@ CREATE INDEX IF NOT EXISTS idx_games_year      ON games (year);
 CREATE INDEX IF NOT EXISTS idx_games_date      ON games (date);
 CREATE INDEX IF NOT EXISTS idx_games_home_team ON games (home_team);
 CREATE INDEX IF NOT EXISTS idx_games_park      ON games (park_id);
+
+CREATE TABLE IF NOT EXISTS pitches (
+    year              INTEGER NOT NULL,
+    date              INTEGER NOT NULL,
+    game_pk           INTEGER NOT NULL,
+    batter_mlbam      INTEGER NOT NULL,
+    pitcher_mlbam     INTEGER NOT NULL,
+    stand             TEXT    NOT NULL,
+    p_throws          TEXT    NOT NULL,
+    pitch_type        TEXT,
+    pitch_name        TEXT,
+    release_speed     REAL,
+    release_spin_rate REAL,
+    pfx_x             REAL,
+    pfx_z             REAL,
+    balls             INTEGER,
+    strikes           INTEGER,
+    outs_when_up      INTEGER,
+    inning            INTEGER,
+    inning_topbot     TEXT,
+    home_team         TEXT,
+    away_team         TEXT,
+    description       TEXT,
+    events            TEXT,
+    launch_speed      REAL,
+    launch_angle      REAL,
+    at_bat_number     INTEGER,
+    pitch_number      INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_pitches_pitcher ON pitches (pitcher_mlbam, year);
+CREATE INDEX IF NOT EXISTS idx_pitches_batter  ON pitches (batter_mlbam, year);
+CREATE INDEX IF NOT EXISTS idx_pitches_game    ON pitches (game_pk);
 """
 
 
@@ -306,6 +338,131 @@ def stored_game_years(
         "SELECT MIN(year), MAX(year), COUNT(DISTINCT year) FROM games"
     ).fetchone()
     return low, high, count
+
+
+def stored_pitch_years(
+    conn: sqlite3.Connection,
+) -> tuple[int | None, int | None, int]:
+    """Return (earliest year, latest year, distinct year count) in ``pitches``."""
+    low, high, count = conn.execute(
+        "SELECT MIN(year), MAX(year), COUNT(DISTINCT year) FROM pitches"
+    ).fetchone()
+    return low, high, count
+
+
+def _nan_to_none(value):
+    """Convert NaN / pd.NA / None to ``None``; pass everything else through.
+
+    Catches both float NaN (via the ``value != value`` identity) and pandas
+    ``pd.NA`` (whose boolean coercion raises ``TypeError`` — "boolean value
+    of NA is ambiguous"). Done without importing pandas to keep the module
+    free of the heavy dependency.
+    """
+    if value is None:
+        return None
+    try:
+        if value != value:
+            return None
+    except TypeError:
+        return None
+    return value
+
+
+def _str_or_none(value):
+    """Convert NaN / pd.NA / None to None; everything else to ``str``."""
+    v = _nan_to_none(value)
+    return None if v is None else str(v)
+
+
+def write_pitches(conn: sqlite3.Connection, year: int, df) -> None:
+    """Persist one season's Statcast pitches.
+
+    Takes a pandas DataFrame in pybaseball's standard schema. Existing rows
+    for the year are deleted first, so re-ingesting is idempotent.
+    """
+    conn.execute("DELETE FROM pitches WHERE year = ?", (year,))
+    rows: list[tuple] = []
+    for r in df.itertuples(index=False):
+        try:
+            date_obj = r.game_date
+            date_int = (
+                int(date_obj.strftime("%Y%m%d"))
+                if hasattr(date_obj, "strftime")
+                else int(str(date_obj).replace("-", "")[:8])
+            )
+            stand = _str_or_none(r.stand)
+            p_throws = _str_or_none(r.p_throws)
+            topbot = _str_or_none(r.inning_topbot)
+            rows.append((
+                year, date_int, int(r.game_pk),
+                int(r.batter), int(r.pitcher),
+                stand if stand in ("L", "R") else "",
+                p_throws if p_throws in ("L", "R") else "",
+                _str_or_none(r.pitch_type), _str_or_none(r.pitch_name),
+                _nan_to_none(r.release_speed), _nan_to_none(r.release_spin_rate),
+                _nan_to_none(r.pfx_x), _nan_to_none(r.pfx_z),
+                _nan_to_none(r.balls), _nan_to_none(r.strikes),
+                _nan_to_none(r.outs_when_up), _nan_to_none(r.inning),
+                topbot if topbot in ("Top", "Bot") else "",
+                _str_or_none(r.home_team) or "",
+                _str_or_none(r.away_team) or "",
+                _str_or_none(r.description), _str_or_none(r.events),
+                _nan_to_none(r.launch_speed), _nan_to_none(r.launch_angle),
+                _nan_to_none(r.at_bat_number), _nan_to_none(r.pitch_number),
+            ))
+        except (TypeError, ValueError, AttributeError):
+            continue  # malformed row — skip rather than abort the season
+    conn.executemany(
+        "INSERT INTO pitches "
+        "(year, date, game_pk, batter_mlbam, pitcher_mlbam, stand, p_throws, "
+        " pitch_type, pitch_name, release_speed, release_spin_rate, pfx_x, pfx_z, "
+        " balls, strikes, outs_when_up, inning, inning_topbot, home_team, away_team, "
+        " description, events, launch_speed, launch_angle, at_bat_number, pitch_number) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+
+
+def pitcher_pitch_mix(
+    conn: sqlite3.Connection,
+    mlbam_id: int,
+    year_range: tuple[int, int],
+    bats: str | None = None,
+) -> dict[str, int]:
+    """Return ``{pitch_name: count}`` for a pitcher's repertoire.
+
+    With ``bats="L"`` or ``"R"`` restricts to pitches thrown to batters of
+    that hand.
+    """
+    lo, hi = year_range
+    sql = (
+        "SELECT pitch_name, COUNT(*) FROM pitches "
+        "WHERE pitcher_mlbam = ? AND year BETWEEN ? AND ? "
+        "AND pitch_name IS NOT NULL"
+    )
+    params: list = [mlbam_id, lo, hi]
+    if bats in ("L", "R"):
+        sql += " AND stand = ?"
+        params.append(bats)
+    sql += " GROUP BY pitch_name ORDER BY COUNT(*) DESC"
+    return dict(conn.execute(sql, params).fetchall())
+
+
+def pitcher_velocity(
+    conn: sqlite3.Connection,
+    mlbam_id: int,
+    year_range: tuple[int, int],
+) -> dict[str, float]:
+    """Return ``{pitch_name: average_velocity_mph}`` for a pitcher."""
+    lo, hi = year_range
+    return dict(conn.execute(
+        "SELECT pitch_name, AVG(release_speed) FROM pitches "
+        "WHERE pitcher_mlbam = ? AND year BETWEEN ? AND ? "
+        "AND pitch_name IS NOT NULL AND release_speed IS NOT NULL "
+        "GROUP BY pitch_name",
+        (mlbam_id, lo, hi),
+    ).fetchall())
 
 
 # Filter keys that translate to ``at_bats.column = ?``.

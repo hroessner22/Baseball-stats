@@ -21,6 +21,9 @@ from src.engine.rates import (
     RateLine,
     batter_line,
     open_rate_store,
+    pitcher_pitch_mix,
+    pitcher_velocity,
+    stored_pitch_years,
     stored_rate_years,
     write_at_bats,
     write_games,
@@ -48,6 +51,13 @@ DEMO_MATCHUPS = [
     ("ohtas001", "ceasd001"),  # Shohei Ohtani vs Dylan Cease
     ("sotoj001", "salec001"),  # Juan Soto     vs Chris Sale
 ]
+
+# Demo pitcher Retrosheet id → MLBAM id (used to look up Statcast pitch data).
+PITCHER_MLBAM = {
+    "skubt001": 669373,  # Tarik Skubal
+    "ceasd001": 656302,  # Dylan Cease
+    "salec001": 519242,  # Chris Sale
+}
 
 # The splits each scouting report shows. Each entry is a label + filter dict
 # passed to ``batter_line``. Empty splits (no PA matched) are skipped.
@@ -127,8 +137,17 @@ def print_scouting_report(
         print(f"  {label:24}  {_slash_line(line)}")
 
 
-def _print_matchup(matchup: Matchup, names: dict[str, str]) -> None:
-    """Print one matchup — the prediction beside the rates that produced it."""
+def _print_matchup(
+    matchup: Matchup,
+    names: dict[str, str],
+    conn: sqlite3.Connection | None = None,
+    year_range: tuple[int, int] | None = None,
+) -> None:
+    """Print one matchup — the prediction beside the rates that produced it.
+
+    If ``conn`` and ``year_range`` are given and the pitcher has Statcast
+    data, the pitch mix and average velocities are appended.
+    """
     batter = names.get(matchup.batter, matchup.batter)
     pitcher = names.get(matchup.pitcher, matchup.pitcher)
     print(f"\n{batter} ({matchup.bats}HB)  vs  {pitcher} ({matchup.throws}HP)")
@@ -141,6 +160,21 @@ def _print_matchup(matchup: Matchup, names: dict[str, str]) -> None:
               f"{100 * matchup.pitcher_rates.rate(outcome):8.1f}%"
               f"{100 * matchup.league.rate(outcome):8.1f}%"
               f"{100 * matchup.chance(outcome):8.1f}%")
+
+    pitcher_mlbam = PITCHER_MLBAM.get(matchup.pitcher)
+    if pitcher_mlbam is None or conn is None or year_range is None:
+        return
+    mix = pitcher_pitch_mix(conn, pitcher_mlbam, year_range, bats=matchup.bats)
+    if not mix:
+        return
+    velos = pitcher_velocity(conn, pitcher_mlbam, year_range)
+    total = sum(mix.values())
+    print(f"\n  Pitch mix vs {matchup.bats}HB (Statcast, {total:,} pitches):")
+    for name, cnt in mix.items():
+        share = 100 * cnt / total
+        vel = velos.get(name, 0)
+        velo_text = f"   {vel:5.1f} mph avg" if vel else ""
+        print(f"    {name:25} {share:5.1f}%{velo_text}")
 
 
 def main() -> None:
@@ -164,9 +198,14 @@ def main() -> None:
         print_scouting_report(conn, batter, names, (demo_start, high))
 
     print(f"\n┃ Predicted plate-appearance outcomes, {demo_start}-{high}")
+    pitch_low, pitch_high, _ = stored_pitch_years(conn)
+    statcast_range = (
+        (max(demo_start, pitch_low), min(high, pitch_high))
+        if pitch_low and pitch_high else None
+    )
     for batter, pitcher in DEMO_MATCHUPS:
         matchup = predict_matchup(conn, batter, pitcher, demo_start, high)
-        _print_matchup(matchup, names)
+        _print_matchup(matchup, names, conn=conn, year_range=statcast_range)
 
     conn.close()
 
