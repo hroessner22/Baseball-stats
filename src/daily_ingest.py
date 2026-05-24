@@ -177,12 +177,27 @@ def fetch_plate_appearances(game_pk: int) -> list[dict]:
     return out
 
 
+class UpsertError(RuntimeError):
+    """Raised when the Supabase POST fails outright. The caller distinguishes
+    this from "wrote zero rows" (which legitimately happens when every row
+    in the batch was already in the table)."""
+
+
 def upsert(rows: list[dict], supabase_url: str, supabase_key: str) -> int:
-    """POST rows to the daily_pa table; the unique constraint dedupes."""
+    """POST rows to the daily_pa table; the unique constraint dedupes.
+
+    Returns the number of rows the server accepted. Raises UpsertError on
+    any transport / auth / schema failure — the caller treats those very
+    differently from "0 rows written because all were duplicates", which
+    is a legitimate outcome on a re-run.
+    """
     if not rows:
         return 0
     url = f"{supabase_url}/rest/v1/daily_pa"
     body = json.dumps(rows).encode("utf-8")
+    # Ask Supabase to return the rows it actually inserted so we can count
+    # truthfully. `return=minimal` swallowed the count and made every
+    # duplicate look the same as every success.
     req = urllib.request.Request(
         url,
         data=body,
@@ -191,17 +206,19 @@ def upsert(rows: list[dict], supabase_url: str, supabase_key: str) -> int:
             "apikey":         supabase_key,
             "Authorization":  f"Bearer {supabase_key}",
             "Content-Type":   "application/json",
-            "Prefer":         "resolution=ignore-duplicates,return=minimal",
+            "Prefer":         "resolution=ignore-duplicates,return=representation",
         },
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx(), timeout=60) as r:
-            # 201 Created on success. Body is empty per return=minimal.
-            return len(rows) if r.status in (200, 201) else 0
+            if r.status not in (200, 201):
+                raise UpsertError(f"HTTP {r.status}")
+            body = r.read() or b"[]"
+            inserted = json.loads(body)
+            return len(inserted) if isinstance(inserted, list) else 0
     except urllib.error.HTTPError as e:
         msg = (e.read() or b"").decode("utf-8", errors="replace")[:500]
-        print(f"  upsert HTTP {e.code}: {msg}", file=sys.stderr)
-        return 0
+        raise UpsertError(f"HTTP {e.code}: {msg}") from e
 
 
 def rows_to_sql(rows: list[dict]) -> str:
@@ -312,7 +329,19 @@ def main() -> int:
         if args.dry_run:
             print(f"  game {pk}: {len(pas)} PAs (dry-run, not inserted)")
             continue
-        n = upsert(pas, supabase_url, supabase_key)
+        try:
+            n = upsert(pas, supabase_url, supabase_key)
+        except UpsertError as e:
+            # An auth / schema failure means every subsequent batch will
+            # fail the same way — bail loudly rather than pretend each
+            # game is "all duplicates".
+            print(
+                f"  game {pk}: upsert failed — {e}\n"
+                f"Aborting. Check that SUPABASE_SERVICE_KEY is the "
+                f"service_role secret (not the anon or publishable key).",
+                file=sys.stderr,
+            )
+            return 4
         total_inserted += n
         marker = "" if n == len(pas) else f"  ← {len(pas) - n} skipped (already in DB)"
         print(f"  game {pk}: {n} of {len(pas)} PAs inserted{marker}")
