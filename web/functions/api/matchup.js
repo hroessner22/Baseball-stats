@@ -133,8 +133,10 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
 
     // 6) Current-season events from the daily_pa log — append to batter and
     //    pitcher counts so predictions sharpen as the season's sample grows.
-    //    League baseline isn't touched here: 150 years of leagueRates makes
-    //    one season's worth of new PAs a sub-percent change.
+    //    League baseline isn't touched here: leagueRates in Supabase is the
+    //    2020–2024 modern-era window, and one season's daily_pa delta is a
+    //    few percent of that baseline. Worth folding in once calibration
+    //    tracking tells us whether it helps; stays static for v0.1.
     const [batterCurrent, pitcherCurrent] = await Promise.all([
         sb(env, "daily_pa", {
             batter_mlbam: `eq.${batterMlbam}`,
@@ -183,6 +185,15 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
         batter_rates:  rates(batterCounts),
         pitcher_rates: rates(pitcherCounts),
         league:        rates(leagueCounts),
+        // Raw current-season outcome distribution — what the batter and
+        // pitcher have ACTUALLY done in the daily_pa window. Strictly
+        // descriptive, not predictive; the matchup card renders it as a
+        // "Recent form" line so users see the live sample, not just a
+        // hidden sample-size pill.
+        recent_form: {
+            batter:  { pa: batterCurrent.length,  outcomes: batterCurrentCounts  },
+            pitcher: { bf: pitcherCurrent.length, outcomes: pitcherCurrentCounts },
+        },
     };
 }
 
