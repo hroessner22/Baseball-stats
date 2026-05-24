@@ -193,14 +193,14 @@ def upsert(rows: list[dict], supabase_url: str, supabase_key: str) -> int:
     """
     if not rows:
         return 0
-    url = f"{supabase_url}/rest/v1/daily_pa"
+    # `on_conflict=game_pk,pa_index` tells PostgREST WHICH unique
+    # constraint to target for ON CONFLICT — without it, PostgREST tries
+    # to use the table's primary key (which here is `id`, an auto-
+    # generated BIGSERIAL that never conflicts) and 409s on the real
+    # collision instead of silently skipping. Pair with
+    # `Prefer: resolution=ignore-duplicates` for clean dedupe on re-runs.
+    url = f"{supabase_url}/rest/v1/daily_pa?on_conflict=game_pk,pa_index"
     body = json.dumps(rows).encode("utf-8")
-    # PostgREST 12 doesn't return accurate row counts when combining
-    # `resolution=ignore-duplicates` with `return=representation` — it
-    # 409s on the first conflict instead of silently skipping. So we
-    # stick with `return=minimal` (which DOES honor ignore-duplicates),
-    # accept that we can only report "batch succeeded" vs "batch failed",
-    # and let the caller fall back to len(rows) for the optimistic count.
     req = urllib.request.Request(
         url,
         data=body,
