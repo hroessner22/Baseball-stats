@@ -195,9 +195,12 @@ def upsert(rows: list[dict], supabase_url: str, supabase_key: str) -> int:
         return 0
     url = f"{supabase_url}/rest/v1/daily_pa"
     body = json.dumps(rows).encode("utf-8")
-    # Ask Supabase to return the rows it actually inserted so we can count
-    # truthfully. `return=minimal` swallowed the count and made every
-    # duplicate look the same as every success.
+    # PostgREST 12 doesn't return accurate row counts when combining
+    # `resolution=ignore-duplicates` with `return=representation` — it
+    # 409s on the first conflict instead of silently skipping. So we
+    # stick with `return=minimal` (which DOES honor ignore-duplicates),
+    # accept that we can only report "batch succeeded" vs "batch failed",
+    # and let the caller fall back to len(rows) for the optimistic count.
     req = urllib.request.Request(
         url,
         data=body,
@@ -206,16 +209,17 @@ def upsert(rows: list[dict], supabase_url: str, supabase_key: str) -> int:
             "apikey":         supabase_key,
             "Authorization":  f"Bearer {supabase_key}",
             "Content-Type":   "application/json",
-            "Prefer":         "resolution=ignore-duplicates,return=representation",
+            "Prefer":         "resolution=ignore-duplicates,return=minimal",
         },
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx(), timeout=60) as r:
             if r.status not in (200, 201):
                 raise UpsertError(f"HTTP {r.status}")
-            body = r.read() or b"[]"
-            inserted = json.loads(body)
-            return len(inserted) if isinstance(inserted, list) else 0
+            # `return=minimal` gives us an empty body. The batch is either
+            # entirely accepted (any duplicates within it silently skipped
+            # via ON CONFLICT DO NOTHING) or rejected with HTTPError.
+            return len(rows)
     except urllib.error.HTTPError as e:
         msg = (e.read() or b"").decode("utf-8", errors="replace")[:500]
         raise UpsertError(f"HTTP {e.code}: {msg}") from e
@@ -333,8 +337,8 @@ def main() -> int:
             n = upsert(pas, supabase_url, supabase_key)
         except UpsertError as e:
             # An auth / schema failure means every subsequent batch will
-            # fail the same way — bail loudly rather than pretend each
-            # game is "all duplicates".
+            # fail the same way — bail loudly rather than march through
+            # every game accumulating the same error.
             print(
                 f"  game {pk}: upsert failed — {e}\n"
                 f"Aborting. Check that SUPABASE_SERVICE_KEY is the "
@@ -343,8 +347,11 @@ def main() -> int:
             )
             return 4
         total_inserted += n
-        marker = "" if n == len(pas) else f"  ← {len(pas) - n} skipped (already in DB)"
-        print(f"  game {pk}: {n} of {len(pas)} PAs inserted{marker}")
+        # `n` is the row count we tried to insert; duplicates were silently
+        # skipped server-side via ON CONFLICT DO NOTHING. We don't have a
+        # precise inserted-count without a follow-up query, so "accepted"
+        # is the honest phrasing.
+        print(f"  game {pk}: {n} PAs accepted")
 
     if args.print_sql:
         print(rows_to_sql(all_rows))
