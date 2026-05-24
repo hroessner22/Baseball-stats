@@ -217,3 +217,225 @@ nav .nav-item.disabled {
     color: var(--text-dim);
     opacity: 0.5;
 }
+
+/* ── TILE AS LINK ──────────────────────────────────────────────── */
+
+.tile {
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 150ms ease;
+}
+.tile:hover { border-color: var(--fg-dim); }
+
+/* ── GAME VIEW ─────────────────────────────────────────────────── */
+
+.game-view {
+    flex: 1;
+    overflow: auto;
+    padding: 24px 32px 48px;
+    display: flex;
+    flex-direction: column;
+}
+
+.game-view .empty { padding: 48px 16px; }
+
+.back-link {
+    color: var(--fg);
+    text-decoration: none;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    padding: 4px 0 24px;
+    align-self: flex-start;
+    transition: color 150ms ease;
+}
+.back-link:hover { color: var(--text); }
+
+.game-pane {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 36px;
+    justify-items: center;
+    align-items: start;
+}
+
+@media (min-width: 820px) {
+    .game-pane {
+        grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+        justify-items: stretch;
+        gap: 48px;
+    }
+}
+
+/* ── FIELD PANE ───────────────────────────────────────────────── */
+
+.field-pane {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    width: 100%;
+}
+
+.field {
+    width: 100%;
+    max-width: 460px;
+    aspect-ratio: 1;
+    display: block;
+}
+
+.field .grass {
+    fill: var(--fg);
+    fill-opacity: calc(var(--we-intensity, 0) * 0.18 + 0.04);
+    stroke: var(--border-strong);
+    stroke-width: 0.5;
+    transition: fill-opacity 400ms ease;
+}
+.field .dirt {
+    fill: #181c18;
+    stroke: var(--text-dim);
+    stroke-width: 0.5;
+}
+.field .foul-line {
+    stroke: var(--text-dim);
+    stroke-width: 0.5;
+    stroke-dasharray: 2 4;
+}
+.field .mound {
+    fill: #1c1f1c;
+    stroke: var(--text-dim);
+    stroke-width: 0.5;
+}
+.field .base { fill: var(--text-dim); transition: fill 200ms ease; }
+.field .base.home { fill: var(--fg); }
+.field .base[data-occupied="true"] {
+    fill: var(--fg);
+    filter: drop-shadow(0 0 5px rgba(61, 220, 132, 0.7));
+}
+.field .runner-name {
+    fill: var(--fg);
+    font-size: 9px;
+    font-family: ui-monospace, monospace;
+    letter-spacing: 0.05em;
+}
+
+.situation {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text);
+    letter-spacing: 0.05em;
+}
+.situation .dot { color: var(--text-dim); }
+.situation .state-label {
+    color: var(--text-dim);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+}
+
+.player-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text);
+    width: 100%;
+    max-width: 460px;
+}
+.player-row .label {
+    color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    flex: 0 0 60px;
+}
+.player-row strong {
+    color: var(--text);
+    font-weight: 500;
+    flex: 1;
+}
+.player-row .hand {
+    color: var(--fg-dim);
+    font-size: 9px;
+    letter-spacing: 0.15em;
+}
+
+/* ── CONTEXT CARD ─────────────────────────────────────────────── */
+
+.card-pane { width: 100%; }
+
+.card {
+    border: 0.5px solid var(--border-strong);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 380px;
+    margin: 0 auto;
+}
+
+.card .subject {
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+}
+
+.card .situation-line {
+    color: var(--text);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+
+.card .question {
+    color: var(--text);
+    font-size: 13px;
+    margin-top: 4px;
+}
+
+.card .answer {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    color: var(--fg);
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+}
+.card .answer strong { font-weight: 600; }
+
+.card .bar {
+    height: 3px;
+    background: var(--border-strong);
+    position: relative;
+    overflow: hidden;
+}
+.card .bar span {
+    display: block;
+    height: 100%;
+    background: var(--fg);
+    transition: width 400ms ease;
+}
+
+.card .bar-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+}
+
+.card .evidence {
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    border-top: 0.5px solid var(--border);
+    padding-top: 12px;
+}
+
+.card .read {
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.55;
+    font-style: italic;
+}
