@@ -1,19 +1,37 @@
-/* DIAMOND:CONTEXT — the design system.
+/* DIAMOND:CONTEXT — design system v2 (sportsbook-modern).
  *
- * Dark terminal aesthetic per docs/07-DESIGN.md. A single green accent
- * (#3ddc84) carries every signal — live state, win expectancy, occupied
- * bases, leverage. Everything else is muted gray-green on near-black.
+ * Deep navy background, vibrant accent colors with distinct semantic
+ * roles (red = LIVE, green = win, blue = action), Inter typography
+ * with tabular numerics, soft 8px rounded card surfaces. Field uses
+ * real ballpark colors (grass green, dirt tan) against the dark UI.
  */
 
 :root {
-    --bg: #0c0e0c;
-    --fg: #3ddc84;
-    --fg-dim: #2aa05f;
-    --text: #8a9b8c;          /* muted gray-green for primary text */
-    --text-dim: #4a5a4c;      /* dimmer for labels and metadata */
-    --border: #1f2520;
-    --border-strong: #2a3530;
-    --tile: 155px;
+    /* Surface palette — deep navy, NOT pure black */
+    --bg:          #0B1220;
+    --surface:     #141C2E;
+    --surface-2:   #1E2942;
+    --border:      #26304A;
+
+    /* Text */
+    --text:        #F5F7FA;
+    --text-dim:    #94A3B8;
+
+    /* Accents — each does ONE job */
+    --accent-live: #EF4444;   /* LIVE badges, urgent, losses */
+    --accent-win:  #22C55E;   /* wins, positive, occupied bases */
+    --accent-action: #3B82F6; /* CTAs, links, nav active */
+
+    /* Field illustration palette — real ballpark colors */
+    --grass:       #3F6B2A;
+    --grass-light: #4A7A35;
+    --grass-dark:  #355A23;
+    --dirt:        #B58A5A;
+    --dirt-dark:   #8B6F47;
+    --chalk:       #E8E8E8;
+
+    --tile-w: 220px;
+    --radius: 8px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -22,14 +40,16 @@ html, body { height: 100%; }
 body {
     background: var(--bg);
     color: var(--text);
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-                 "Liberation Mono", monospace;
-    font-size: 13px;
-    line-height: 1.45;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                 Roboto, sans-serif;
+    font-feature-settings: 'tnum' 1, 'cv11' 1;
+    font-size: 14px;
+    line-height: 1.4;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── HEADER ────────────────────────────────────────────────────── */
@@ -38,41 +58,42 @@ header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 18px 24px;
-    border-bottom: 0.5px solid var(--border);
+    padding: 14px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 
 header h1 {
-    font-size: 14px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
     color: var(--text);
 }
-
-header h1 .colon { color: var(--fg); }
+header h1 .colon { color: var(--accent-win); }
 
 .live-indicator {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--accent-live);
+    border-radius: 20px;
     font-size: 10px;
-    letter-spacing: 0.15em;
-    color: var(--text);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: white;
 }
-
 .live-indicator .dot {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: var(--fg);
-    box-shadow: 0 0 8px rgba(61, 220, 132, 0.6);
-    animation: pulse 2s ease-in-out infinite;
+    background: white;
+    animation: pulse 1.5s ease-in-out infinite;
 }
-
 @keyframes pulse {
     0%, 100% { opacity: 1; }
-    50%      { opacity: 0.35; }
+    50%      { opacity: 0.4; }
 }
 
 /* ── THE BOARD ─────────────────────────────────────────────────── */
@@ -80,11 +101,10 @@ header h1 .colon { color: var(--fg); }
 main.board {
     flex: 1;
     overflow: auto;
-    padding: 32px 24px;
+    padding: 28px 24px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, var(--tile));
-    grid-auto-rows: auto;
-    gap: 18px;
+    grid-template-columns: repeat(auto-fill, var(--tile-w));
+    gap: 16px;
     align-content: start;
     justify-content: center;
 }
@@ -94,138 +114,152 @@ main.board {
     text-align: center;
     color: var(--text-dim);
     padding: 96px 16px;
-    line-height: 1.8;
+    line-height: 1.7;
 }
-
 .empty .sub {
-    font-size: 10px;
+    font-size: 11px;
+    font-weight: 600;
     letter-spacing: 0.15em;
-    color: var(--fg-dim);
+    color: var(--accent-win);
     margin-top: 12px;
+    text-transform: uppercase;
 }
 
-/* ── GAME TILE (the recurring card unit) ───────────────────────── */
+/* ── GAME TILE ─────────────────────────────────────────────────── */
 
 .tile {
-    width: var(--tile);
-    border: 0.5px solid var(--border-strong);
-    padding: 12px 12px 14px;
+    width: var(--tile-w);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    font-size: 11px;
+    gap: 14px;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    transition: transform 150ms ease, border-color 150ms ease,
+                background 150ms ease;
+    position: relative;
+}
+.tile:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-action);
+    background: var(--surface-2);
 }
 
 .tile .matchup {
     display: flex;
     flex-direction: column;
-    gap: 4px;
 }
 
 .tile .team {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    color: var(--text);
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
 }
+.tile .team:last-child { border-bottom: none; padding-bottom: 4px; }
+.tile .team:first-child { padding-top: 4px; }
 
-.tile .team .score {
-    color: var(--fg);
+.tile .team .name {
+    font-size: 14px;
     font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.005em;
+}
+.tile .team .score {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
     font-variant-numeric: tabular-nums;
+    line-height: 1;
 }
 
 .tile .state {
-    color: var(--text-dim);
     font-size: 10px;
-    letter-spacing: 0.08em;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     text-align: center;
+    color: var(--text-dim);
+}
+.tile[data-status="Live"] .state {
+    color: var(--accent-live);
+}
+.tile[data-status="Final"] .state {
+    color: var(--text-dim);
 }
 
 .tile .diamond {
-    width: 40px;
-    height: 40px;
+    width: 32px;
+    height: 32px;
     align-self: center;
-    opacity: 0.9;
-    color: var(--border-strong);
 }
-
-.tile .base {
-    fill: var(--text-dim);
-    transition: fill 200ms ease;
+.tile .diamond > polygon {
+    stroke: var(--border) !important;
 }
-
-.tile .base.occupied {
-    fill: var(--fg);
-    filter: drop-shadow(0 0 3px rgba(61, 220, 132, 0.5));
+.tile .diamond .base { fill: var(--text-dim); }
+.tile .diamond .base.occupied {
+    fill: var(--accent-win);
+    filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.6));
 }
 
 .tile .we {
     text-align: center;
-    color: var(--fg);
-    font-size: 20px;
+    color: var(--accent-win);
+    font-size: 22px;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
-    margin-top: auto;
+    line-height: 1;
 }
-
-.tile[data-status="Final"] .we { color: var(--text-dim); }
-.tile[data-status="Preview"] .we { display: none; }
-
 .tile .we .label {
     display: block;
     font-size: 9px;
+    font-weight: 600;
     color: var(--text-dim);
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    margin-top: 2px;
+    margin-top: 4px;
 }
+.tile[data-status="Final"] .we { color: var(--text-dim); }
+.tile[data-status="Preview"] .we { display: none; }
 
 /* ── BOTTOM NAV ────────────────────────────────────────────────── */
 
 nav {
     display: flex;
-    border-top: 0.5px solid var(--border);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
     flex-shrink: 0;
 }
-
 nav .nav-item {
     flex: 1;
     text-align: center;
     padding: 14px 0;
     color: var(--text-dim);
     text-decoration: none;
-    font-size: 10px;
-    letter-spacing: 0.15em;
-    border-right: 0.5px solid var(--border);
-    transition: color 120ms ease;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    transition: color 120ms ease, background 120ms ease;
 }
-
-nav .nav-item:last-child { border-right: none; }
-
 nav .nav-item .num {
-    color: var(--fg);
+    color: var(--accent-action);
     margin-right: 8px;
-    font-weight: 600;
 }
-
-nav .nav-item.active { color: var(--text); }
-
-nav .nav-item.disabled {
-    cursor: default;
-    color: var(--text-dim);
-    opacity: 0.5;
+nav .nav-item.active {
+    color: var(--text);
+    background: var(--surface-2);
 }
-
-/* ── TILE AS LINK ──────────────────────────────────────────────── */
-
-.tile {
-    text-decoration: none;
-    color: inherit;
-    transition: border-color 150ms ease;
+nav .nav-item:hover:not(.disabled) {
+    color: var(--text);
+    background: var(--surface-2);
 }
-.tile:hover { border-color: var(--fg-dim); }
+nav .nav-item.disabled { cursor: default; opacity: 0.45; }
+nav .nav-item.disabled .num { color: var(--text-dim); }
 
 /* ── GAME VIEW ─────────────────────────────────────────────────── */
 
@@ -236,15 +270,15 @@ nav .nav-item.disabled {
     display: flex;
     flex-direction: column;
 }
-
 .game-view .empty { padding: 48px 16px; }
 
 .back-link {
-    color: var(--fg);
+    color: var(--accent-action);
     text-decoration: none;
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    padding: 4px 0 24px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    padding: 4px 0 20px;
     align-self: flex-start;
     transition: color 150ms ease;
 }
@@ -257,7 +291,6 @@ nav .nav-item.disabled {
     justify-items: center;
     align-items: start;
 }
-
 @media (min-width: 820px) {
     .game-pane {
         grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
@@ -266,7 +299,7 @@ nav .nav-item.disabled {
     }
 }
 
-/* ── FIELD PANE ───────────────────────────────────────────────── */
+/* ── FIELD ────────────────────────────────────────────────────── */
 
 .field-pane {
     display: flex;
@@ -278,86 +311,137 @@ nav .nav-item.disabled {
 
 .field {
     width: 100%;
-    max-width: 460px;
+    max-width: 500px;
     aspect-ratio: 1;
     display: block;
+    filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.5));
+    border-radius: var(--radius);
+    overflow: hidden;
 }
 
-.field .grass {
-    fill: var(--fg);
-    fill-opacity: calc(var(--we-intensity, 0) * 0.18 + 0.04);
-    stroke: var(--border-strong);
-    stroke-width: 0.5;
-    transition: fill-opacity 400ms ease;
+.field .outfield-grass {
+    fill: url(#grass-radial);
+    stroke: var(--border);
+    stroke-width: 1;
 }
-.field .dirt {
-    fill: #181c18;
-    stroke: var(--text-dim);
-    stroke-width: 0.5;
+.field .warning-track {
+    fill: var(--dirt-dark);
+}
+.field .basepath {
+    stroke: var(--dirt);
+    stroke-width: 11;
+    stroke-linejoin: miter;
+    fill: none;
+    opacity: 0.85;
+}
+.field .infield-grass {
+    fill: url(#grass-radial-inner);
 }
 .field .foul-line {
-    stroke: var(--text-dim);
-    stroke-width: 0.5;
-    stroke-dasharray: 2 4;
+    stroke: var(--chalk);
+    stroke-width: 1.5;
+    fill: none;
 }
 .field .mound {
-    fill: #1c1f1c;
-    stroke: var(--text-dim);
+    fill: var(--dirt);
+    stroke: var(--dirt-dark);
     stroke-width: 0.5;
 }
-.field .base { fill: var(--text-dim); transition: fill 200ms ease; }
-.field .base.home { fill: var(--fg); }
+.field .rubber { fill: var(--chalk); }
+
+.field .base {
+    fill: var(--chalk);
+    stroke: var(--text-dim);
+    stroke-width: 0.5;
+    transition: fill 200ms ease, filter 200ms ease;
+}
 .field .base[data-occupied="true"] {
-    fill: var(--fg);
-    filter: drop-shadow(0 0 5px rgba(61, 220, 132, 0.7));
+    fill: var(--accent-win);
+    stroke: var(--accent-win);
+    filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.8));
 }
+.field .base.home {
+    fill: var(--chalk);
+}
+
+.field .foul-pole {
+    fill: #FCD34D;
+}
+
 .field .runner-name {
-    fill: var(--fg);
-    font-size: 9px;
-    font-family: ui-monospace, monospace;
-    letter-spacing: 0.05em;
+    fill: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    paint-order: stroke;
+    stroke: var(--bg);
+    stroke-width: 3;
 }
+
+/* WE intensity hint — a green glow ringing the field when decisive */
+.field-pane[data-we-intensity] .field {
+    filter:
+        drop-shadow(0 4px 16px rgba(0, 0, 0, 0.5))
+        drop-shadow(0 0 calc(var(--we-intensity, 0) * 24px) rgba(34, 197, 94, calc(var(--we-intensity, 0) * 0.4)));
+}
+
+/* ── SITUATION + PLAYER ROWS ──────────────────────────────────── */
 
 .situation {
     display: flex;
-    align-items: baseline;
-    gap: 10px;
-    font-size: 12px;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text);
-    letter-spacing: 0.05em;
+    padding: 8px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
 }
 .situation .dot { color: var(--text-dim); }
 .situation .state-label {
     color: var(--text-dim);
     font-size: 11px;
+    font-weight: 700;
     letter-spacing: 0.15em;
 }
 
 .player-row {
     display: flex;
-    align-items: baseline;
-    gap: 10px;
-    font-size: 12px;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
     color: var(--text);
     width: 100%;
-    max-width: 460px;
+    max-width: 500px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
 }
 .player-row .label {
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 10px;
+    font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    flex: 0 0 60px;
+    flex: 0 0 64px;
 }
 .player-row strong {
     color: var(--text);
-    font-weight: 500;
+    font-weight: 600;
     flex: 1;
 }
 .player-row .hand {
-    color: var(--fg-dim);
-    font-size: 9px;
-    letter-spacing: 0.15em;
+    color: var(--accent-action);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 3px 7px;
+    background: rgba(59, 130, 246, 0.15);
+    border-radius: 4px;
 }
 
 /* ── CONTEXT CARD ─────────────────────────────────────────────── */
@@ -365,31 +449,37 @@ nav .nav-item.disabled {
 .card-pane { width: 100%; }
 
 .card {
-    border: 0.5px solid var(--border-strong);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 20px 22px;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    max-width: 380px;
+    max-width: 420px;
     margin: 0 auto;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .card .subject {
     color: var(--text-dim);
     font-size: 10px;
+    font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
 }
 
 .card .situation-line {
     color: var(--text);
-    font-size: 12px;
-    letter-spacing: 0.04em;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
 }
 
 .card .question {
     color: var(--text);
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 500;
     margin-top: 4px;
 }
 
@@ -397,39 +487,44 @@ nav .nav-item.disabled {
     display: flex;
     align-items: baseline;
     gap: 10px;
-    color: var(--fg);
-    font-size: 28px;
-    letter-spacing: -0.02em;
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -0.025em;
     font-variant-numeric: tabular-nums;
+    color: var(--accent-win);
+    line-height: 1;
 }
-.card .answer strong { font-weight: 600; }
+.card .answer strong { font-weight: 800; }
 
 .card .bar {
-    height: 3px;
-    background: var(--border-strong);
+    height: 6px;
+    background: var(--surface-2);
     position: relative;
     overflow: hidden;
+    border-radius: 3px;
 }
 .card .bar span {
     display: block;
     height: 100%;
-    background: var(--fg);
+    background: var(--accent-win);
     transition: width 400ms ease;
 }
 
 .card .bar-labels {
     display: flex;
     justify-content: space-between;
-    font-size: 9px;
+    font-size: 10px;
     color: var(--text-dim);
-    letter-spacing: 0.12em;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
 .card .evidence {
     color: var(--text-dim);
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    border-top: 0.5px solid var(--border);
+    font-size: 11px;
+    line-height: 1.5;
+    border-top: 1px solid var(--border);
     padding-top: 12px;
 }
 
@@ -438,55 +533,62 @@ nav .nav-item.disabled {
     font-size: 13px;
     line-height: 1.55;
     font-style: italic;
+    font-weight: 400;
 }
 
-/* ── MATCHUP CARD (Phase 3.2) ─────────────────────────────────── */
+/* ── MATCHUP CARD ─────────────────────────────────────────────── */
 
-.card-pane > .matchup-card { margin-top: 24px; }
+.card-pane > .matchup-card { margin-top: 20px; }
 
 .outcome-table {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     font-variant-numeric: tabular-nums;
 }
 
 .outcome-row {
     display: grid;
-    grid-template-columns: 95px 1fr 36px;
-    gap: 8px;
+    grid-template-columns: 110px 1fr 42px;
+    gap: 10px;
     align-items: center;
-    font-size: 11px;
+    font-size: 12px;
 }
 
 .outcome-label {
     color: var(--text);
-    letter-spacing: 0.02em;
+    font-weight: 500;
 }
 
 .outcome-bar {
     display: block;
-    height: 6px;
-    background: var(--border-strong);
+    height: 8px;
+    background: var(--surface-2);
     overflow: hidden;
+    border-radius: 4px;
 }
 .outcome-bar > span {
     display: block;
     height: 100%;
-    background: var(--fg-dim);
+    background: var(--accent-action);
     transition: width 400ms ease;
 }
 
-.outcome-row:first-child .outcome-bar > span { background: var(--fg); }
-.outcome-row:first-child .outcome-label { color: var(--fg); }
+.outcome-row:first-child .outcome-bar > span {
+    background: var(--accent-win);
+}
+.outcome-row:first-child .outcome-label {
+    color: var(--accent-win);
+    font-weight: 700;
+}
 
 .outcome-pct {
     color: var(--text-dim);
     text-align: right;
-    font-size: 10px;
-    letter-spacing: 0.04em;
+    font-size: 11px;
+    font-weight: 600;
 }
-
 .outcome-row:first-child .outcome-pct {
     color: var(--text);
+    font-weight: 700;
 }

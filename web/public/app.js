@@ -111,22 +111,65 @@ function fieldPane(g) {
     const we = g.win_expectancy;
     const intensity = we == null ? 0 : Math.abs(we - 0.5) * 2;
     const occ = (slot) => g.runners?.[slot] ? "true" : "false";
+    const runnerLabel = (slot, x, y, anchor) =>
+        g.runners?.[slot]
+            ? `<text class="runner-name" x="${x}" y="${y}" text-anchor="${anchor}">${shortName(g.runners[slot])}</text>`
+            : "";
 
     return `
-      <div class="field-pane">
-        <svg class="field" viewBox="0 0 500 500" style="--we-intensity:${intensity}">
-          <path class="grass" d="M 250,450 L 480,180 A 280,280 0 0 0 20,180 Z"/>
-          <line class="foul-line" x1="250" y1="450" x2="480" y2="180"/>
-          <line class="foul-line" x1="250" y1="450" x2="20" y2="180"/>
-          <polygon class="dirt" points="250,450 380,320 250,190 120,320"/>
-          <circle class="mound" cx="250" cy="320" r="14"/>
-          <rect class="base home"   x="245" y="445" width="10" height="10"/>
-          <rect class="base first"  data-occupied="${occ("first")}"  x="375" y="315" width="10" height="10"/>
-          <rect class="base second" data-occupied="${occ("second")}" x="245" y="185" width="10" height="10"/>
-          <rect class="base third"  data-occupied="${occ("third")}"  x="115" y="315" width="10" height="10"/>
-          ${g.runners?.first  ? `<text class="runner-name" x="395" y="320" text-anchor="start">${shortName(g.runners.first)}</text>`  : ""}
-          ${g.runners?.second ? `<text class="runner-name" x="250" y="175" text-anchor="middle">${shortName(g.runners.second)}</text>` : ""}
-          ${g.runners?.third  ? `<text class="runner-name" x="105" y="320" text-anchor="end">${shortName(g.runners.third)}</text>`   : ""}
+      <div class="field-pane" style="--we-intensity:${intensity}">
+        <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <radialGradient id="grass-radial" cx="0.5" cy="0.92" r="0.85">
+              <stop offset="0%"   stop-color="#4A7A35"/>
+              <stop offset="60%"  stop-color="#3F6B2A"/>
+              <stop offset="100%" stop-color="#355A23"/>
+            </radialGradient>
+          </defs>
+
+          <!-- Fair territory grass — fan shape, deeper in center -->
+          <path class="outfield-grass"
+                d="M 250,460 L 440,270 Q 250,40 60,270 Z"/>
+
+          <!-- Warning track (the dirt ring inside the outfield wall) -->
+          <path class="warning-track"
+                d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>
+
+          <!-- Foul lines (chalk) -->
+          <line class="foul-line" x1="250" y1="460" x2="440" y2="270"/>
+          <line class="foul-line" x1="250" y1="460" x2="60"  y2="270"/>
+
+          <!-- Foul poles -->
+          <rect class="foul-pole" x="437" y="263" width="5" height="14"/>
+          <rect class="foul-pole" x="58"  y="263" width="5" height="14"/>
+
+          <!-- Basepaths (dirt diamond outline) -->
+          <path class="basepath" d="M 250,455 L 388,318 L 250,180 L 112,318 Z"/>
+
+          <!-- Pitcher's mound + rubber -->
+          <circle class="mound" cx="250" cy="355" r="22"/>
+          <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
+
+          <!-- Bases -->
+          <polygon class="base home"
+                   points="244,458 256,458 256,464 250,470 244,464"/>
+          <g transform="translate(390 320) rotate(45)">
+            <rect class="base" data-occupied="${occ("first")}"
+                  x="-7" y="-7" width="14" height="14"/>
+          </g>
+          <g transform="translate(250 180) rotate(45)">
+            <rect class="base" data-occupied="${occ("second")}"
+                  x="-7" y="-7" width="14" height="14"/>
+          </g>
+          <g transform="translate(110 320) rotate(45)">
+            <rect class="base" data-occupied="${occ("third")}"
+                  x="-7" y="-7" width="14" height="14"/>
+          </g>
+
+          <!-- Runner names (legible against grass via text stroke) -->
+          ${runnerLabel("first",  412, 326, "start")}
+          ${runnerLabel("second", 250, 166, "middle")}
+          ${runnerLabel("third",  88,  326, "end")}
         </svg>
         ${situationStrip(g)}
         ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`) : ""}
