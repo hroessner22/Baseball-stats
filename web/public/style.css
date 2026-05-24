@@ -36,6 +36,12 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` HTML attribute should suppress display, but `main.board`,
+   `.game-view`, etc. set `display: grid` / `display: flex` directly, which
+   wins on specificity. Force the attribute to take priority so only one
+   <main> view ever renders at a time. */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 body {
     background: var(--bg);
