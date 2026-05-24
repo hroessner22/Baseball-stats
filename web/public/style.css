@@ -1803,6 +1803,61 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-weight: 400;
 }
 
+/* ── RECAP CARD ──────────────────────────────────────────────── */
+/* Appears on Final games above the matchup card. LLM-generated narrative
+   that explicitly leans on our predicted-vs-actual data — "the model
+   gave Judge's HR just 4%" type beats no other recap engine writes. */
+.card-pane > .recap-card { margin-top: 20px; }
+
+.recap-card .recap-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.recap-card .recap-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: var(--accent-win);
+    text-transform: uppercase;
+}
+.recap-card .recap-meta {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.recap-card .recap-body {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+}
+.recap-card .recap-body p { margin-bottom: 10px; }
+.recap-card .recap-body p:last-child { margin-bottom: 0; }
+.recap-card .recap-foot {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+}
+.recap-card .recap-link {
+    color: var(--accent-action);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(59, 130, 246, 0.4);
+}
+.recap-card .recap-link:hover { border-bottom-color: var(--accent-action); }
+.recap-card .recap-empty {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-style: italic;
+    padding: 6px 0;
+}
+
 /* ── MATCHUP CARD ─────────────────────────────────────────────── */
 
 .card-pane > .matchup-card { margin-top: 20px; }
