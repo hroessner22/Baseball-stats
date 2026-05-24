@@ -769,6 +769,212 @@ nav .nav-item:hover:not(.disabled) {
 nav .nav-item.disabled { cursor: default; opacity: 0.45; }
 nav .nav-item.disabled .num { color: var(--text-dim); }
 
+/* ── HOT MOMENTS VIEW ─────────────────────────────────────────── */
+/* "Where should I be watching right now?" — the leverage-sorted feed
+   of live moments. Bigger cards than the Board because each one is
+   pitched as a destination, not part of a grid scan. */
+
+.hot-view {
+    flex: 1;
+    overflow: auto;
+    padding: 20px 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+.hot-view .empty { padding: 60px 16px; }
+
+.hot-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.hot-head h2 {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+.hot-head .hot-flame {
+    font-size: 18px;
+    filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.4));
+}
+.hot-head .hot-meta {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+}
+
+.hot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+    gap: 14px;
+}
+
+.hot-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px 16px;
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    transition: transform 150ms ease, border-color 150ms ease,
+                background 150ms ease, box-shadow 150ms ease;
+    position: relative;
+}
+.hot-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-action);
+    background: var(--surface-2);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+/* The top hot card gets a red glow — the implicit "this is THE one
+   right now" without needing a separate hero card. */
+.hot-card:first-child {
+    border-color: rgba(239, 68, 68, 0.5);
+    box-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.4),
+        0 0 0 1px rgba(239, 68, 68, 0.25),
+        0 0 28px rgba(239, 68, 68, 0.1);
+}
+
+.hot-card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.hot-rank {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--accent-action);
+    font-variant-numeric: tabular-nums;
+}
+.hot-card:first-child .hot-rank { color: var(--accent-live); }
+
+.hot-reason {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.hot-lev {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
+
+.hot-matchup {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.hot-team {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0;
+}
+.hot-team + .hot-team {
+    border-top: 1px solid var(--border);
+}
+.hot-team-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.005em;
+}
+.hot-team-score {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.hot-state {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--accent-live);
+    padding: 4px 8px;
+    background: rgba(239, 68, 68, 0.08);
+    border-radius: 4px;
+}
+
+.hot-we {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.hot-we-bar {
+    height: 6px;
+    background: var(--accent-live);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.hot-we-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent-win);
+    transition: width 400ms ease;
+}
+.hot-we-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+}
+
+/* Tiny leverage meter — taller card-level signal of "how hot is hot". */
+.hot-meter {
+    height: 3px;
+    background: var(--bg);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.hot-meter > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(
+        to right,
+        var(--accent-action),
+        var(--accent-live)
+    );
+}
+
+.hot-cta {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent-action);
+    text-align: right;
+    text-transform: uppercase;
+}
+
 /* ── GAMECAST ──────────────────────────────────────────────────── */
 /* Toggle bar above the game pane, segmented-control style. */
 
