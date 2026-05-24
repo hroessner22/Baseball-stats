@@ -769,6 +769,244 @@ nav .nav-item:hover:not(.disabled) {
 nav .nav-item.disabled { cursor: default; opacity: 0.45; }
 nav .nav-item.disabled .num { color: var(--text-dim); }
 
+/* ── GAMECAST ──────────────────────────────────────────────────── */
+/* Toggle bar above the game pane, segmented-control style. */
+
+.game-mode-toggle {
+    display: inline-flex;
+    align-self: flex-start;
+    margin: 0 32px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px;
+}
+.game-mode-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 7px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+}
+.game-mode-toggle button:hover { color: var(--text); }
+.game-mode-toggle button.active {
+    background: var(--accent-action);
+    color: white;
+}
+
+.gamecast-pane {
+    padding: 0 32px;
+    flex: 1;
+    min-height: 0;
+}
+.gamecast-loading,
+.gamecast-pane .empty {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 60px 16px;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+}
+
+.gamecast-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* One plate appearance — header (inning + matchup + outcome) plus the
+   two-column body (prediction on the left, pitch sequence on the right). */
+.pa-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.pa-block[data-outcome="HR"] {
+    border-color: rgba(34, 197, 94, 0.5);
+}
+.pa-block[data-outcome="K"] {
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+.pa-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+.pa-inning {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+}
+.pa-matchup {
+    font-size: 13px;
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+}
+.pa-matchup .dim {
+    color: var(--text-dim);
+    font-weight: 500;
+}
+.pa-score {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    padding: 2px 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    letter-spacing: 0.04em;
+}
+.pa-outcome-badge {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text);
+    padding: 3px 8px;
+    background: var(--bg);
+    border-radius: 3px;
+}
+.pa-outcome-badge[data-outcome="HR"] {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--accent-win);
+}
+.pa-outcome-badge[data-outcome="K"] {
+    background: rgba(239, 68, 68, 0.18);
+    color: var(--accent-live);
+}
+
+.pa-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding: 14px;
+}
+@media (min-width: 720px) {
+    .pa-body {
+        grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    }
+}
+
+.pa-section-head {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.pa-no-data {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-style: italic;
+    padding: 6px 0;
+}
+
+/* Predicted distribution — same visual grammar as the matchup card's
+   outcome table, just compacted for the gamecast block. */
+.pa-pred-row {
+    display: grid;
+    grid-template-columns: 90px minmax(0, 1fr) 36px 14px;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    padding: 2px 0;
+    font-variant-numeric: tabular-nums;
+}
+.pa-pred-label {
+    color: var(--text-dim);
+}
+.pa-pred-bar {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.pa-pred-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent-action);
+}
+.pa-pred-pct {
+    color: var(--text);
+    text-align: right;
+    font-weight: 600;
+}
+.pa-pred-check {
+    color: var(--accent-win);
+    font-weight: 800;
+    text-align: center;
+}
+.pa-pred-row.actual .pa-pred-label,
+.pa-pred-row.actual .pa-pred-pct { color: var(--accent-win); font-weight: 700; }
+.pa-pred-row.actual .pa-pred-bar > span { background: var(--accent-win); }
+
+/* Pitch-by-pitch — number, type, velocity, result, count-after. */
+.pa-pitch-row {
+    display: grid;
+    grid-template-columns: 16px 80px 60px minmax(0, 1fr) 28px;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+}
+.pa-pitch-row + .pa-pitch-row { margin-top: 2px; }
+.pa-pitch-row.ball     { background: rgba(148, 163, 184, 0.06); }
+.pa-pitch-row.strike   { background: rgba(239, 68, 68, 0.10); }
+.pa-pitch-row.foul     { background: rgba(245, 158, 11, 0.08); }
+.pa-pitch-row.in-play  { background: rgba(34, 197, 94, 0.12); }
+.pa-pitch-num {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    text-align: right;
+}
+.pa-pitch-type {
+    color: var(--text);
+    font-weight: 600;
+}
+.pa-pitch-velo {
+    color: var(--accent-action);
+    font-weight: 700;
+    text-align: right;
+}
+.pa-pitch-velo .dim {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 600;
+    margin-left: 2px;
+}
+.pa-pitch-result {
+    color: var(--text);
+    font-weight: 500;
+}
+.pa-pitch-count {
+    color: var(--text-dim);
+    text-align: right;
+    font-weight: 600;
+    font-size: 10px;
+}
+
 /* ── ABOUT / METHODS VIEW ─────────────────────────────────────── */
 
 .about-view {
