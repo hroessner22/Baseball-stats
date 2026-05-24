@@ -769,6 +769,226 @@ nav .nav-item:hover:not(.disabled) {
 nav .nav-item.disabled { cursor: default; opacity: 0.45; }
 nav .nav-item.disabled .num { color: var(--text-dim); }
 
+/* ── PLAYER PROFILE VIEW ──────────────────────────────────────── */
+/* Reached via clickable player names anywhere in the app. Bookmarkable
+   URL: #player/{mlbam}. Shows career splits + this-season activity. */
+
+.player-view {
+    flex: 1;
+    overflow: auto;
+    padding: 18px 0 36px;
+    display: flex;
+    flex-direction: column;
+}
+.player-view .back-link {
+    padding: 0 32px 12px;
+}
+
+.player-doc {
+    width: 100%;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 24px;
+    color: var(--text);
+}
+
+.player-head { margin-bottom: 22px; }
+.player-head h1 {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    margin-bottom: 6px;
+}
+.player-meta {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.player-warning {
+    color: var(--accent-live);
+    text-transform: none;
+    letter-spacing: 0.02em;
+    font-style: italic;
+}
+
+.player-section {
+    margin-top: 24px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+}
+.player-section:first-of-type { border-top: none; padding-top: 0; }
+.player-section h2 {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+}
+
+.player-section-head {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.player-season {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 18px;
+}
+.season-line {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    margin-bottom: 12px;
+}
+.season-line strong {
+    color: var(--accent-win);
+    font-variant-numeric: tabular-nums;
+}
+.season-splits {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.season-split {
+    display: grid;
+    grid-template-columns: 60px 56px minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+    font-size: 12px;
+}
+.season-split .ss-label {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+.season-split .ss-pa {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+.season-split .ss-line {
+    color: var(--text);
+}
+.season-split .ss-line strong {
+    color: var(--accent-action);
+    font-variant-numeric: tabular-nums;
+}
+
+.player-career { display: flex; flex-direction: column; gap: 10px; }
+.career-head {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.career-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+}
+@media (min-width: 720px) {
+    .career-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+.career-split {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+}
+.career-split .cs-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.career-split .cs-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--text);
+    text-transform: uppercase;
+}
+.career-split .cs-pa {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+}
+.cs-row {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr) 36px 50px;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    padding: 3px 0;
+    font-variant-numeric: tabular-nums;
+}
+.cs-outcome { color: var(--text); }
+.cs-bar {
+    height: 6px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.cs-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent-action);
+}
+.cs-row:first-of-type .cs-bar > span { background: var(--accent-win); }
+.cs-row:first-of-type .cs-outcome,
+.cs-row:first-of-type .cs-pct { color: var(--accent-win); font-weight: 700; }
+.cs-pct {
+    color: var(--text);
+    text-align: right;
+    font-weight: 600;
+}
+.cs-n {
+    color: var(--text-dim);
+    text-align: right;
+    font-size: 10px;
+}
+
+.player-empty {
+    padding: 40px 0;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.player-empty p + p { margin-top: 8px; }
+
+/* The clickable name everywhere it appears. Subtle hover so it doesn't
+   shout "I'm a link" when you're reading the surrounding text. */
+.player-link {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(59, 130, 246, 0.3);
+    transition: color 120ms ease, border-color 120ms ease;
+}
+.player-link:hover {
+    color: var(--accent-action);
+    border-bottom-color: var(--accent-action);
+}
+
 /* ── HOT MOMENTS VIEW ─────────────────────────────────────────── */
 /* "Where should I be watching right now?" — the leverage-sorted feed
    of live moments. Bigger cards than the Board because each one is

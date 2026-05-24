@@ -11,6 +11,7 @@ const leadersView = document.getElementById("leaders-view");
 const mvpView = document.getElementById("mvp-view");
 const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
+const playerView = document.getElementById("player-view");
 
 const BOARD_REFRESH_MS = 30_000;
 const GAME_REFRESH_MS = 15_000;
@@ -96,6 +97,14 @@ function handleRoute() {
         setActiveNav("hot");
         return;
     }
+    const playerMatch = hash.match(/^#player\/(\d+)/);
+    if (playerMatch) {
+        showPlayer(playerMatch[1]);
+        // No nav highlight — player pages are reached from clickable
+        // names in matchup cards / Gamecast, not from the bottom nav.
+        setActiveNav(null);
+        return;
+    }
     showBoard();
     setActiveNav("live");
 }
@@ -119,6 +128,7 @@ function hideAllViews() {
     mvpView.hidden = true;
     aboutView.hidden = true;
     hotView.hidden = true;
+    playerView.hidden = true;
 }
 
 // Centralized timer-clear so each show* doesn't have to know about every
@@ -560,6 +570,171 @@ function showAbout() {
     hideAllViews();
     aboutView.hidden = false;
     aboutView.innerHTML = renderAbout();
+}
+
+// ── PLAYER PROFILE VIEW ─────────────────────────────────────────────
+//
+// Reached by clicking any player's name in the matchup card, Gamecast,
+// or anywhere else we render a name. Shows career splits from
+// batter_rates / pitcher_rates plus this-season activity from daily_pa.
+// Bookmarkable URL: #player/{mlbam}.
+
+function showPlayer(mlbam) {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    playerView.hidden = false;
+    renderEmpty(playerView, "Loading player…", "");
+    refreshPlayer(mlbam);
+}
+
+async function refreshPlayer(mlbam) {
+    try {
+        const res = await fetch(`/api/player/${mlbam}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        playerView.innerHTML = renderPlayer(data);
+    } catch (e) {
+        renderEmpty(playerView, "Couldn't load player.", `${e.message || e}`);
+    }
+}
+
+function renderPlayer(d) {
+    const p = d.player;
+    const hand = (d.batter?.bats || d.pitcher?.throws || null);
+    const handLabel = hand
+        ? (hand === "S" ? "Switch-hits" : `${hand === "L" ? "Left" : "Right"}-handed`)
+        : "";
+    const role = d.batter && d.pitcher ? "Two-way player"
+               : d.batter ? "Batter"
+               : d.pitcher ? "Pitcher"
+               : "Player";
+
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <article class="player-doc">
+        <header class="player-head">
+          <h1>${p.name}</h1>
+          <span class="player-meta">
+            ${role}${handLabel ? " · " + handLabel : ""}
+            ${p.retrosheet ? "" : ` · <span class="player-warning">not in Chadwick map (modern callup)</span>`}
+          </span>
+        </header>
+
+        ${d.batter ? renderBatterSection(p, d.batter, d.historical_years) : ""}
+        ${d.pitcher ? renderPitcherSection(p, d.pitcher, d.historical_years) : ""}
+
+        ${(!d.batter && !d.pitcher) ? `
+          <div class="player-empty">
+            <p>No data for this player in our 2020–2024 historical window,
+               and they haven't appeared in this season's daily ingest yet.</p>
+            <p>If they're a recent callup, they'll show up in the matchup
+               engine once they've taken some PAs.</p>
+          </div>
+        ` : ""}
+      </article>
+    `;
+}
+
+function renderBatterSection(player, b, years) {
+    return `
+      <section class="player-section">
+        <h2>Batting</h2>
+        ${b.season.pa > 0 ? renderSeasonBlock(b.season, "PA", "pitcher") : ""}
+        <div class="player-career">
+          <div class="career-head">
+            CAREER · ${years.start}–${years.end} · split by pitcher hand
+          </div>
+          <div class="career-grid">
+            ${renderCareerSplit("vs RHP", b.career.vs_RHP)}
+            ${renderCareerSplit("vs LHP", b.career.vs_LHP)}
+          </div>
+        </div>
+      </section>
+    `;
+}
+
+function renderPitcherSection(player, p, years) {
+    return `
+      <section class="player-section">
+        <h2>Pitching</h2>
+        ${p.season.pa > 0 ? renderSeasonBlock(p.season, "BF", "batter") : ""}
+        <div class="player-career">
+          <div class="career-head">
+            CAREER · ${years.start}–${years.end} · split by batter hand
+          </div>
+          <div class="career-grid">
+            ${renderCareerSplit("vs RHB", p.career.vs_RHB)}
+            ${renderCareerSplit("vs LHB", p.career.vs_LHB)}
+          </div>
+        </div>
+      </section>
+    `;
+}
+
+function renderSeasonBlock(season, paLabel, oppRole) {
+    const latest = season.latest_date ? `· last ${season.latest_date}` : "";
+    return `
+      <div class="player-season">
+        <div class="player-section-head">
+          THIS SEASON · ${season.pa} ${paLabel} ${latest}
+        </div>
+        <div class="season-line">${formatSeasonOutcomes(season.overall, season.pa)}</div>
+        <div class="season-splits">
+          ${season.splits.vs_R.pa > 0 ? `
+            <div class="season-split">
+              <span class="ss-label">vs ${oppRole === "pitcher" ? "RHP" : "RHB"}</span>
+              <span class="ss-pa">${season.splits.vs_R.pa} ${paLabel}</span>
+              <span class="ss-line">${formatSeasonOutcomes(season.splits.vs_R, season.splits.vs_R.pa)}</span>
+            </div>` : ""}
+          ${season.splits.vs_L.pa > 0 ? `
+            <div class="season-split">
+              <span class="ss-label">vs ${oppRole === "pitcher" ? "LHP" : "LHB"}</span>
+              <span class="ss-pa">${season.splits.vs_L.pa} ${paLabel}</span>
+              <span class="ss-line">${formatSeasonOutcomes(season.splits.vs_L, season.splits.vs_L.pa)}</span>
+            </div>` : ""}
+        </div>
+      </div>
+    `;
+}
+
+function formatSeasonOutcomes(o, total) {
+    if (!total) return "—";
+    const parts = [];
+    if (o.K)   parts.push(`<strong>${o.K}</strong> K`);
+    if (o.BB)  parts.push(`<strong>${o.BB}</strong> BB`);
+    if (o.HBP) parts.push(`<strong>${o.HBP}</strong> HBP`);
+    if (o.HR)  parts.push(`<strong>${o.HR}</strong> HR`);
+    const hits = (o["1B"] || 0) + (o["2B"] || 0) + (o["3B"] || 0) + (o.HR || 0);
+    if (hits) parts.push(`<strong>${hits}</strong> H`);
+    if (o.OUT) parts.push(`<strong>${o.OUT}</strong> OUT`);
+    return parts.join(" · ");
+}
+
+function renderCareerSplit(label, table) {
+    const entries = Object.entries(table.rates).sort((a, b) => b[1] - a[1]);
+    const top = entries[0]?.[1] || 1;
+    return `
+      <div class="career-split">
+        <header class="cs-head">
+          <span class="cs-label">${label}</span>
+          <span class="cs-pa">${table.pa.toLocaleString()} PA</span>
+        </header>
+        ${entries.map(([o, p]) => {
+            const pct = Math.round(p * 100);
+            const width = Math.max(2, Math.round((p / top) * 100));
+            const n = table.counts[o] || 0;
+            return `
+              <div class="cs-row">
+                <span class="cs-outcome">${OUTCOME_LABEL[o] || o}</span>
+                <span class="cs-bar"><span style="width:${width}%"></span></span>
+                <span class="cs-pct">${pct}%</span>
+                <span class="cs-n">(${n})</span>
+              </div>
+            `;
+        }).join("")}
+      </div>
+    `;
 }
 
 // ── HOT MOMENTS VIEW ────────────────────────────────────────────────
@@ -1090,10 +1265,10 @@ function renderPABlock(play, prediction) {
         <header class="pa-head">
           <span class="pa-inning">${inn}</span>
           <span class="pa-matchup">
-            <strong>${shortName(play.batter.name)}</strong>
+            <a class="player-link" href="#player/${play.batter.id}"><strong>${shortName(play.batter.name)}</strong></a>
             <span class="dim">(${play.batter.hand}HB)</span>
             <span class="dim"> vs </span>
-            <strong>${shortName(play.pitcher.name)}</strong>
+            <a class="player-link" href="#player/${play.pitcher.id}"><strong>${shortName(play.pitcher.name)}</strong></a>
             <span class="dim">(${play.pitcher.hand}HP)</span>
           </span>
           ${score ? `<span class="pa-score">${score}</span>` : ""}
@@ -1565,7 +1740,9 @@ function renderMatchupCard(m) {
     return `
       <div class="card matchup-card">
         <div class="subject">
-          ${m.batter.name} (${m.batter.bats}HB) vs ${m.pitcher.name} (${m.pitcher.throws}HP)
+          <a class="player-link" href="#player/${m.batter.mlbam}">${m.batter.name}</a> (${m.batter.bats}HB)
+          vs
+          <a class="player-link" href="#player/${m.pitcher.mlbam}">${m.pitcher.name}</a> (${m.pitcher.throws}HP)
         </div>
 
         <div class="question">What's about to happen?</div>
