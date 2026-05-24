@@ -864,6 +864,30 @@ function renderMatchupCard(m) {
            </div>`
         : "";
 
+    // "What have they actually done this season?" — strictly the daily_pa
+    // outcomes, no prediction math layered on top. Honest descriptive
+    // counterpoint to the predicted distribution above.
+    const rf = m.recent_form;
+    const recentForm = (rf && (rf.batter.pa > 0 || rf.pitcher.bf > 0))
+        ? `
+          <div class="recent-form">
+            <div class="recent-form-head">Recent form · current season</div>
+            ${rf.batter.pa > 0
+                ? `<div class="rf-row">
+                     <span class="rf-label">${shortName(m.batter.name)}</span>
+                     <span class="rf-stats">${describeRecentOutcomes(rf.batter.pa, rf.batter.outcomes)}</span>
+                   </div>`
+                : ""}
+            ${rf.pitcher.bf > 0
+                ? `<div class="rf-row">
+                     <span class="rf-label">${shortName(m.pitcher.name)}</span>
+                     <span class="rf-stats">${describeRecentOutcomes(rf.pitcher.bf, rf.pitcher.outcomes)}</span>
+                   </div>`
+                : ""}
+          </div>
+        `
+        : "";
+
     return `
       <div class="card matchup-card">
         <div class="subject">
@@ -879,8 +903,27 @@ function renderMatchupCard(m) {
           ${m.years.start}–${m.years.end}
         </div>
         ${liveLine}
+        ${recentForm}
       </div>
     `;
+}
+
+// Compact descriptive outcome line: "25 PA — 7 K · 3 BB · 1 HR · 5 H · 12 OUT".
+// Only includes outcome buckets that actually fired so the line stays short.
+function describeRecentOutcomes(total, outcomes) {
+    const k = outcomes.K || 0;
+    const bb = (outcomes.BB || 0) + (outcomes.HBP || 0);
+    const hr = outcomes.HR || 0;
+    const hits = (outcomes["1B"] || 0) + (outcomes["2B"] || 0) +
+                 (outcomes["3B"] || 0) + hr;
+    const outs = outcomes.OUT || 0;
+    const parts = [];
+    if (k) parts.push(`${k} K`);
+    if (bb) parts.push(`${bb} BB`);
+    if (hr) parts.push(`${hr} HR`);
+    if (hits) parts.push(`${hits} H`);
+    if (outs) parts.push(`${outs} OUT`);
+    return `${total} PA — ${parts.join(" · ")}`;
 }
 
 function liveRead(g, we) {

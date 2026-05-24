@@ -1202,6 +1202,46 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     flex-shrink: 0;
 }
 
+/* "What have they actually done this season?" — descriptive outcome
+   counts pulled from daily_pa, sitting below the predicted distribution.
+   Strictly observed, not predicted — the honest counterpoint to the
+   model's prediction above. Limited to whatever days are in daily_pa. */
+.matchup-card .recent-form {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.matchup-card .recent-form-head {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.matchup-card .rf-row {
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    gap: 12px;
+    align-items: baseline;
+    font-size: 12px;
+}
+.matchup-card .rf-row .rf-label {
+    color: var(--text);
+    font-weight: 700;
+    white-space: nowrap;
+}
+.matchup-card .rf-row .rf-stats {
+    color: var(--text);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+}
+
 .outcome-table {
     display: flex;
     flex-direction: column;
