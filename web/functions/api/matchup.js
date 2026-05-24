@@ -131,6 +131,29 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
     const pitcherCounts = sumByOutcome(pitcherRows);
     const leagueCounts = sumByOutcome(leagueRows);
 
+    // 6) Current-season events from the daily_pa log — append to batter and
+    //    pitcher counts so predictions sharpen as the season's sample grows.
+    //    League baseline isn't touched here: 150 years of leagueRates makes
+    //    one season's worth of new PAs a sub-percent change.
+    const [batterCurrent, pitcherCurrent] = await Promise.all([
+        sb(env, "daily_pa", {
+            batter_mlbam: `eq.${batterMlbam}`,
+            pitcher_hand: `eq.${throws}`,
+            select: "outcome",
+            limit: "5000",
+        }),
+        sb(env, "daily_pa", {
+            pitcher_mlbam: `eq.${pitcherMlbam}`,
+            batter_hand: `eq.${bats}`,
+            select: "outcome",
+            limit: "5000",
+        }),
+    ]);
+    const batterCurrentCounts = countOutcomes(batterCurrent);
+    const pitcherCurrentCounts = countOutcomes(pitcherCurrent);
+    addCounts(batterCounts, batterCurrentCounts);
+    addCounts(pitcherCounts, pitcherCurrentCounts);
+
     const predicted = predict(batterCounts, pitcherCounts, leagueCounts);
 
     return {
@@ -149,14 +172,30 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
             throws,
         },
         sample: {
-            batter_pa: total(batterCounts),
+            batter_pa:  total(batterCounts),
             pitcher_bf: total(pitcherCounts),
+            // Visibility into how much of the sample came from the live
+            // event log vs the frozen historical baseline.
+            batter_pa_current_season:  batterCurrent.length,
+            pitcher_bf_current_season: pitcherCurrent.length,
         },
         predicted,
         batter_rates:  rates(batterCounts),
         pitcher_rates: rates(pitcherCounts),
         league:        rates(leagueCounts),
     };
+}
+
+// Tally outcomes from a daily_pa row list (each row has just {outcome}).
+function countOutcomes(rows) {
+    const out = {};
+    for (const r of rows) out[r.outcome] = (out[r.outcome] || 0) + 1;
+    return out;
+}
+
+// In-place: a[k] += b[k] for every outcome.
+function addCounts(a, b) {
+    for (const o of Object.keys(b)) a[o] = (a[o] || 0) + b[o];
 }
 
 function name(p) {
