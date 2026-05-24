@@ -439,3 +439,54 @@ nav .nav-item.disabled {
     line-height: 1.55;
     font-style: italic;
 }
+
+/* ── MATCHUP CARD (Phase 3.2) ─────────────────────────────────── */
+
+.card-pane > .matchup-card { margin-top: 24px; }
+
+.outcome-table {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
+.outcome-row {
+    display: grid;
+    grid-template-columns: 95px 1fr 36px;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+}
+
+.outcome-label {
+    color: var(--text);
+    letter-spacing: 0.02em;
+}
+
+.outcome-bar {
+    display: block;
+    height: 6px;
+    background: var(--border-strong);
+    overflow: hidden;
+}
+.outcome-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--fg-dim);
+    transition: width 400ms ease;
+}
+
+.outcome-row:first-child .outcome-bar > span { background: var(--fg); }
+.outcome-row:first-child .outcome-label { color: var(--fg); }
+
+.outcome-pct {
+    color: var(--text-dim);
+    text-align: right;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+}
+
+.outcome-row:first-child .outcome-pct {
+    color: var(--text);
+}

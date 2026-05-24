@@ -88,6 +88,10 @@ async function refreshGame(id) {
         const g = await res.json();
         if (id !== activeGameId) return;
         gameView.innerHTML = renderGame(g);
+        // Hydrate the matchup card (Phase 3.2) once the shell is in.
+        if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
+            hydrateMatchup(g.batter.id, g.pitcher.id, id);
+        }
     } catch (e) {
         renderEmpty(gameView, "Could not load this game.", `${e.message || e}`);
     }
@@ -207,6 +211,72 @@ function cardPane(g) {
           </div>
 
           <div class="read">${liveRead(g, we)}</div>
+        </div>
+        <div id="matchup-slot"></div>
+      </div>
+    `;
+}
+
+// ── MATCHUP ENGINE (Phase 3.2) ──────────────────────────────────────
+
+const OUTCOME_LABEL = {
+    K:     "strikeout",
+    BB:    "walk",
+    HBP:   "hit by pitch",
+    "1B":  "single",
+    "2B":  "double",
+    "3B":  "triple",
+    HR:    "home run",
+    OUT:   "in-play out",
+    OTHER: "error / fielder's choice",
+};
+
+async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor) {
+    try {
+        const res = await fetch(
+            `/api/matchup?batter=${batterMlbam}&pitcher=${pitcherMlbam}`
+        );
+        if (!res.ok) return;
+        const m = await res.json();
+        if (requestedFor !== activeGameId) return;
+        const slot = document.getElementById("matchup-slot");
+        if (!slot || !m.available) return;
+        slot.innerHTML = renderMatchupCard(m);
+    } catch (e) {
+        // silently absent — the page works without the matchup card
+    }
+}
+
+function renderMatchupCard(m) {
+    const entries = Object.entries(m.predicted)
+        .sort((a, b) => b[1] - a[1]);
+    // Scale bar widths so the most-likely outcome's bar reaches ~100%.
+    const top = entries[0][1] || 1;
+    const rows = entries.map(([o, p]) => {
+        const pct = Math.round(p * 100);
+        const width = Math.round((p / top) * 100);
+        return `
+          <div class="outcome-row">
+            <span class="outcome-label">${OUTCOME_LABEL[o] || o}</span>
+            <span class="outcome-bar"><span style="width:${width}%"></span></span>
+            <span class="outcome-pct">${pct}%</span>
+          </div>
+        `;
+    }).join("");
+
+    return `
+      <div class="card matchup-card">
+        <div class="subject">
+          ${m.batter.name} (${m.batter.bats}HB) vs ${m.pitcher.name} (${m.pitcher.throws}HP)
+        </div>
+
+        <div class="question">What's about to happen?</div>
+        <div class="outcome-table">${rows}</div>
+
+        <div class="evidence">
+          batter ${m.sample.batter_pa.toLocaleString()} PA vs ${m.pitcher.throws}HP ·
+          pitcher ${m.sample.pitcher_bf.toLocaleString()} BF vs ${m.batter.bats}HB ·
+          ${m.years.start}–${m.years.end}
         </div>
       </div>
     `;
