@@ -442,6 +442,130 @@ main.board {
 .standings-table .rd-pos { color: var(--accent-win); font-weight: 600; }
 .standings-table .rd-neg { color: var(--accent-live); font-weight: 600; }
 
+/* ── LEADERS VIEW ──────────────────────────────────────────────── */
+
+.leaders-view {
+    flex: 1;
+    overflow: auto;
+    padding: 20px 28px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+.leaders-view .empty { padding: 48px 16px; }
+
+.leaders-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+}
+.leaders-head h2 {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: var(--text);
+}
+.leaders-head .leaders-meta {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+
+.leaders-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.leaders-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+
+.leaders-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.leader-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+}
+.leader-head {
+    padding: 9px 14px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+}
+.leader-stat {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: var(--text);
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
+
+.leader-list {
+    list-style: none;
+    padding: 4px 0;
+    margin: 0;
+}
+.leader-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: baseline;
+    padding: 6px 14px;
+    font-size: 12px;
+}
+.leader-rank {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.leader-row[data-rank="1"] .leader-rank {
+    color: var(--accent-win);
+}
+.leader-name {
+    color: var(--text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.leader-team {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+}
+.leader-value {
+    color: var(--text);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+    min-width: 42px;
+    text-align: right;
+}
+.leader-empty {
+    padding: 14px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-style: italic;
+}
+
 /* ── BOTTOM NAV ────────────────────────────────────────────────── */
 
 nav {
