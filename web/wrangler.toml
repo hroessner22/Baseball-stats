@@ -1,3 +1,10 @@
 name = "diamond-context"
 pages_build_output_dir = "./public"
 compatibility_date = "2025-05-23"
+
+# Supabase access for the matchup engine endpoint. The anon key is
+# intended to be public (it's the read-only client key); RLS on the
+# tables enforces what's reachable from it.
+[vars]
+SUPABASE_URL = "https://jnobopyhciheyheqxrmy.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impub2JvcHloY2loZXloZXF4cm15Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1OTM3NjAsImV4cCI6MjA5NTE2OTc2MH0.qQ7J0YYOSyrtL09Qsx6G5X6NBmQFo_3i0shlUybSDDg"
