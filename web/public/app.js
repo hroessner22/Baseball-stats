@@ -8,16 +8,19 @@ const board = document.getElementById("board");
 const gameView = document.getElementById("game-view");
 const standingsView = document.getElementById("standings-view");
 const leadersView = document.getElementById("leaders-view");
+const mvpView = document.getElementById("mvp-view");
 
 const BOARD_REFRESH_MS = 30_000;
 const GAME_REFRESH_MS = 15_000;
 const STANDINGS_REFRESH_MS = 5 * 60_000;
 const LEADERS_REFRESH_MS = 5 * 60_000;
+const MVP_REFRESH_MS = 5 * 60_000;
 
 let boardTimer = null;
 let gameTimer = null;
 let standingsTimer = null;
 let leadersTimer = null;
+let mvpTimer = null;
 let activeGameId = null;
 
 window.addEventListener("hashchange", handleRoute);
@@ -42,6 +45,11 @@ function handleRoute() {
         setActiveNav("leaders");
         return;
     }
+    if (hash === "#mvp") {
+        showMVP();
+        setActiveNav("mvp");
+        return;
+    }
     showBoard();
     setActiveNav("live");
 }
@@ -59,9 +67,11 @@ function showBoard() {
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
+    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
     gameView.hidden = true;
     standingsView.hidden = true;
     leadersView.hidden = true;
+    mvpView.hidden = true;
     board.hidden = false;
     refreshBoard();
     if (!boardTimer) boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
@@ -279,9 +289,11 @@ function showGameView(id) {
     if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
+    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
     board.hidden = true;
     standingsView.hidden = true;
     leadersView.hidden = true;
+    mvpView.hidden = true;
     gameView.hidden = false;
     renderEmpty(gameView, "Loading game…", "");
     refreshGame(id);
@@ -296,9 +308,11 @@ function showStandings() {
     if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
+    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
     board.hidden = true;
     gameView.hidden = true;
     leadersView.hidden = true;
+    mvpView.hidden = true;
     standingsView.hidden = false;
     renderEmpty(standingsView, "Loading standings…", "");
     refreshStandings();
@@ -403,9 +417,11 @@ function showLeaders() {
     if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
     board.hidden = true;
     gameView.hidden = true;
     standingsView.hidden = true;
+    mvpView.hidden = true;
     leadersView.hidden = false;
     renderEmpty(leadersView, "Loading leaders…", "");
     refreshLeaders();
@@ -475,6 +491,89 @@ function renderLeaderRow(l) {
         <span class="leader-name">${shortName(l.name)}</span>
         ${team}
         <span class="leader-value">${l.value}</span>
+      </li>
+    `;
+}
+
+// ── MVP / CY YOUNG VIEW ─────────────────────────────────────────────
+
+function showMVP() {
+    activeGameId = null;
+    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
+    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
+    board.hidden = true;
+    gameView.hidden = true;
+    standingsView.hidden = true;
+    leadersView.hidden = true;
+    mvpView.hidden = false;
+    renderEmpty(mvpView, "Loading MVP race…", "");
+    refreshMVP();
+    if (!mvpTimer) mvpTimer = setInterval(refreshMVP, MVP_REFRESH_MS);
+}
+
+async function refreshMVP() {
+    try {
+        const res = await fetch("/api/mvp");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.races || data.races.length === 0) {
+            renderEmpty(mvpView, "MVP race not available.", "Check back later.");
+            return;
+        }
+        mvpView.innerHTML = renderMVP(data);
+    } catch (e) {
+        renderEmpty(mvpView, "Could not load MVP race.", `${e.message || e}`);
+    }
+}
+
+function renderMVP(data) {
+    return `
+      <header class="mvp-head">
+        <h2>MVP RACE</h2>
+        <span class="mvp-meta">${data.season} season · top 5 by primary stat</span>
+      </header>
+      <div class="mvp-grid">
+        ${data.races.map(renderRaceCard).join("")}
+      </div>
+      <footer class="mvp-foot">
+        Hitters ranked by OPS · Pitchers ranked by ERA. Headline stats only —
+        WAR proxies and leverage-weighted contribution will land alongside
+        the Deep Dive engine.
+      </footer>
+    `;
+}
+
+function renderRaceCard(race) {
+    return `
+      <article class="race-card" data-group="${race.group}">
+        <header class="race-head">
+          <span class="race-title">${race.title}</span>
+        </header>
+        ${race.candidates.length === 0
+            ? `<div class="race-empty">no qualified players yet</div>`
+            : `<ol class="race-list">${race.candidates.map(renderCandidate).join("")}</ol>`}
+      </article>
+    `;
+}
+
+function renderCandidate(c) {
+    const team = c.team ? `<span class="cand-team">${c.team}</span>` : "";
+    const statCells = c.stats.map((s, i) => `
+      <div class="cand-stat ${i === 0 ? "primary" : ""}">
+        <span class="cand-stat-value">${s.value}</span>
+        <span class="cand-stat-label">${s.label}</span>
+      </div>
+    `).join("");
+    return `
+      <li class="cand-row" data-rank="${c.rank}">
+        <div class="cand-id">
+          <span class="cand-rank">${c.rank}</span>
+          <span class="cand-name">${shortName(c.name)}</span>
+          ${team}
+        </div>
+        <div class="cand-stats">${statCells}</div>
       </li>
     `;
 }
