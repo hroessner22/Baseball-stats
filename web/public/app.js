@@ -841,12 +841,19 @@ function renderMatchupCard(m) {
     const rows = entries.map(([o, p]) => {
         const pct = Math.round(p * 100);
         const width = Math.round((p / top) * 100);
+        // Each row is a <details> so the user can expand to see exactly
+        // what feeds the prediction — the brand thesis ("every number
+        // explains itself") expressed in the most concrete possible way.
         return `
-          <div class="outcome-row">
-            <span class="outcome-label">${OUTCOME_LABEL[o] || o}</span>
-            <span class="outcome-bar"><span style="width:${width}%"></span></span>
-            <span class="outcome-pct">${pct}%</span>
-          </div>
+          <details class="outcome-detail">
+            <summary class="outcome-row">
+              <span class="outcome-label">${OUTCOME_LABEL[o] || o}</span>
+              <span class="outcome-bar"><span style="width:${width}%"></span></span>
+              <span class="outcome-pct">${pct}%</span>
+              <span class="outcome-caret" aria-hidden="true">▾</span>
+            </summary>
+            ${explainOutcome(o, m)}
+          </details>
         `;
     }).join("");
 
@@ -906,6 +913,70 @@ function renderMatchupCard(m) {
         ${recentForm}
       </div>
     `;
+}
+
+// "Why is this prediction what it is?" — the breakdown for one outcome
+// bucket. Shows the three ingredients to the odds-ratio prediction
+// (batter rate, pitcher rate, league baseline) plus a one-line narrative
+// comparing the combined number to league average. The brand thesis
+// ("every number explains itself") rendered in HTML.
+function explainOutcome(o, m) {
+    const b  = (m.batter_rates[o]  || 0) * 100;
+    const p  = (m.pitcher_rates[o] || 0) * 100;
+    const lg = (m.league[o]        || 0) * 100;
+    const combined = (m.predicted[o] || 0) * 100;
+    const label = OUTCOME_LABEL[o] || o;
+
+    // Tilt: how much above / below league baseline is each side, and
+    // which side is doing more of the pulling. Drives the narrative.
+    const ratio = (x) => lg > 0 ? x / lg : 1;
+    const batterTilt  = ratio(b);
+    const pitcherTilt = ratio(p);
+    const combinedTilt = ratio(combined);
+
+    let narrative;
+    if (combinedTilt >= 1.15) {
+        const driver = batterTilt > pitcherTilt
+            ? `${shortName(m.batter.name)} ${label.toLowerCase()}s ${pct(batterTilt - 1)} more than league`
+            : `${shortName(m.pitcher.name)} allows ${label.toLowerCase()} ${pct(pitcherTilt - 1)} more than league`;
+        narrative = `Above league avg — ${driver}.`;
+    } else if (combinedTilt <= 0.85) {
+        const driver = batterTilt < pitcherTilt
+            ? `${shortName(m.batter.name)} ${label.toLowerCase()}s ${pct(1 - batterTilt)} less than league`
+            : `${shortName(m.pitcher.name)} allows ${label.toLowerCase()} ${pct(1 - pitcherTilt)} less than league`;
+        narrative = `Below league avg — ${driver}.`;
+    } else {
+        narrative = `Near league average.`;
+    }
+
+    return `
+      <div class="outcome-breakdown">
+        <div class="bd-row">
+          <span class="bd-label">Batter</span>
+          <span class="bd-value">${b.toFixed(1)}%</span>
+          <span class="bd-note">${shortName(m.batter.name)} vs ${m.pitcher.throws}HP</span>
+        </div>
+        <div class="bd-row">
+          <span class="bd-label">Pitcher</span>
+          <span class="bd-value">${p.toFixed(1)}%</span>
+          <span class="bd-note">${shortName(m.pitcher.name)} vs ${m.batter.bats}HB</span>
+        </div>
+        <div class="bd-row">
+          <span class="bd-label">League</span>
+          <span class="bd-value">${lg.toFixed(1)}%</span>
+          <span class="bd-note">baseline ${m.batter.bats}HB vs ${m.pitcher.throws}HP</span>
+        </div>
+        <div class="bd-row total">
+          <span class="bd-label">Combined</span>
+          <span class="bd-value">${combined.toFixed(1)}%</span>
+          <span class="bd-note">${narrative}</span>
+        </div>
+      </div>
+    `;
+}
+
+function pct(x) {
+    return `${Math.round(x * 100)}%`;
 }
 
 // Compact descriptive outcome line: "25 PA — 7 K · 3 BB · 1 HR · 5 H · 12 OUT".

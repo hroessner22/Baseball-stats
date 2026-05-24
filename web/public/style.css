@@ -1255,12 +1255,33 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-variant-numeric: tabular-nums;
 }
 
+/* Each outcome row is a <details> so it expands inline to show the
+   per-component breakdown. <summary> wears the .outcome-row class so the
+   collapsed look stays identical to the previous flat row. */
+.outcome-detail {
+    /* Smooth open/close. <details> doesn't animate height natively, but
+       the breakdown panel handles its own fade-in below. */
+}
+.outcome-detail > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+}
+.outcome-detail > summary::-webkit-details-marker { display: none; }
+.outcome-detail > summary::marker { content: ""; }
+
 .outcome-row {
     display: grid;
-    grid-template-columns: 110px 1fr 42px;
+    grid-template-columns: 110px 1fr 42px 14px;
     gap: 10px;
     align-items: center;
     font-size: 12px;
+    padding: 2px 0;
+    border-radius: 4px;
+    transition: background 120ms ease;
+}
+.outcome-detail > summary:hover .outcome-row {
+    background: var(--surface-2);
 }
 
 .outcome-label {
@@ -1282,10 +1303,10 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     transition: width 400ms ease;
 }
 
-.outcome-row:first-child .outcome-bar > span {
+.outcome-detail:first-child .outcome-bar > span {
     background: var(--accent-win);
 }
-.outcome-row:first-child .outcome-label {
+.outcome-detail:first-child .outcome-label {
     color: var(--accent-win);
     font-weight: 700;
 }
@@ -1296,9 +1317,80 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-size: 11px;
     font-weight: 600;
 }
-.outcome-row:first-child .outcome-pct {
+.outcome-detail:first-child .outcome-pct {
     color: var(--text);
     font-weight: 700;
+}
+
+.outcome-caret {
+    color: var(--text-dim);
+    font-size: 10px;
+    text-align: center;
+    transition: transform 200ms ease, color 120ms ease;
+}
+.outcome-detail[open] > summary .outcome-caret {
+    transform: rotate(180deg);
+    color: var(--accent-action);
+}
+
+/* The expanded breakdown — three component rates + the combined number,
+   each on its own row with a one-line narrative on the right. */
+.outcome-breakdown {
+    margin: 8px 0 4px 14px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border-left: 2px solid var(--accent-action);
+    border-radius: 0 4px 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 11px;
+    animation: outcome-breakdown-in 200ms ease;
+}
+@keyframes outcome-breakdown-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.bd-row {
+    display: grid;
+    grid-template-columns: 64px 48px minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+}
+.bd-label {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+.bd-value {
+    color: var(--text);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+.bd-note {
+    color: var(--text-dim);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bd-row.total {
+    padding-top: 5px;
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+}
+.bd-row.total .bd-label,
+.bd-row.total .bd-value {
+    color: var(--accent-action);
+}
+.bd-row.total .bd-note {
+    color: var(--text);
+    font-weight: 600;
+    white-space: normal;
 }
 
 /* ── RESPONSIVE / MOBILE ───────────────────────────────────────── */
