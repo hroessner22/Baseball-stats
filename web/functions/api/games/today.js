@@ -164,6 +164,16 @@ function buildTile(g, handBy) {
         };
     }
 
+    // Records ride straight off the schedule response. Standings position
+    // isn't here — would need a separate /standings call — so we surface the
+    // raw W-L only.
+    const recAway = g.teams?.away?.leagueRecord;
+    const recHome = g.teams?.home?.leagueRecord;
+    const record = (recAway || recHome) ? {
+        away: recAway ? `${recAway.wins}-${recAway.losses}` : null,
+        home: recHome ? `${recHome.wins}-${recHome.losses}` : null,
+    } : null;
+
     return {
         game_pk: g.gamePk,
         status,
@@ -180,6 +190,7 @@ function buildTile(g, handBy) {
         start_time: g.gameDate,
         probables,
         decisions,
+        record,
     };
 }
 

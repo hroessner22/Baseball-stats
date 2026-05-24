@@ -30,7 +30,7 @@
     --dirt-dark:   #8B6F47;
     --chalk:       #E8E8E8;
 
-    --tile-w: 220px;
+    --tile-w: 240px;
     --radius: 8px;
 }
 
@@ -101,23 +101,16 @@ header h1 .colon { color: var(--accent-win); }
 main.board {
     flex: 1;
     overflow: auto;
-    padding: 28px 24px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 24px;
-}
-
-.tile-grid {
-    width: 100%;
+    padding: 20px 20px 24px;
     display: grid;
     grid-template-columns: repeat(auto-fill, var(--tile-w));
-    gap: 16px;
+    gap: 14px;
     align-content: start;
     justify-content: center;
 }
 
 .empty {
+    grid-column: 1 / -1;
     text-align: center;
     color: var(--text-dim);
     padding: 96px 16px;
@@ -132,247 +125,6 @@ main.board {
     text-transform: uppercase;
 }
 
-/* ── FEATURED CARD ─────────────────────────────────────────────── */
-/* One game per Board, hero-styled across the full width above the grid.
-   Picked by leverage for live games, by start time for pregame games, by
-   recency for finals. */
-
-.featured-card {
-    width: 100%;
-    max-width: 980px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px 22px 20px;
-    color: inherit;
-    text-decoration: none;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
-    transition: transform 150ms ease, border-color 150ms ease,
-                background 150ms ease;
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-}
-.featured-card:hover {
-    transform: translateY(-2px);
-    border-color: var(--accent-action);
-    background: var(--surface-2);
-}
-.featured-card[data-status="Live"] {
-    border-color: rgba(239, 68, 68, 0.45);
-    box-shadow:
-        0 2px 8px rgba(0, 0, 0, 0.45),
-        0 0 0 1px rgba(239, 68, 68, 0.2),
-        0 0 24px rgba(239, 68, 68, 0.12);
-}
-
-.featured-head {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 12px;
-}
-.featured-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 9px;
-    background: var(--accent-live);
-    color: #fff;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.18em;
-    line-height: 1;
-}
-.featured-badge .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #fff;
-    animation: pulse 1.5s ease-in-out infinite;
-}
-.featured-card[data-status="Preview"] .featured-badge,
-.featured-card[data-status="Final"]   .featured-badge {
-    background: var(--accent-action);
-}
-.featured-card[data-status="Preview"] .featured-badge .dot,
-.featured-card[data-status="Final"]   .featured-badge .dot {
-    animation: none;
-}
-.featured-reason {
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.005em;
-}
-
-.featured-body {
-    display: grid;
-    grid-template-columns: minmax(120px, 180px) minmax(160px, 220px) minmax(0, 1fr);
-    gap: 24px;
-    align-items: center;
-}
-@media (max-width: 680px) {
-    .featured-body {
-        grid-template-columns: 1fr;
-        gap: 16px;
-    }
-}
-
-.featured-scores {
-    display: flex;
-    flex-direction: column;
-}
-.featured-scores .team {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-}
-.featured-scores .team:last-child { border-bottom: none; padding-bottom: 4px; }
-.featured-scores .team:first-child { padding-top: 4px; }
-.featured-scores .team .name {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text);
-    letter-spacing: -0.01em;
-}
-.featured-scores .team .score {
-    font-size: 36px;
-    font-weight: 800;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-}
-
-.featured-field-wrap {
-    display: flex;
-    justify-content: center;
-}
-.featured-field {
-    width: 100%;
-    max-width: 200px;
-    aspect-ratio: 1;
-    display: block;
-    filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
-    border-radius: var(--radius);
-    overflow: hidden;
-}
-
-.featured-context {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-}
-.featured-context .state-line {
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-}
-.featured-card[data-status="Live"] .featured-context .state-line {
-    color: var(--accent-live);
-}
-.featured-context .bases-line {
-    font-size: 12px;
-    color: var(--text);
-    font-weight: 500;
-    letter-spacing: 0.01em;
-}
-
-.featured-players {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 4px;
-}
-.featured-players .player-row {
-    display: grid;
-    grid-template-columns: 90px minmax(0, 1fr) auto;
-    align-items: baseline;
-    gap: 8px;
-    font-size: 13px;
-}
-.featured-players .player-row .label {
-    color: var(--text-dim);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-}
-.featured-players .player-row strong {
-    color: var(--text);
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.featured-players .player-row .hand {
-    color: var(--text-dim);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-}
-.featured-players .player-row.dim strong {
-    color: var(--text-dim);
-}
-
-.featured-we {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-}
-.featured-we .we-bar {
-    height: 6px;
-    background: var(--accent-live);
-    border-radius: 3px;
-    overflow: hidden;
-}
-.featured-we .we-bar > span {
-    display: block;
-    height: 100%;
-    background: var(--accent-win);
-    transition: width 400ms ease;
-}
-.featured-we .we-labels {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-dim);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.04em;
-}
-.featured-we .we-labels .leader {
-    color: var(--text);
-    font-weight: 700;
-    letter-spacing: 0.04em;
-}
-
-/* In the featured card the diamond doubles as a placeholder when the game
-   isn't live yet (no real field state to show). */
-.featured-card .diamond {
-    width: 140px;
-    height: 140px;
-}
-.featured-card .diamond > polygon {
-    stroke: var(--border) !important;
-}
-.featured-card .diamond .base { fill: var(--text-dim); }
-.featured-card .diamond .base.occupied {
-    fill: var(--accent-win);
-    filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.6));
-}
-
 /* ── GAME TILE ─────────────────────────────────────────────────── */
 
 .tile {
@@ -380,10 +132,10 @@ main.board {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 14px;
+    padding: 12px 14px 14px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
     text-decoration: none;
     color: inherit;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -397,6 +149,16 @@ main.board {
     background: var(--surface-2);
 }
 
+/* The top live game on the slate gets a faint red ring so the eye picks it
+   up first without a separate hero card. Driven by sort order, not by class
+   name — the first child .tile that's also Live qualifies. */
+.tile[data-status="Live"]:first-child {
+    border-color: rgba(239, 68, 68, 0.45);
+    box-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.4),
+        0 0 0 1px rgba(239, 68, 68, 0.2);
+}
+
 .tile .matchup {
     display: flex;
     flex-direction: column;
@@ -405,25 +167,42 @@ main.board {
 .tile .team {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
+    align-items: baseline;
+    padding: 6px 0;
     border-bottom: 1px solid var(--border);
 }
 .tile .team:last-child { border-bottom: none; padding-bottom: 4px; }
-.tile .team:first-child { padding-top: 4px; }
+.tile .team:first-child { padding-top: 2px; }
 
+.tile .team .team-id {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
 .tile .team .name {
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text);
     letter-spacing: -0.005em;
 }
+.tile .team .rec {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
 .tile .team .score {
-    font-size: 24px;
-    font-weight: 700;
+    font-size: 22px;
+    font-weight: 800;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     line-height: 1;
+}
+.tile[data-status="Preview"] .team .score {
+    color: var(--text-dim);
+    font-weight: 600;
 }
 
 .tile .state {
@@ -441,44 +220,86 @@ main.board {
     color: var(--text-dim);
 }
 
-.tile .diamond {
-    width: 32px;
-    height: 32px;
+/* Mini real-ballpark field SVG inside the tile. Same styles as the Game view
+   .field — that's why miniFieldSVG emits class="field tile-field". This
+   override just bounds the size. */
+.tile .tile-field {
+    width: 100%;
+    max-width: 150px;
+    aspect-ratio: 1;
     align-self: center;
-}
-.tile .diamond > polygon {
-    stroke: var(--border) !important;
-}
-.tile .diamond .base { fill: var(--text-dim); }
-.tile .diamond .base.occupied {
-    fill: var(--accent-win);
-    filter: drop-shadow(0 0 4px rgba(34, 197, 94, 0.6));
+    display: block;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+    border-radius: var(--radius);
+    overflow: hidden;
 }
 
-.tile .we {
-    text-align: center;
-    color: var(--accent-win);
-    font-size: 22px;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
+/* Live batter / pitcher block. Filled in by hydrateLiveTile after the
+   Board's /api/games/today fetch lands. Shell renders em-dashes so the tile
+   doesn't reflow when the hydrate result arrives. */
+.tile .tile-players {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: -2px;
 }
-.tile .we .label {
-    display: block;
-    font-size: 9px;
-    font-weight: 600;
+.tile .tile-players .player-row {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 8px;
+    font-size: 11px;
+}
+.tile .tile-players .player-row .label {
     color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    margin-top: 4px;
 }
-.tile[data-status="Final"] .we { color: var(--text-dim); }
-.tile[data-status="Preview"] .we { display: none; }
+.tile .tile-players .player-row strong {
+    color: var(--text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tile .tile-players .player-row.dim strong {
+    color: var(--text-dim);
+}
+
+/* Sportsbook-style WE bar across the tile bottom. Hidden for pregame since
+   there's no game state to anchor a probability to. */
+.tile .tile-we {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+}
+.tile .tile-we .we-bar {
+    height: 5px;
+    background: var(--accent-live);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.tile .tile-we .we-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--accent-win);
+    transition: width 400ms ease;
+}
+.tile .tile-we .we-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+}
 
 /* Probable pitchers (pregame) and decisions (final) sit just under the state
-   line — same visual block, separated from the matchup above and the WE block
-   below by the parent flex gap. Pulled in slightly toward state since they're
-   a continuation of "what's happening with this game right now". */
+   line — same visual block as before; the tile-body picks one of the two. */
 .tile .tile-extra {
     font-size: 11px;
     font-weight: 500;
@@ -486,7 +307,7 @@ main.board {
     text-align: center;
     letter-spacing: 0.01em;
     line-height: 1.35;
-    margin-top: -8px;
+    margin-top: -4px;
 }
 .tile .tile-extra .dim {
     color: var(--text-dim);
