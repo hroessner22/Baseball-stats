@@ -51,9 +51,9 @@ async function refreshBoard() {
         const sorted = sortGames(data.games);
         board.innerHTML = sorted.map(renderTile).join("");
 
-        // Live tiles need batter, pitcher, and runner names — the schedule
-        // endpoint doesn't carry those. Fire one fetch per live tile in
-        // parallel; the edge cache (10s) collapses repeats to one upstream.
+        // Live tiles need batter + pitcher names — the schedule endpoint
+        // doesn't carry those. Fire one fetch per live tile in parallel;
+        // the edge cache (10s) collapses repeats to one upstream.
         for (const g of sorted) {
             if (g.status === "Live") hydrateLiveTile(g.game_pk);
         }
@@ -93,8 +93,8 @@ function popcount(n) {
     return c;
 }
 
-// Live tile follow-up. Per-tile fetch fills in the current batter, pitcher,
-// and runner names — the schedule endpoint /api/games/today doesn't carry
+// Live tile follow-up. Per-tile fetch fills in the current batter and
+// pitcher names — the schedule endpoint /api/games/today doesn't carry
 // them. Each lookup hits the edge cache (10s), so the second call for the
 // same game finds a warm response.
 async function hydrateLiveTile(pk) {
@@ -103,37 +103,9 @@ async function hydrateLiveTile(pk) {
         if (!res.ok) return;
         const d = await res.json();
         const slot = document.querySelector(`.tile[data-pk="${pk}"] .tile-players`);
-        if (slot) {
-            slot.innerHTML = livePlayersHTML(d);
-        }
-        const field = document.querySelector(`.tile[data-pk="${pk}"] .field`);
-        if (field && d.runners) {
-            // Paint runner names over the field once we have them.
-            paintRunnerNames(field, d.runners);
-        }
+        if (slot) slot.innerHTML = livePlayersHTML(d);
     } catch {
         // tile stays in shell mode — page still works.
-    }
-}
-
-function paintRunnerNames(svg, runners) {
-    const ns = "http://www.w3.org/2000/svg";
-    // Strip any existing runner-name nodes first so a refresh doesn't double up.
-    svg.querySelectorAll(".runner-name").forEach((n) => n.remove());
-    const placements = [
-        { slot: "first",  x: 412, y: 326, anchor: "start"  },
-        { slot: "second", x: 250, y: 166, anchor: "middle" },
-        { slot: "third",  x: 88,  y: 326, anchor: "end"    },
-    ];
-    for (const p of placements) {
-        if (!runners[p.slot]) continue;
-        const t = document.createElementNS(ns, "text");
-        t.setAttribute("class", "runner-name");
-        t.setAttribute("x", p.x);
-        t.setAttribute("y", p.y);
-        t.setAttribute("text-anchor", p.anchor);
-        t.textContent = shortName(runners[p.slot]);
-        svg.appendChild(t);
     }
 }
 
@@ -169,13 +141,12 @@ function renderTile(g) {
 }
 
 // Middle section under the state line. Branches by game state:
-//   Live    — mini field SVG + batter/pitcher slot (filled by hydrateLiveTile).
+//   Live    — batter/pitcher slot (filled by hydrateLiveTile).
 //   Preview — probable pitchers row.
 //   Final   — winning / losing / save pitcher row.
 function tileBody(g) {
     if (g.status === "Live") {
         return `
-          ${miniFieldSVG(g)}
           <div class="tile-players">
             ${livePlayersHTML(null)}
           </div>
@@ -239,50 +210,6 @@ function tileWeBar(g) {
     `;
 }
 
-// Mini real-ballpark field for the live tile. Smaller version of the Game
-// view field — same grass gradient, warning track, dirt basepath, rotated
-// bases, foul poles. Runner names are painted on by paintRunnerNames() from
-// the live hydrate.
-function miniFieldSVG(g) {
-    const we = g.win_expectancy;
-    const intensity = we == null ? 0 : Math.abs(we - 0.5) * 2;
-    const bases = g.bases || 0;
-    const occ = (mask) => (bases & mask) ? "true" : "false";
-    return `
-      <svg class="field tile-field" viewBox="0 0 500 500"
-           preserveAspectRatio="xMidYMid meet"
-           style="--we-intensity:${intensity}">
-        <defs>
-          <radialGradient id="grass-radial-tile-${g.game_pk}" cx="0.5" cy="0.92" r="0.85">
-            <stop offset="0%"   stop-color="#4A7A35"/>
-            <stop offset="60%"  stop-color="#3F6B2A"/>
-            <stop offset="100%" stop-color="#355A23"/>
-          </radialGradient>
-        </defs>
-        <path class="outfield-grass" fill="url(#grass-radial-tile-${g.game_pk})"
-              d="M 250,460 L 440,270 Q 250,40 60,270 Z"/>
-        <path class="warning-track"
-              d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>
-        <line class="foul-line" x1="250" y1="460" x2="440" y2="270"/>
-        <line class="foul-line" x1="250" y1="460" x2="60"  y2="270"/>
-        <rect class="foul-pole" x="437" y="263" width="5" height="14"/>
-        <rect class="foul-pole" x="58"  y="263" width="5" height="14"/>
-        <path class="basepath" d="M 250,455 L 388,318 L 250,180 L 112,318 Z"/>
-        <circle class="mound" cx="250" cy="355" r="22"/>
-        <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
-        <polygon class="base home" points="244,458 256,458 256,464 250,470 244,464"/>
-        <g transform="translate(390 320) rotate(45)">
-          <rect class="base" data-occupied="${occ(1)}" x="-7" y="-7" width="14" height="14"/>
-        </g>
-        <g transform="translate(250 180) rotate(45)">
-          <rect class="base" data-occupied="${occ(2)}" x="-7" y="-7" width="14" height="14"/>
-        </g>
-        <g transform="translate(110 320) rotate(45)">
-          <rect class="base" data-occupied="${occ(4)}" x="-7" y="-7" width="14" height="14"/>
-        </g>
-      </svg>
-    `;
-}
 
 // HOT badge for live games in the late innings that are still close. Threshold
 // is "7th inning or later AND within 2 runs" — the back half of a one-score
@@ -638,9 +565,23 @@ function stateLabel(g) {
         const parts = [`${arrowHalf(g.half)} ${ordinalSuffix(g.inning)}`];
         if (g.outs != null) parts.push(`${g.outs} OUT`);
         if (g.balls != null && g.strikes != null) parts.push(`${g.balls}-${g.strikes}`);
+        const bases = basesShort(g.bases || 0);
+        if (bases) parts.push(bases);
         return parts.join(" · ");
     }
     return (g.detail || g.status).toUpperCase();
+}
+
+// Short text form of the base state — folded into the state line so the tile
+// doesn't need a field SVG to convey "runner on 2nd". CSS uppercases.
+function basesShort(mask) {
+    if (!mask) return null;
+    if (mask === 7) return "loaded";
+    const labels = [];
+    if (mask & 1) labels.push("1st");
+    if (mask & 2) labels.push("2nd");
+    if (mask & 4) labels.push("3rd");
+    return labels.join(" & ");
 }
 
 function renderEmpty(container, message, sub) {

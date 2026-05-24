@@ -30,7 +30,7 @@
     --dirt-dark:   #8B6F47;
     --chalk:       #E8E8E8;
 
-    --tile-w: 240px;
+    --tile-w: 220px;
     --radius: 8px;
 }
 
@@ -58,7 +58,7 @@ header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 24px;
+    padding: 10px 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -101,10 +101,10 @@ header h1 .colon { color: var(--accent-win); }
 main.board {
     flex: 1;
     overflow: auto;
-    padding: 20px 20px 24px;
+    padding: 12px 14px 16px;
     display: grid;
     grid-template-columns: repeat(auto-fill, var(--tile-w));
-    gap: 14px;
+    gap: 10px;
     align-content: start;
     justify-content: center;
 }
@@ -132,10 +132,10 @@ main.board {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 12px 14px 14px;
+    padding: 8px 12px 10px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     text-decoration: none;
     color: inherit;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -168,20 +168,20 @@ main.board {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    padding: 6px 0;
+    padding: 4px 0;
     border-bottom: 1px solid var(--border);
 }
-.tile .team:last-child { border-bottom: none; padding-bottom: 4px; }
+.tile .team:last-child { border-bottom: none; padding-bottom: 2px; }
 .tile .team:first-child { padding-top: 2px; }
 
 .tile .team .team-id {
     display: inline-flex;
     align-items: baseline;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
 }
 .tile .team .name {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.005em;
@@ -194,7 +194,7 @@ main.board {
     letter-spacing: 0.02em;
 }
 .tile .team .score {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 800;
     color: var(--text);
     font-variant-numeric: tabular-nums;
@@ -206,7 +206,7 @@ main.board {
 }
 
 .tile .state {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -220,39 +220,24 @@ main.board {
     color: var(--text-dim);
 }
 
-/* Mini real-ballpark field SVG inside the tile. Same styles as the Game view
-   .field — that's why miniFieldSVG emits class="field tile-field". This
-   override just bounds the size. */
-.tile .tile-field {
-    width: 100%;
-    max-width: 150px;
-    aspect-ratio: 1;
-    align-self: center;
-    display: block;
-    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
-    border-radius: var(--radius);
-    overflow: hidden;
-}
-
 /* Live batter / pitcher block. Filled in by hydrateLiveTile after the
    Board's /api/games/today fetch lands. Shell renders em-dashes so the tile
    doesn't reflow when the hydrate result arrives. */
 .tile .tile-players {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    margin-top: -2px;
+    gap: 1px;
 }
 .tile .tile-players .player-row {
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-columns: 48px minmax(0, 1fr);
     align-items: baseline;
-    gap: 8px;
-    font-size: 11px;
+    gap: 6px;
+    font-size: 10px;
 }
 .tile .tile-players .player-row .label {
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -273,13 +258,12 @@ main.board {
 .tile .tile-we {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin-top: 2px;
+    gap: 3px;
 }
 .tile .tile-we .we-bar {
-    height: 5px;
+    height: 4px;
     background: var(--accent-live);
-    border-radius: 3px;
+    border-radius: 2px;
     overflow: hidden;
 }
 .tile .tile-we .we-bar > span {
@@ -291,7 +275,7 @@ main.board {
 .tile .tile-we .we-labels {
     display: flex;
     justify-content: space-between;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
@@ -301,13 +285,12 @@ main.board {
 /* Probable pitchers (pregame) and decisions (final) sit just under the state
    line — same visual block as before; the tile-body picks one of the two. */
 .tile .tile-extra {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 500;
     color: var(--text);
     text-align: center;
     letter-spacing: 0.01em;
     line-height: 1.35;
-    margin-top: -4px;
 }
 .tile .tile-extra .dim {
     color: var(--text-dim);
@@ -354,7 +337,7 @@ nav {
 nav .nav-item {
     flex: 1;
     text-align: center;
-    padding: 14px 0;
+    padding: 10px 0;
     color: var(--text-dim);
     text-decoration: none;
     font-size: 11px;
