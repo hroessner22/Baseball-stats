@@ -13,6 +13,7 @@ const GAME_REFRESH_MS = 15_000;
 let boardTimer = null;
 let gameTimer = null;
 let activeGameId = null;
+let currentFeaturedPk = null;
 
 window.addEventListener("hashchange", handleRoute);
 window.addEventListener("load", handleRoute);
@@ -47,10 +48,103 @@ async function refreshBoard() {
             renderEmpty(board, "No games on the schedule today.", "Check back tomorrow.");
             return;
         }
-        board.innerHTML = data.games.map(renderTile).join("");
+
+        const featured = pickFeatured(data.games);
+        currentFeaturedPk = featured?.game_pk ?? null;
+        const others = featured
+            ? data.games.filter((g) => g.game_pk !== featured.game_pk)
+            : data.games;
+
+        board.innerHTML = `
+          ${featured ? renderFeatured(featured, null) : ""}
+          <section class="tile-grid">${others.map(renderTile).join("")}</section>
+        `;
+
+        // Live featured games get a follow-up fetch for batter, pitcher, and
+        // runner names — the schedule endpoint doesn't carry those.
+        if (featured && featured.status === "Live") {
+            hydrateFeatured(featured.game_pk);
+        }
     } catch (e) {
         renderEmpty(board, "Could not load today's games.", `${e.message || e}`);
     }
+}
+
+// Pick the one game the Board should hero. Live games beat pregame games beat
+// finals; within live, leverage decides. Within pregame, the next start wins.
+function pickFeatured(games) {
+    const live = games.filter((g) => g.status === "Live" && g.inning);
+    if (live.length) {
+        return live
+            .map((g) => ({ g, lev: leverage(g) }))
+            .sort((a, b) => b.lev - a.lev)[0].g;
+    }
+    const now = Date.now();
+    const upcoming = games
+        .filter((g) => g.status === "Preview" && g.start_time)
+        .map((g) => ({ g, t: new Date(g.start_time).getTime() }))
+        .filter((x) => x.t >= now - 30 * 60 * 1000) // include games within last 30 min
+        .sort((a, b) => a.t - b.t);
+    if (upcoming.length) return upcoming[0].g;
+    const finals = games.filter((g) => g.status === "Final");
+    if (finals.length) return finals[finals.length - 1];
+    return games[0] || null;
+}
+
+// Leverage score for live games. Tied + late + runners on rates highest.
+function leverage(g) {
+    const diff = Math.abs((g.home_score ?? 0) - (g.away_score ?? 0));
+    const closeness = Math.max(0, 5 - diff) / 5;
+    const inningWeight = Math.min(g.inning, 9) / 9;
+    const runnersOn = popcount(g.bases || 0) / 3;
+    return closeness * 0.5 + inningWeight * 0.3 + runnersOn * 0.2;
+}
+
+function popcount(n) {
+    let c = 0;
+    while (n) { c += n & 1; n >>>= 1; }
+    return c;
+}
+
+async function hydrateFeatured(pk) {
+    try {
+        const res = await fetch(`/api/game/${pk}`);
+        if (!res.ok) return;
+        const detail = await res.json();
+        if (pk !== currentFeaturedPk) return;
+        const node = document.querySelector(".featured-card");
+        if (!node) return;
+        node.outerHTML = renderFeatured(tileShapeFromDetail(detail), detail);
+    } catch {
+        // featured card stays in shell mode — the page still works.
+    }
+}
+
+// Reshape the /api/game/{id} response into the same shape /api/games/today
+// gives so renderFeatured can take either as input.
+function tileShapeFromDetail(d) {
+    return {
+        game_pk: d.game_pk,
+        status: d.status,
+        detail: d.detail,
+        away: d.teams.away.abbr,
+        home: d.teams.home.abbr,
+        away_score: d.score.away,
+        home_score: d.score.home,
+        inning: d.inning,
+        half: d.half,
+        outs: d.outs,
+        balls: d.balls,
+        strikes: d.strikes,
+        bases:
+            (d.runners?.first  ? 1 : 0) |
+            (d.runners?.second ? 2 : 0) |
+            (d.runners?.third  ? 4 : 0),
+        win_expectancy: d.win_expectancy,
+        start_time: d.start_time,
+        probables: null,
+        decisions: null,
+    };
 }
 
 function renderTile(g) {
@@ -109,6 +203,234 @@ function hotPill(g) {
 function lastName(fullName) {
     const parts = fullName.trim().split(/\s+/);
     return parts.length < 2 ? fullName : parts[parts.length - 1];
+}
+
+// ── FEATURED CARD ───────────────────────────────────────────────────
+//
+// The hero tile at the top of the Board — one game picked as the moment's
+// most interesting story. Renders in two passes: a shell from the schedule
+// data we already have, then a richer version once /api/game/{id} returns
+// the current batter, pitcher, and runner names (live games only).
+
+function renderFeatured(g, detail) {
+    const we = g.win_expectancy;
+    const reason = featuredReason(g);
+
+    return `
+      <a class="featured-card" href="#game/${g.game_pk}" data-status="${g.status}">
+        <header class="featured-head">
+          <span class="featured-badge"><span class="dot"></span>FEATURED</span>
+          <span class="featured-reason">${reason}</span>
+        </header>
+
+        <div class="featured-body">
+          <div class="featured-scores">
+            <div class="team away">
+              <span class="name">${g.away}</span>
+              <span class="score">${g.away_score}</span>
+            </div>
+            <div class="team home">
+              <span class="name">${g.home}</span>
+              <span class="score">${g.home_score}</span>
+            </div>
+          </div>
+
+          <div class="featured-field-wrap">
+            ${featuredFieldSVG(g, detail)}
+          </div>
+
+          <div class="featured-context">
+            <div class="state-line">${stateLabel(g)}</div>
+            ${g.status === "Live" && (g.bases || g.bases === 0)
+                ? `<div class="bases-line">${describeBasesShort(g.bases)}</div>`
+                : ""}
+            ${featuredPlayers(g, detail)}
+          </div>
+        </div>
+
+        ${we != null ? featuredWeBar(g, we) : ""}
+      </a>
+    `;
+}
+
+function featuredReason(g) {
+    if (g.status === "Live" && g.inning) {
+        const diff = (g.home_score ?? 0) - (g.away_score ?? 0);
+        const absDiff = Math.abs(diff);
+        const baseDesc = (g.bases && g.bases > 0)
+            ? `, ${describeBasesShort(g.bases).toLowerCase()}`
+            : "";
+        const innStr = `${arrowHalf(g.half).toUpperCase()} ${ordinalSuffix(g.inning).toLowerCase()}`;
+        if (absDiff === 0) return `Tied in the ${ordinalSuffix(g.inning).toLowerCase()}${baseDesc}`;
+        if (absDiff === 1) return `1-run game, ${innStr}${baseDesc}`;
+        if (absDiff === 2) return `2-run game, ${innStr}${baseDesc}`;
+        return `Live · ${innStr}`;
+    }
+    if (g.status === "Preview" && g.start_time) {
+        const min = Math.round((new Date(g.start_time).getTime() - Date.now()) / 60000);
+        if (min <= 0) return "First pitch any moment";
+        if (min < 60) return `First pitch in ${min} min`;
+        return `First pitch ${startTimeET(g.start_time)} ET`;
+    }
+    if (g.status === "Final") {
+        const home = g.home_score, away = g.away_score;
+        if (home === away) return "Game complete";
+        const winner = home > away ? g.home : g.away;
+        return `${winner} win — recap below`;
+    }
+    return g.status;
+}
+
+function featuredPlayers(g, detail) {
+    // Live: current batter + pitcher (from hydrate).
+    if (g.status === "Live") {
+        if (detail?.batter || detail?.pitcher) {
+            return `
+              <div class="featured-players">
+                <div class="player-row">
+                  <span class="label">at bat</span>
+                  <strong>${detail.batter ? detail.batter.name : "—"}</strong>
+                  <span class="hand">${detail.batter?.bats ? detail.batter.bats + "HB" : ""}</span>
+                </div>
+                <div class="player-row">
+                  <span class="label">pitching</span>
+                  <strong>${detail.pitcher ? detail.pitcher.name : "—"}</strong>
+                  <span class="hand">${detail.pitcher?.throws ? detail.pitcher.throws + "HP" : ""}</span>
+                </div>
+              </div>
+            `;
+        }
+        // Shell render — placeholders so the card doesn't reflow when hydrated.
+        return `
+          <div class="featured-players">
+            <div class="player-row dim">
+              <span class="label">at bat</span><strong>…</strong>
+            </div>
+            <div class="player-row dim">
+              <span class="label">pitching</span><strong>…</strong>
+            </div>
+          </div>
+        `;
+    }
+    // Preview: probable pitchers.
+    if (g.status === "Preview" && g.probables) {
+        const fmt = (p) => p ? `${p.throws ? p.throws + "HP " : ""}${p.name}` : "TBA";
+        return `
+          <div class="featured-players">
+            <div class="player-row">
+              <span class="label">probable · ${g.away}</span>
+              <strong>${fmt(g.probables.away)}</strong>
+            </div>
+            <div class="player-row">
+              <span class="label">probable · ${g.home}</span>
+              <strong>${fmt(g.probables.home)}</strong>
+            </div>
+          </div>
+        `;
+    }
+    // Final: decisions.
+    if (g.status === "Final" && g.decisions) {
+        return `
+          <div class="featured-players">
+            ${g.decisions.winner
+                ? `<div class="player-row"><span class="label">W</span><strong>${g.decisions.winner}</strong></div>`
+                : ""}
+            ${g.decisions.loser
+                ? `<div class="player-row"><span class="label">L</span><strong>${g.decisions.loser}</strong></div>`
+                : ""}
+            ${g.decisions.save
+                ? `<div class="player-row"><span class="label">S</span><strong>${g.decisions.save}</strong></div>`
+                : ""}
+          </div>
+        `;
+    }
+    return "";
+}
+
+function featuredWeBar(g, we) {
+    const homePct = Math.round(we * 100);
+    const awayPct = 100 - homePct;
+    const leader = homePct > awayPct ? g.home : awayPct > homePct ? g.away : null;
+    const leaderPct = Math.max(homePct, awayPct);
+    return `
+      <div class="featured-we">
+        <div class="we-bar"><span style="width:${homePct}%"></span></div>
+        <div class="we-labels">
+          <span>${g.away} ${awayPct}%</span>
+          ${leader ? `<span class="leader">${leader} favored · ${leaderPct}%</span>` : `<span class="leader">coin flip</span>`}
+          <span>${g.home} ${homePct}%</span>
+        </div>
+      </div>
+    `;
+}
+
+// Bitmask-flavored cousin of describeBases (which takes an object). Used by
+// the Board, where /api/games/today carries bases as a packed bitmask.
+function describeBasesShort(mask) {
+    const occ = [];
+    if (mask & 1) occ.push("1st");
+    if (mask & 2) occ.push("2nd");
+    if (mask & 4) occ.push("3rd");
+    if (occ.length === 0) return "bases empty";
+    if (occ.length === 3) return "bases loaded";
+    if (occ.length === 2 && (mask & 6) === 6) return "2nd & 3rd";
+    return occ.join(" & ");
+}
+
+// Mini version of the Game view field, sized for the hero card. Reuses the
+// `.field` CSS so colors and details match. Runner names only appear once
+// /api/game/{id} has hydrated — the shell render passes `detail=null`.
+function featuredFieldSVG(g, detail) {
+    if (g.status !== "Live") {
+        // Pregame and final get a quiet, simple diamond — no runners to plot.
+        return diamondSVG(g.bases || 0);
+    }
+    const we = g.win_expectancy;
+    const intensity = we == null ? 0 : Math.abs(we - 0.5) * 2;
+    const bases = g.bases || 0;
+    const occ = (mask) => (bases & mask) ? "true" : "false";
+    const runnerLabel = (slot, x, y, anchor) =>
+        detail?.runners?.[slot]
+            ? `<text class="runner-name" x="${x}" y="${y}" text-anchor="${anchor}">${shortName(detail.runners[slot])}</text>`
+            : "";
+
+    return `
+      <svg class="field featured-field" viewBox="0 0 500 500"
+           preserveAspectRatio="xMidYMid meet"
+           style="--we-intensity:${intensity}">
+        <defs>
+          <radialGradient id="grass-radial-feat" cx="0.5" cy="0.92" r="0.85">
+            <stop offset="0%"   stop-color="#4A7A35"/>
+            <stop offset="60%"  stop-color="#3F6B2A"/>
+            <stop offset="100%" stop-color="#355A23"/>
+          </radialGradient>
+        </defs>
+        <path class="outfield-grass" fill="url(#grass-radial-feat)"
+              d="M 250,460 L 440,270 Q 250,40 60,270 Z"/>
+        <path class="warning-track"
+              d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>
+        <line class="foul-line" x1="250" y1="460" x2="440" y2="270"/>
+        <line class="foul-line" x1="250" y1="460" x2="60"  y2="270"/>
+        <rect class="foul-pole" x="437" y="263" width="5" height="14"/>
+        <rect class="foul-pole" x="58"  y="263" width="5" height="14"/>
+        <path class="basepath" d="M 250,455 L 388,318 L 250,180 L 112,318 Z"/>
+        <circle class="mound" cx="250" cy="355" r="22"/>
+        <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
+        <polygon class="base home" points="244,458 256,458 256,464 250,470 244,464"/>
+        <g transform="translate(390 320) rotate(45)">
+          <rect class="base" data-occupied="${occ(1)}" x="-7" y="-7" width="14" height="14"/>
+        </g>
+        <g transform="translate(250 180) rotate(45)">
+          <rect class="base" data-occupied="${occ(2)}" x="-7" y="-7" width="14" height="14"/>
+        </g>
+        <g transform="translate(110 320) rotate(45)">
+          <rect class="base" data-occupied="${occ(4)}" x="-7" y="-7" width="14" height="14"/>
+        </g>
+        ${runnerLabel("first",  412, 326, "start")}
+        ${runnerLabel("second", 250, 166, "middle")}
+        ${runnerLabel("third",  88,  326, "end")}
+      </svg>
+    `;
 }
 
 // ── GAME VIEW ────────────────────────────────────────────────────────
