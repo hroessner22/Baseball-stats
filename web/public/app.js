@@ -9,6 +9,7 @@ const gameView = document.getElementById("game-view");
 const standingsView = document.getElementById("standings-view");
 const leadersView = document.getElementById("leaders-view");
 const mvpView = document.getElementById("mvp-view");
+const aboutView = document.getElementById("about-view");
 
 const BOARD_REFRESH_MS = 30_000;
 const GAME_REFRESH_MS = 15_000;
@@ -50,6 +51,13 @@ function handleRoute() {
         setActiveNav("mvp");
         return;
     }
+    if (hash === "#about") {
+        showAbout();
+        // No nav highlight — the about page is reached from the footer,
+        // not the bottom nav.
+        setActiveNav(null);
+        return;
+    }
     showBoard();
     setActiveNav("live");
 }
@@ -62,16 +70,25 @@ function setActiveNav(route) {
 
 // ── BOARD ────────────────────────────────────────────────────────────
 
+// One place to flip every <main> off — each show* function turns its own
+// view back on right after. Saves having to remember every existing view
+// when a new one (like the about page) gets added.
+function hideAllViews() {
+    board.hidden = true;
+    gameView.hidden = true;
+    standingsView.hidden = true;
+    leadersView.hidden = true;
+    mvpView.hidden = true;
+    aboutView.hidden = true;
+}
+
 function showBoard() {
     activeGameId = null;
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
     if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
-    gameView.hidden = true;
-    standingsView.hidden = true;
-    leadersView.hidden = true;
-    mvpView.hidden = true;
+    hideAllViews();
     board.hidden = false;
     refreshBoard();
     if (!boardTimer) boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
@@ -290,10 +307,7 @@ function showGameView(id) {
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
     if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
-    board.hidden = true;
-    standingsView.hidden = true;
-    leadersView.hidden = true;
-    mvpView.hidden = true;
+    hideAllViews();
     gameView.hidden = false;
     renderEmpty(gameView, "Loading game…", "");
     refreshGame(id);
@@ -309,10 +323,7 @@ function showStandings() {
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
     if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
-    board.hidden = true;
-    gameView.hidden = true;
-    leadersView.hidden = true;
-    mvpView.hidden = true;
+    hideAllViews();
     standingsView.hidden = false;
     renderEmpty(standingsView, "Loading standings…", "");
     refreshStandings();
@@ -418,10 +429,7 @@ function showLeaders() {
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
-    board.hidden = true;
-    gameView.hidden = true;
-    standingsView.hidden = true;
-    mvpView.hidden = true;
+    hideAllViews();
     leadersView.hidden = false;
     renderEmpty(leadersView, "Loading leaders…", "");
     refreshLeaders();
@@ -503,14 +511,198 @@ function showMVP() {
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
-    board.hidden = true;
-    gameView.hidden = true;
-    standingsView.hidden = true;
-    leadersView.hidden = true;
+    hideAllViews();
     mvpView.hidden = false;
     renderEmpty(mvpView, "Loading MVP race…", "");
     refreshMVP();
     if (!mvpTimer) mvpTimer = setInterval(refreshMVP, MVP_REFRESH_MS);
+}
+
+// ── ABOUT VIEW ──────────────────────────────────────────────────────
+
+function showAbout() {
+    activeGameId = null;
+    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
+    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
+    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
+    hideAllViews();
+    aboutView.hidden = false;
+    aboutView.innerHTML = renderAbout();
+}
+
+function renderAbout() {
+    return `
+      <article class="about-doc">
+        <header class="about-head">
+          <h1>How DIAMOND<span class="colon">:</span>CONTEXT works</h1>
+          <p class="about-tagline">
+            A live baseball companion. Every game on now, every number
+            backed by data, every prediction explained.
+          </p>
+        </header>
+
+        <section>
+          <h2>The Win Expectancy bar</h2>
+          <p>
+            When you're inside a game and the right-side card says
+            <strong>"MIA 53%"</strong>, that means: across the equivalent
+            inning-half + score-difference state in 115 seasons of
+            history, the home team has won 53% of the time.
+          </p>
+          <p>
+            It updates every half-inning as the score and inning change.
+            A coin flip in the 4th is very different from a coin flip in
+            the 9th — both might read 50%, but the leverage is wildly
+            different.
+          </p>
+          <p class="about-source">
+            <strong>Data:</strong> Retrosheet game logs, 1910–2024
+            (115 seasons). All in-house aggregation.
+          </p>
+        </section>
+
+        <section>
+          <h2>The matchup prediction</h2>
+          <p>
+            When a live game is up and a real plate appearance is happening,
+            the card asks <strong>"What's about to happen?"</strong> and
+            shows a 9-bucket probability distribution: strikeout, walk,
+            single, double, triple, home run, in-play out, HBP, error.
+          </p>
+          <p>
+            The math is the <strong>odds-ratio method</strong> (also called
+            log-5 in older sabermetrics writing). For each outcome:
+          </p>
+          <pre class="about-formula">predicted ≈ (batter × pitcher) / league</pre>
+          <p>
+            Three inputs per outcome:
+          </p>
+          <ul>
+            <li><strong>Batter's rate</strong> for that outcome, against
+                pitchers of the opposing throwing hand.</li>
+            <li><strong>Pitcher's rate</strong> for that outcome, against
+                batters of the opposing hitting side.</li>
+            <li><strong>League baseline</strong> for the same handedness
+                matchup (R-vs-R, R-vs-L, etc.).</li>
+          </ul>
+          <p>
+            Click any row in the matchup card to see all three numbers
+            and the combined prediction, with a one-line narrative
+            saying which side is doing the pulling.
+          </p>
+          <p>
+            We regress each component toward the league baseline by a
+            fixed 100 plate appearances — this stops a player's tiny
+            sample (early in a career, or in our case early in the
+            season) from producing wildly overconfident predictions.
+          </p>
+          <p class="about-source">
+            <strong>Data:</strong> Retrosheet play-by-play, 2020–2024
+            modern era. We restricted the loaded historical window to
+            five seasons to fit Supabase's free tier; the engine itself
+            can process the full Retrosheet archive back to 1910.
+          </p>
+        </section>
+
+        <section>
+          <h2>The daily ingest — how the model "learns"</h2>
+          <p>
+            Every morning at ~7 AM ET, a GitHub Actions cron pulls
+            yesterday's completed games from the MLB Stats API, parses
+            every plate appearance, and writes them into a Supabase
+            event log called <code>daily_pa</code>.
+          </p>
+          <p>
+            The matchup engine reads <em>both</em> the historical
+            (2020–2024) rates table <em>and</em> the growing event log,
+            and adds the live PA counts on top of the historical
+            baseline. So predictions get sharper as the season's sample
+            grows — that's what the green
+            <span class="dot-inline"></span>
+            <strong>"Plus N fresh plate appearances…"</strong> pill
+            below each matchup card is showing you.
+          </p>
+          <p>
+            The model formula itself doesn't change. What changes is the
+            data behind it. That's the honest version of "self-learning"
+            for our setup — no neural net, no online gradient descent,
+            just always-fresh data feeding the same well-understood
+            statistical method.
+          </p>
+          <p class="about-source">
+            <strong>Data:</strong> MLB Stats API live feed, ingested daily.
+          </p>
+        </section>
+
+        <section>
+          <h2>The other pages</h2>
+          <ul>
+            <li><strong>STANDINGS</strong> — current division standings
+                with W-L, PCT, games back, streak, last-10, run differential.
+                Sourced live from the MLB Stats API standings endpoint.</li>
+            <li><strong>LEADERS</strong> — top-5 boards across hitting
+                (HR, AVG, RBI, OPS, SB, R) and pitching (W, ERA, K, SV, WHIP).
+                Live from MLB Stats API.</li>
+            <li><strong>MVP</strong> — top-5 AL and NL candidates for MVP
+                (by OPS) and Cy Young (by ERA). MLB doesn't publish an
+                "MVP rank" stat, so we use these as the canonical batter
+                and pitcher signals.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>A short glossary</h2>
+          <dl class="about-glossary">
+            <dt>PA</dt><dd>plate appearance — any time a batter steps in,
+                including walks and HBP (not just at-bats).</dd>
+            <dt>BF</dt><dd>batters faced — same as PA, from the pitcher's side.</dd>
+            <dt>BA / AVG</dt><dd>batting average — hits ÷ at-bats.</dd>
+            <dt>OBP</dt><dd>on-base percentage — times reached ÷ PA.</dd>
+            <dt>SLG</dt><dd>slugging — total bases ÷ at-bats.</dd>
+            <dt>OPS</dt><dd>OBP + SLG. Most-used quick measure of hitting.</dd>
+            <dt>ERA</dt><dd>earned run average — earned runs allowed per 9 innings.</dd>
+            <dt>WHIP</dt><dd>walks + hits per inning pitched.</dd>
+            <dt>WE</dt><dd>win expectancy — the home team's probability of winning from the current state.</dd>
+            <dt>RHP / LHP</dt><dd>right-handed / left-handed pitcher.</dd>
+            <dt>RHB / LHB</dt><dd>right-handed / left-handed batter.</dd>
+          </dl>
+        </section>
+
+        <section>
+          <h2>What's not in the model yet</h2>
+          <ul>
+            <li>Pitch-level data — we work at the plate-appearance level,
+                not pitch-by-pitch.</li>
+            <li>Statcast metrics (exit velocity, launch angle, expected stats).</li>
+            <li>Park factors, weather, rest days, lineup protection,
+                bullpen fatigue.</li>
+            <li>Defensive runs saved.</li>
+          </ul>
+          <p>
+            These are on the roadmap. See
+            <a href="https://github.com/hroessner22/Baseball-stats/blob/main/docs/04-ROADMAP.md"
+               target="_blank" rel="noopener">docs/04-ROADMAP.md</a> in the repo.
+          </p>
+        </section>
+
+        <footer class="about-foot">
+          <p>
+            Source code, methodology docs, and the issue tracker live at
+            <a href="https://github.com/hroessner22/Baseball-stats" target="_blank" rel="noopener">
+              github.com/hroessner22/Baseball-stats</a>.
+          </p>
+          <p class="about-attribution">
+            The historical play-by-play data here was obtained free of
+            charge from and is copyrighted by
+            <a href="https://www.retrosheet.org" target="_blank" rel="noopener">Retrosheet</a>.
+            Interested parties may contact Retrosheet at 20 Sunset Rd.,
+            Newark, DE 19711.
+          </p>
+        </footer>
+      </article>
+    `;
 }
 
 async function refreshMVP() {
@@ -591,6 +783,18 @@ async function refreshGame(id) {
         const g = await gameRes.json();
         if (schedRes.ok) scheduleCache = await schedRes.json();
         if (id !== activeGameId) return;
+
+        // When the matchup pair changes (new PA, new batter, or new
+        // pitcher), drop the cached matchup card so the next render
+        // doesn't show stale numbers until the fetch completes.
+        const newKey = g.batter?.id && g.pitcher?.id
+            ? `${g.batter.id}-${g.pitcher.id}`
+            : null;
+        if (newKey !== cachedMatchupKey) {
+            cachedMatchupSlot = "";
+            cachedMatchupKey = newKey;
+        }
+
         gameView.innerHTML = renderGame(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             hydrateMatchup(g.batter.id, g.pitcher.id, id);
@@ -793,15 +997,25 @@ function cardPane(g) {
           </div>
 
           <div class="evidence">
-            from how often a team in this exact state has won — 115 seasons.
+            From 115 seasons of Retrosheet game logs — how often a team in
+            this exact state has won. <a href="#about" class="evidence-link">How it works</a>.
           </div>
 
           <div class="read">${liveRead(g, we)}</div>
         </div>
-        <div id="matchup-slot"></div>
+        <div id="matchup-slot">${cachedMatchupSlot}</div>
       </div>
     `;
 }
+
+// Cached matchup card HTML so a 15-second refresh doesn't blow the card
+// out of the DOM and back. The card only needs to re-fetch when the
+// batter/pitcher pair changes (≈ once per PA), but the surrounding
+// game-view innerHTML gets rewritten every refresh — without this cache
+// the matchup slot would be empty for the few hundred ms between
+// renderGame() returning and hydrateMatchup() finishing its fetch.
+let cachedMatchupSlot = "";
+let cachedMatchupKey = null;
 
 // ── MATCHUP ENGINE (Phase 3.2) ──────────────────────────────────────
 
@@ -827,7 +1041,10 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor) {
         if (requestedFor !== activeGameId) return;
         const slot = document.getElementById("matchup-slot");
         if (!slot || !m.available) return;
-        slot.innerHTML = renderMatchupCard(m);
+        const html = renderMatchupCard(m);
+        slot.innerHTML = html;
+        cachedMatchupSlot = html;
+        cachedMatchupKey = `${batterMlbam}-${pitcherMlbam}`;
     } catch (e) {
         // silently absent — the page works without the matchup card
     }
@@ -866,8 +1083,8 @@ function renderMatchupCard(m) {
     const liveLine = liveTotal > 0
         ? `<div class="live-sample">
              <span class="dot"></span>
-             +${liveBatter.toLocaleString()} batter PA · +${livePitcher.toLocaleString()} pitcher BF
-             from this season's daily ingest
+             Plus ${liveBatter.toLocaleString()} fresh plate appearances from ${shortName(m.batter.name)}
+             and ${livePitcher.toLocaleString()} from ${shortName(m.pitcher.name)} this season.
            </div>`
         : "";
 
@@ -905,14 +1122,25 @@ function renderMatchupCard(m) {
         <div class="outcome-table">${rows}</div>
 
         <div class="evidence">
-          batter ${m.sample.batter_pa.toLocaleString()} PA vs ${m.pitcher.throws}HP ·
-          pitcher ${m.sample.pitcher_bf.toLocaleString()} BF vs ${m.batter.bats}HB ·
-          ${m.years.start}–${m.years.end}
+          Based on ${shortName(m.batter.name)}'s ${m.sample.batter_pa.toLocaleString()}
+          plate appearances vs ${handPhrase(m.pitcher.throws)} pitchers and
+          ${shortName(m.pitcher.name)}'s ${m.sample.pitcher_bf.toLocaleString()}
+          ${handPhrase(m.batter.bats)} batters faced (${m.years.start}–${m.years.end}).
+          <a href="#about" class="evidence-link">How it works</a>.
         </div>
         ${liveLine}
         ${recentForm}
       </div>
     `;
+}
+
+// "R" → "right-handed", "L" → "left-handed". Switch-hitters (S) face
+// pitchers from the opposite side, so for label purposes either word
+// works — keep it short.
+function handPhrase(code) {
+    if (code === "R") return "right-handed";
+    if (code === "L") return "left-handed";
+    return "either-handed";
 }
 
 // "Why is this prediction what it is?" — the breakdown for one outcome

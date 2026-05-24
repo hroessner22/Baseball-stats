@@ -769,6 +769,158 @@ nav .nav-item:hover:not(.disabled) {
 nav .nav-item.disabled { cursor: default; opacity: 0.45; }
 nav .nav-item.disabled .num { color: var(--text-dim); }
 
+/* ── ABOUT / METHODS VIEW ─────────────────────────────────────── */
+
+.about-view {
+    flex: 1;
+    overflow: auto;
+    padding: 28px 24px 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.about-doc {
+    width: 100%;
+    max-width: 720px;
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 14px;
+}
+.about-doc section {
+    margin-top: 28px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+}
+.about-doc section:first-of-type { border-top: none; padding-top: 0; }
+
+.about-head h1 {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.005em;
+    margin-bottom: 8px;
+}
+.about-head h1 .colon { color: var(--accent-win); }
+.about-tagline {
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.about-doc h2 {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+}
+
+.about-doc p {
+    margin-bottom: 12px;
+    color: var(--text);
+}
+.about-doc p:last-child { margin-bottom: 0; }
+
+.about-doc ul,
+.about-doc ol {
+    margin: 8px 0 12px 22px;
+    color: var(--text);
+}
+.about-doc li { margin-bottom: 5px; }
+
+.about-doc a {
+    color: var(--accent-action);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(59, 130, 246, 0.4);
+    transition: border-color 120ms ease;
+}
+.about-doc a:hover { border-bottom-color: var(--accent-action); }
+
+.about-doc code {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--accent-win);
+}
+
+.about-formula {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 13px;
+    padding: 10px 14px;
+    margin: 8px 0 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-win);
+    border-radius: 4px;
+    color: var(--text);
+    overflow-x: auto;
+}
+
+.about-source {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 8px 10px;
+    background: var(--surface);
+    border-radius: 4px;
+    margin-top: 10px;
+    font-weight: 500;
+}
+.about-source strong { color: var(--text); }
+
+.about-glossary {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 18px;
+    margin-top: 8px;
+}
+.about-glossary dt {
+    color: var(--accent-action);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+.about-glossary dd {
+    color: var(--text);
+    font-size: 13px;
+}
+
+.dot-inline {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-win);
+    margin-right: 2px;
+    vertical-align: middle;
+}
+
+.about-foot {
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.about-foot p { margin-bottom: 6px; }
+.about-foot .about-attribution {
+    font-style: italic;
+    line-height: 1.5;
+    margin-top: 12px;
+}
+
+/* The "How it works" link in the matchup card's evidence line + the
+   WE card's evidence line — same look as other dim cross-links. */
+.evidence-link {
+    color: var(--accent-action);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(59, 130, 246, 0.4);
+    margin-left: 4px;
+}
+.evidence-link:hover { border-bottom-color: var(--accent-action); }
+
 /* ── PAGE FOOTER ───────────────────────────────────────────────── */
 /* Required Retrosheet attribution + MLB Stats API credit. Tiny strip at
    the very bottom of the page so it's never the foreground but is always
