@@ -7,14 +7,17 @@
 const board = document.getElementById("board");
 const gameView = document.getElementById("game-view");
 const standingsView = document.getElementById("standings-view");
+const leadersView = document.getElementById("leaders-view");
 
 const BOARD_REFRESH_MS = 30_000;
 const GAME_REFRESH_MS = 15_000;
 const STANDINGS_REFRESH_MS = 5 * 60_000;
+const LEADERS_REFRESH_MS = 5 * 60_000;
 
 let boardTimer = null;
 let gameTimer = null;
 let standingsTimer = null;
+let leadersTimer = null;
 let activeGameId = null;
 
 window.addEventListener("hashchange", handleRoute);
@@ -34,6 +37,11 @@ function handleRoute() {
         setActiveNav("standings");
         return;
     }
+    if (hash === "#leaders") {
+        showLeaders();
+        setActiveNav("leaders");
+        return;
+    }
     showBoard();
     setActiveNav("live");
 }
@@ -50,8 +58,10 @@ function showBoard() {
     activeGameId = null;
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
     gameView.hidden = true;
     standingsView.hidden = true;
+    leadersView.hidden = true;
     board.hidden = false;
     refreshBoard();
     if (!boardTimer) boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
@@ -268,8 +278,10 @@ function showGameView(id) {
     activeGameId = id;
     if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
     if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
     board.hidden = true;
     standingsView.hidden = true;
+    leadersView.hidden = true;
     gameView.hidden = false;
     renderEmpty(gameView, "Loading game…", "");
     refreshGame(id);
@@ -283,8 +295,10 @@ function showStandings() {
     activeGameId = null;
     if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
+    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
     board.hidden = true;
     gameView.hidden = true;
+    leadersView.hidden = true;
     standingsView.hidden = false;
     renderEmpty(standingsView, "Loading standings…", "");
     refreshStandings();
@@ -379,6 +393,89 @@ function renderTeamRow(t, isLeader) {
         <td class="col-l10">${t.last10}</td>
         <td class="col-rd ${rdCls}">${t.run_diff > 0 ? "+" : ""}${t.run_diff}</td>
       </tr>
+    `;
+}
+
+// ── LEADERS VIEW ────────────────────────────────────────────────────
+
+function showLeaders() {
+    activeGameId = null;
+    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
+    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    board.hidden = true;
+    gameView.hidden = true;
+    standingsView.hidden = true;
+    leadersView.hidden = false;
+    renderEmpty(leadersView, "Loading leaders…", "");
+    refreshLeaders();
+    if (!leadersTimer) leadersTimer = setInterval(refreshLeaders, LEADERS_REFRESH_MS);
+}
+
+async function refreshLeaders() {
+    try {
+        const res = await fetch("/api/leaders");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.hitting && !data.pitching) {
+            renderEmpty(leadersView, "Leaders not available.", "Check back later.");
+            return;
+        }
+        leadersView.innerHTML = renderLeaders(data);
+    } catch (e) {
+        renderEmpty(leadersView, "Could not load leaders.", `${e.message || e}`);
+    }
+}
+
+function renderLeaders(data) {
+    return `
+      <header class="leaders-head">
+        <h2>LEADERS</h2>
+        <span class="leaders-meta">${data.season} season · top 5</span>
+      </header>
+      <section class="leaders-section">
+        <h3 class="leaders-section-label">Hitting</h3>
+        <div class="leaders-grid">
+          ${data.hitting.map(renderLeaderCard).join("")}
+        </div>
+      </section>
+      <section class="leaders-section">
+        <h3 class="leaders-section-label">Pitching</h3>
+        <div class="leaders-grid">
+          ${data.pitching.map(renderLeaderCard).join("")}
+        </div>
+      </section>
+    `;
+}
+
+function renderLeaderCard(cat) {
+    if (!cat.leaders || cat.leaders.length === 0) {
+        return `
+          <div class="leader-card">
+            <header class="leader-head"><span class="leader-stat">${cat.label}</span></header>
+            <div class="leader-empty">no data yet</div>
+          </div>
+        `;
+    }
+    return `
+      <div class="leader-card">
+        <header class="leader-head"><span class="leader-stat">${cat.label}</span></header>
+        <ol class="leader-list">
+          ${cat.leaders.map(renderLeaderRow).join("")}
+        </ol>
+      </div>
+    `;
+}
+
+function renderLeaderRow(l) {
+    const team = l.team ? `<span class="leader-team">${l.team}</span>` : "";
+    return `
+      <li class="leader-row" data-rank="${l.rank}">
+        <span class="leader-rank">${l.rank}</span>
+        <span class="leader-name">${shortName(l.name)}</span>
+        ${team}
+        <span class="leader-value">${l.value}</span>
+      </li>
     `;
 }
 
