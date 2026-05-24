@@ -375,7 +375,7 @@ main.board {
 
 .standings-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
     gap: 16px;
 }
 
@@ -488,7 +488,7 @@ main.board {
 
 .leaders-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
     gap: 12px;
 }
 
@@ -607,7 +607,7 @@ main.board {
 
 .mvp-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
     gap: 16px;
 }
 
@@ -762,6 +762,46 @@ nav .nav-item:hover:not(.disabled) {
 }
 nav .nav-item.disabled { cursor: default; opacity: 0.45; }
 nav .nav-item.disabled .num { color: var(--text-dim); }
+
+/* ── PAGE FOOTER ───────────────────────────────────────────────── */
+/* Required Retrosheet attribution + MLB Stats API credit. Tiny strip at
+   the very bottom of the page so it's never the foreground but is always
+   reachable. Sits below the nav so the nav stays the primary action bar. */
+.page-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 20px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+.page-footer a {
+    color: var(--text-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--border);
+    transition: color 150ms ease, border-color 150ms ease;
+}
+.page-footer a:hover {
+    color: var(--text);
+    border-bottom-color: var(--text);
+}
+.page-footer .build-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+.page-footer .version {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-action);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
 
 /* ── GAME VIEW ─────────────────────────────────────────────────── */
 
@@ -1186,3 +1226,32 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
     font-weight: 700;
 }
+
+/* ── RESPONSIVE / MOBILE ───────────────────────────────────────── */
+
+@media (max-width: 600px) {
+    header { padding: 10px 14px; }
+    header h1 { font-size: 14px; }
+    nav .nav-item { padding: 10px 0; font-size: 10px; letter-spacing: 0.08em; }
+    nav .nav-item .num { margin-right: 4px; }
+    main.board { padding: 12px 10px 14px; }
+    .standings-view, .leaders-view, .mvp-view {
+        padding: 14px 14px 24px;
+    }
+    .page-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+        padding: 7px 14px;
+    }
+    .ticker { padding: 6px 10px 8px; margin: 0 0 14px; }
+    .back-link { padding: 0 14px 8px; }
+    .game-view .game-pane { padding: 0 14px; }
+}
+
+@media (max-width: 420px) {
+    :root { --tile-w: 92vw; }
+    nav .nav-item .num { display: none; }
+    nav .nav-item { letter-spacing: 0.1em; }
+}
+
