@@ -850,6 +850,20 @@ function renderMatchupCard(m) {
         `;
     }).join("");
 
+    const liveBatter = m.sample.batter_pa_current_season || 0;
+    const livePitcher = m.sample.pitcher_bf_current_season || 0;
+    const liveTotal = liveBatter + livePitcher;
+    // The model gets fresher every morning's ingest. Show the user how many
+    // current-season PAs are in this prediction's sample so the "learns
+    // over time" promise is visible, not just claimed.
+    const liveLine = liveTotal > 0
+        ? `<div class="live-sample">
+             <span class="dot"></span>
+             +${liveBatter.toLocaleString()} batter PA · +${livePitcher.toLocaleString()} pitcher BF
+             from this season's daily ingest
+           </div>`
+        : "";
+
     return `
       <div class="card matchup-card">
         <div class="subject">
@@ -864,6 +878,7 @@ function renderMatchupCard(m) {
           pitcher ${m.sample.pitcher_bf.toLocaleString()} BF vs ${m.batter.bats}HB ·
           ${m.years.start}–${m.years.end}
         </div>
+        ${liveLine}
       </div>
     `;
 }

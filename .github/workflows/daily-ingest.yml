@@ -1,0 +1,43 @@
+name: Daily PA ingest
+
+# Runs every morning at 11:00 UTC (≈ 7 AM ET in winter, 6 AM ET in summer).
+# That's after the latest west-coast games finish on the prior day, so
+# every game on the slate is Final by the time the cron fires.
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  # Lets us trigger the ingest by hand from the Actions tab for any date
+  # we need to backfill.
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Date to ingest (YYYY-MM-DD). Default: yesterday ET."
+        required: false
+        default: ""
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runtime deps
+        run: pip install --quiet certifi
+
+      - name: Ingest plate appearances
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            python -m src.daily_ingest --date "${{ inputs.date }}"
+          else
+            python -m src.daily_ingest
+          fi
