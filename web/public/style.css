@@ -1405,6 +1405,37 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     letter-spacing: 0.08em;
 }
 
+/* "Model: 42% top-pick · Brier 0.13 · over 7,067 PAs · how" — the
+   calibration line. Sits in the middle of the footer so it reads as
+   a piece of evidence between the data credits (left) and source +
+   version (right). */
+.page-footer .model-accuracy {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+.page-footer .model-accuracy strong {
+    color: var(--accent-win);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+.page-footer .model-accuracy .ma-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-win);
+}
+.page-footer .model-accuracy .ma-link {
+    color: var(--text-dim);
+    margin-left: 2px;
+}
+.page-footer .model-accuracy .ma-link:hover {
+    color: var(--text);
+}
+
 /* ── GAME VIEW ─────────────────────────────────────────────────── */
 
 .game-view {
