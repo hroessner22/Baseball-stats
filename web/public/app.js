@@ -6,25 +6,42 @@
 
 const board = document.getElementById("board");
 const gameView = document.getElementById("game-view");
+const standingsView = document.getElementById("standings-view");
 
 const BOARD_REFRESH_MS = 30_000;
 const GAME_REFRESH_MS = 15_000;
+const STANDINGS_REFRESH_MS = 5 * 60_000;
 
 let boardTimer = null;
 let gameTimer = null;
+let standingsTimer = null;
 let activeGameId = null;
 
 window.addEventListener("hashchange", handleRoute);
 window.addEventListener("load", handleRoute);
 
 function handleRoute() {
-    const m = window.location.hash.match(/^#game\/(\d+)/);
+    const hash = window.location.hash;
+    const m = hash.match(/^#game\/(\d+)/);
     if (m) {
         const id = m[1];
         if (id !== activeGameId) showGameView(id);
-    } else {
-        showBoard();
+        setActiveNav("live");
+        return;
     }
+    if (hash === "#standings") {
+        showStandings();
+        setActiveNav("standings");
+        return;
+    }
+    showBoard();
+    setActiveNav("live");
+}
+
+function setActiveNav(route) {
+    document.querySelectorAll("nav .nav-item").forEach((el) => {
+        el.classList.toggle("active", el.dataset.route === route);
+    });
 }
 
 // ── BOARD ────────────────────────────────────────────────────────────
@@ -32,7 +49,9 @@ function handleRoute() {
 function showBoard() {
     activeGameId = null;
     if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
+    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     gameView.hidden = true;
+    standingsView.hidden = true;
     board.hidden = false;
     refreshBoard();
     if (!boardTimer) boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
@@ -248,12 +267,119 @@ function lastName(fullName) {
 function showGameView(id) {
     activeGameId = id;
     if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
     board.hidden = true;
+    standingsView.hidden = true;
     gameView.hidden = false;
     renderEmpty(gameView, "Loading game…", "");
     refreshGame(id);
     if (gameTimer) clearInterval(gameTimer);
     gameTimer = setInterval(() => refreshGame(id), GAME_REFRESH_MS);
+}
+
+// ── STANDINGS VIEW ──────────────────────────────────────────────────
+
+function showStandings() {
+    activeGameId = null;
+    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
+    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
+    board.hidden = true;
+    gameView.hidden = true;
+    standingsView.hidden = false;
+    renderEmpty(standingsView, "Loading standings…", "");
+    refreshStandings();
+    if (!standingsTimer) standingsTimer = setInterval(refreshStandings, STANDINGS_REFRESH_MS);
+}
+
+async function refreshStandings() {
+    try {
+        const res = await fetch("/api/standings");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.divisions || data.divisions.length === 0) {
+            renderEmpty(standingsView, "Standings not available.", "Check back later.");
+            return;
+        }
+        standingsView.innerHTML = renderStandings(data);
+    } catch (e) {
+        renderEmpty(standingsView, "Could not load standings.", `${e.message || e}`);
+    }
+}
+
+function renderStandings(data) {
+    // Group by league so AL and NL get their own row of three divisions.
+    const al = data.divisions.filter((d) => d.league === "AL").sort(divisionOrder);
+    const nl = data.divisions.filter((d) => d.league === "NL").sort(divisionOrder);
+    return `
+      <header class="standings-head">
+        <h2>STANDINGS</h2>
+        <span class="standings-meta">${data.season} season</span>
+      </header>
+      <section class="standings-league">
+        <h3 class="league-label">American League</h3>
+        <div class="standings-grid">
+          ${al.map(renderDivisionBlock).join("")}
+        </div>
+      </section>
+      <section class="standings-league">
+        <h3 class="league-label">National League</h3>
+        <div class="standings-grid">
+          ${nl.map(renderDivisionBlock).join("")}
+        </div>
+      </section>
+    `;
+}
+
+// East -> Central -> West in each league.
+function divisionOrder(a, b) {
+    const order = { 201: 0, 202: 1, 200: 2, 204: 0, 205: 1, 203: 2 };
+    return (order[a.id] ?? 99) - (order[b.id] ?? 99);
+}
+
+function renderDivisionBlock(div) {
+    return `
+      <div class="division-block">
+        <header class="division-head">
+          <span class="division-name">${div.name}</span>
+        </header>
+        <table class="standings-table">
+          <thead>
+            <tr>
+              <th class="col-team">TEAM</th>
+              <th class="col-wl">W-L</th>
+              <th class="col-pct">PCT</th>
+              <th class="col-gb">GB</th>
+              <th class="col-strk">STRK</th>
+              <th class="col-l10">L10</th>
+              <th class="col-rd">RD</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${div.teams.map((t, i) => renderTeamRow(t, i === 0)).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+}
+
+function renderTeamRow(t, isLeader) {
+    const streakCls = t.streak?.startsWith("W") ? "streak-win"
+                    : t.streak?.startsWith("L") ? "streak-loss"
+                    : "";
+    const rdCls = t.run_diff > 0 ? "rd-pos"
+                : t.run_diff < 0 ? "rd-neg"
+                : "";
+    return `
+      <tr class="${isLeader ? "leader" : ""}">
+        <td class="col-team"><strong>${t.team}</strong></td>
+        <td class="col-wl">${t.wins}-${t.losses}</td>
+        <td class="col-pct">${t.pct}</td>
+        <td class="col-gb">${t.gb}</td>
+        <td class="col-strk ${streakCls}">${t.streak}</td>
+        <td class="col-l10">${t.last10}</td>
+        <td class="col-rd ${rdCls}">${t.run_diff > 0 ? "+" : ""}${t.run_diff}</td>
+      </tr>
+    `;
 }
 
 async function refreshGame(id) {
