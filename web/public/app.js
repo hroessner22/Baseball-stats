@@ -29,6 +29,36 @@ let activeGameId = null;
 
 window.addEventListener("hashchange", handleRoute);
 window.addEventListener("load", handleRoute);
+window.addEventListener("load", loadFooterAccuracy);
+
+// Read the latest calibration row and surface it in the footer. Small
+// piece of code, big credibility move — the model goes from "trust us"
+// to "here's the receipt." Errors silent; the footer just stays without
+// the accuracy line if /api/metrics returns nothing.
+async function loadFooterAccuracy() {
+    try {
+        const res = await fetch("/api/metrics");
+        if (!res.ok) return;
+        const data = await res.json();
+        const m = data?.metrics;
+        if (!m) return;
+        const el = document.getElementById("footer-accuracy");
+        if (!el) return;
+        const acc   = Math.round(m.top_pick_accuracy * 100);
+        const brier = Number(m.brier_score).toFixed(2);
+        const n     = Number(m.sample_size).toLocaleString();
+        el.innerHTML = `
+          <span class="ma-dot"></span>
+          Model: <strong>${acc}% top-pick</strong>
+          · Brier <strong>${brier}</strong>
+          · over ${n} PAs
+          <a href="#about" class="ma-link">how</a>
+        `;
+        el.hidden = false;
+    } catch {
+        // silent
+    }
+}
 
 function handleRoute() {
     const hash = window.location.hash;

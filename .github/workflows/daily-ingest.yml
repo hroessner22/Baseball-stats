@@ -41,3 +41,12 @@ jobs:
           else
             python -m src.daily_ingest
           fi
+
+      # Re-score the model against the freshly-updated daily_pa and write
+      # the resulting top-pick accuracy / Brier / sample size into
+      # model_metrics. The footer reads the latest row.
+      - name: Compute model calibration
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m src.calibration
