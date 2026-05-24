@@ -38,20 +38,22 @@ function showBoard() {
     if (!boardTimer) boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
 }
 
+// Cache for the most recent schedule fetch. The Game view's ticker reads
+// from here so we don't double-fetch on every Game view refresh.
+let scheduleCache = null;
+
 async function refreshBoard() {
     try {
         const res = await fetch("/api/games/today");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        scheduleCache = data;
         if (!data.games || data.games.length === 0) {
-            board.style.setProperty("--board-cols", 1);
-            board.style.setProperty("--board-rows", 1);
             renderEmpty(board, "No games on the schedule today.", "Check back tomorrow.");
             return;
         }
 
         const sorted = sortGames(data.games);
-        layoutBoard(sorted.length);
         board.innerHTML = sorted.map(renderTile).join("");
 
         // Live tiles need batter + pitcher names — the schedule endpoint
@@ -64,33 +66,6 @@ async function refreshBoard() {
         renderEmpty(board, "Could not load today's games.", `${e.message || e}`);
     }
 }
-
-// Pick a column count that gets all tiles into the viewport without
-// scrolling. Wider screens get more columns, fewer rows. The min tile width
-// keeps things readable; the rest is just ceil(games / cols).
-function layoutBoard(gameCount) {
-    const minTileWidth = 200;
-    const horizontalGap = 8;
-    const horizontalPad = 24;
-    const vw = document.documentElement.clientWidth;
-    const cols = Math.max(
-        1,
-        Math.min(
-            gameCount,
-            Math.floor((vw - horizontalPad + horizontalGap) / (minTileWidth + horizontalGap))
-        )
-    );
-    const rows = Math.ceil(gameCount / cols);
-    board.style.setProperty("--board-cols", cols);
-    board.style.setProperty("--board-rows", rows);
-    board.dataset.gameCount = gameCount;
-}
-
-// Re-layout on resize. We only need to recompute cols; rows derive from cols.
-window.addEventListener("resize", () => {
-    const n = parseInt(board.dataset.gameCount || "0", 10);
-    if (n > 0) layoutBoard(n);
-});
 
 // Sort the slate so the most interesting games come first: live games by
 // leverage (closest score × late inning × runners on), then pregame games by
@@ -284,12 +259,17 @@ function showGameView(id) {
 async function refreshGame(id) {
     if (id !== activeGameId) return;
     try {
-        const res = await fetch(`/api/game/${id}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const g = await res.json();
+        // Game detail + the day's schedule (for the ticker), in parallel.
+        // Both endpoints are edge-cached, so the schedule refetch is cheap.
+        const [gameRes, schedRes] = await Promise.all([
+            fetch(`/api/game/${id}`),
+            fetch(`/api/games/today`),
+        ]);
+        if (!gameRes.ok) throw new Error(`HTTP ${gameRes.status}`);
+        const g = await gameRes.json();
+        if (schedRes.ok) scheduleCache = await schedRes.json();
         if (id !== activeGameId) return;
         gameView.innerHTML = renderGame(g);
-        // Hydrate the matchup card (Phase 3.2) once the shell is in.
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             hydrateMatchup(g.batter.id, g.pitcher.id, id);
         }
@@ -301,11 +281,51 @@ async function refreshGame(id) {
 function renderGame(g) {
     return `
       <a class="back-link" href="#">← BOARD</a>
+      ${renderTicker(g.game_pk, scheduleCache?.games || [])}
       <div class="game-pane">
         ${fieldPane(g)}
         ${cardPane(g)}
       </div>
     `;
+}
+
+// Thin horizontal strip at the top of the Game view showing every other game
+// on the slate. Click to swap. Scrolls horizontally if the slate doesn't fit
+// the viewport width. The active game is highlighted but still rendered so
+// the eye keeps its place when you scan.
+function renderTicker(activePk, games) {
+    if (!games || games.length === 0) return "";
+    const sorted = sortGames(games);
+    return `
+      <nav class="ticker" aria-label="other games">
+        ${sorted.map((g) => renderTickerGame(g, g.game_pk === Number(activePk))).join("")}
+      </nav>
+    `;
+}
+
+function renderTickerGame(g, isActive) {
+    const cls = isActive ? "ticker-game active" : "ticker-game";
+    const fmtScore = (s) => g.status === "Preview" ? "—" : s;
+    return `
+      <a class="${cls}" href="#game/${g.game_pk}" data-status="${g.status}">
+        <div class="t-teams">
+          <div class="t-row"><span class="t-abbr">${g.away}</span><span class="t-score">${fmtScore(g.away_score)}</span></div>
+          <div class="t-row"><span class="t-abbr">${g.home}</span><span class="t-score">${fmtScore(g.home_score)}</span></div>
+        </div>
+        <div class="t-state">${tickerState(g)}</div>
+      </a>
+    `;
+}
+
+function tickerState(g) {
+    if (g.status === "Preview" && g.start_time) {
+        return startTimeET(g.start_time);
+    }
+    if (g.status === "Final") return "F";
+    if (g.status === "Live" && g.inning) {
+        return `${arrowHalf(g.half)}${g.inning}`;
+    }
+    return (g.detail || g.status).slice(0, 6).toUpperCase();
 }
 
 function fieldPane(g) {

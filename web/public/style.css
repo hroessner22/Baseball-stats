@@ -58,7 +58,7 @@ header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 20px;
+    padding: 12px 22px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -98,27 +98,22 @@ header h1 .colon { color: var(--accent-win); }
 
 /* ── THE BOARD ─────────────────────────────────────────────────── */
 
-/* Viewport-locked grid: layoutBoard() in app.js sets --board-cols and
-   --board-rows based on the game count and viewport width. Tiles fill
-   each cell, no scrolling. Tile content uses overflow:hidden so a tile
-   that can't fully render at the available size crops gracefully
-   instead of pushing the grid past the viewport. */
+/* Tile grid with natural sizing. Scrolls if the slate doesn't fit the
+   viewport — that's accepted; the Game view's ticker keeps the rest of
+   the slate visible while you're inside a single game. */
 main.board {
     flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    padding: 8px 12px 10px;
+    overflow: auto;
+    padding: 16px 18px 20px;
     display: grid;
-    grid-template-columns: repeat(var(--board-cols, 6), minmax(0, 1fr));
-    grid-template-rows: repeat(var(--board-rows, 3), minmax(0, 1fr));
-    gap: 8px;
-    align-content: stretch;
-    justify-content: stretch;
+    grid-template-columns: repeat(auto-fill, var(--tile-w));
+    gap: 12px;
+    align-content: start;
+    justify-content: center;
 }
 
 .empty {
     grid-column: 1 / -1;
-    grid-row: 1 / -1;
     text-align: center;
     color: var(--text-dim);
     padding: 96px 16px;
@@ -136,23 +131,20 @@ main.board {
 /* ── GAME TILE ─────────────────────────────────────────────────── */
 
 .tile {
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
+    width: var(--tile-w);
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 8px 12px 10px;
+    padding: 10px 14px 12px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
     text-decoration: none;
     color: inherit;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     transition: transform 150ms ease, border-color 150ms ease,
                 background 150ms ease;
     position: relative;
-    overflow: hidden;
 }
 .tile:hover {
     transform: translateY(-2px);
@@ -179,11 +171,11 @@ main.board {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    padding: 4px 0;
+    padding: 6px 0;
     border-bottom: 1px solid var(--border);
 }
-.tile .team:last-child { border-bottom: none; padding-bottom: 2px; }
-.tile .team:first-child { padding-top: 2px; }
+.tile .team:last-child { border-bottom: none; padding-bottom: 4px; }
+.tile .team:first-child { padding-top: 4px; }
 
 .tile .team .team-id {
     display: inline-flex;
@@ -192,7 +184,7 @@ main.board {
     min-width: 0;
 }
 .tile .team .name {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     color: var(--text);
     letter-spacing: -0.005em;
@@ -205,7 +197,7 @@ main.board {
     letter-spacing: 0.02em;
 }
 .tile .team .score {
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 800;
     color: var(--text);
     font-variant-numeric: tabular-nums;
@@ -217,7 +209,7 @@ main.board {
 }
 
 .tile .state {
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -237,18 +229,18 @@ main.board {
 .tile .tile-players {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
 }
 .tile .tile-players .player-row {
     display: grid;
-    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-columns: 52px minmax(0, 1fr);
     align-items: baseline;
-    gap: 6px;
-    font-size: 10px;
+    gap: 8px;
+    font-size: 11px;
 }
 .tile .tile-players .player-row .label {
     color: var(--text-dim);
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -269,12 +261,12 @@ main.board {
 .tile .tile-we {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
 }
 .tile .tile-we .we-bar {
-    height: 4px;
+    height: 5px;
     background: var(--accent-live);
-    border-radius: 2px;
+    border-radius: 3px;
     overflow: hidden;
 }
 .tile .tile-we .we-bar > span {
@@ -286,7 +278,7 @@ main.board {
 .tile .tile-we .we-labels {
     display: flex;
     justify-content: space-between;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
@@ -296,7 +288,7 @@ main.board {
 /* Probable pitchers (pregame) and decisions (final) sit just under the state
    line — same visual block as before; the tile-body picks one of the two. */
 .tile .tile-extra {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 500;
     color: var(--text);
     text-align: center;
@@ -376,7 +368,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .game-view {
     flex: 1;
     overflow: auto;
-    padding: 24px 32px 48px;
+    padding: 12px 0 36px;
     display: flex;
     flex-direction: column;
 }
@@ -388,11 +380,103 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.12em;
-    padding: 4px 0 20px;
+    padding: 0 32px 10px;
     align-self: flex-start;
     transition: color 150ms ease;
 }
 .back-link:hover { color: var(--text); }
+
+/* Game-view ticker. Thin strip at the top showing every other game on the
+   slate so you can keep an eye on the scoreboard while you're inside one
+   game. Click to swap. Horizontal scrolls if the slate is wider than the
+   viewport. Sticks to the top so it stays visible when the Game view itself
+   scrolls. */
+.ticker {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    gap: 4px;
+    padding: 6px 12px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    margin: 0 0 18px;
+    scrollbar-width: thin;
+}
+.ticker::-webkit-scrollbar { height: 6px; }
+.ticker::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.ticker-game {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 5px 9px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    text-decoration: none;
+    color: inherit;
+    min-width: 96px;
+    transition: border-color 120ms ease, background 120ms ease;
+}
+.ticker-game:hover {
+    border-color: var(--accent-action);
+    background: var(--surface-2);
+}
+.ticker-game.active {
+    border-color: var(--accent-action);
+    background: var(--surface-2);
+    box-shadow: 0 0 0 1px var(--accent-action);
+}
+.ticker-game[data-status="Live"] .t-state {
+    color: var(--accent-live);
+}
+
+.ticker-game .t-teams {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+.ticker-game .t-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.15;
+}
+.ticker-game .t-abbr {
+    color: var(--text);
+    letter-spacing: 0.01em;
+}
+.ticker-game .t-score {
+    color: var(--text);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.ticker-game[data-status="Preview"] .t-score {
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.ticker-game .t-state {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
+
+/* When the ticker is present, the back link sits just above it and the
+   game-pane gets a small side gutter. */
+.game-view .game-pane {
+    padding: 0 32px;
+}
 
 .game-pane {
     display: grid;
