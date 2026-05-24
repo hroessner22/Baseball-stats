@@ -10,18 +10,21 @@ const standingsView = document.getElementById("standings-view");
 const leadersView = document.getElementById("leaders-view");
 const mvpView = document.getElementById("mvp-view");
 const aboutView = document.getElementById("about-view");
+const hotView = document.getElementById("hot-view");
 
 const BOARD_REFRESH_MS = 30_000;
 const GAME_REFRESH_MS = 15_000;
 const STANDINGS_REFRESH_MS = 5 * 60_000;
 const LEADERS_REFRESH_MS = 5 * 60_000;
 const MVP_REFRESH_MS = 5 * 60_000;
+const HOT_REFRESH_MS = 15_000;
 
 let boardTimer = null;
 let gameTimer = null;
 let standingsTimer = null;
 let leadersTimer = null;
 let mvpTimer = null;
+let hotTimer = null;
 let activeGameId = null;
 
 window.addEventListener("hashchange", handleRoute);
@@ -58,6 +61,11 @@ function handleRoute() {
         setActiveNav(null);
         return;
     }
+    if (hash === "#hot") {
+        showHot();
+        setActiveNav("hot");
+        return;
+    }
     showBoard();
     setActiveNav("live");
 }
@@ -80,18 +88,27 @@ function hideAllViews() {
     leadersView.hidden = true;
     mvpView.hidden = true;
     aboutView.hidden = true;
+    hotView.hidden = true;
+}
+
+// Centralized timer-clear so each show* doesn't have to know about every
+// other view's timer. Each show* function flips its own timer back on.
+function clearAllTimers() {
+    if (boardTimer)     { clearInterval(boardTimer);     boardTimer = null; }
+    if (gameTimer)      { clearInterval(gameTimer);      gameTimer = null; }
+    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+    if (leadersTimer)   { clearInterval(leadersTimer);   leadersTimer = null; }
+    if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
+    if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
 }
 
 function showBoard() {
     activeGameId = null;
-    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
-    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
-    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
-    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
+    clearAllTimers();
     hideAllViews();
     board.hidden = false;
     refreshBoard();
-    if (!boardTimer) boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
+    boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
 }
 
 // Cache for the most recent schedule fetch. The Game view's ticker reads
@@ -303,15 +320,11 @@ function lastName(fullName) {
 
 function showGameView(id) {
     activeGameId = id;
-    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
-    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
-    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
-    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
+    clearAllTimers();
     hideAllViews();
     gameView.hidden = false;
     renderEmpty(gameView, "Loading game…", "");
     refreshGame(id);
-    if (gameTimer) clearInterval(gameTimer);
     gameTimer = setInterval(() => refreshGame(id), GAME_REFRESH_MS);
 }
 
@@ -319,15 +332,12 @@ function showGameView(id) {
 
 function showStandings() {
     activeGameId = null;
-    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
-    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
-    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
-    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
+    clearAllTimers();
     hideAllViews();
     standingsView.hidden = false;
     renderEmpty(standingsView, "Loading standings…", "");
     refreshStandings();
-    if (!standingsTimer) standingsTimer = setInterval(refreshStandings, STANDINGS_REFRESH_MS);
+    standingsTimer = setInterval(refreshStandings, STANDINGS_REFRESH_MS);
 }
 
 async function refreshStandings() {
@@ -425,15 +435,12 @@ function renderTeamRow(t, isLeader) {
 
 function showLeaders() {
     activeGameId = null;
-    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
-    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
-    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
-    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
+    clearAllTimers();
     hideAllViews();
     leadersView.hidden = false;
     renderEmpty(leadersView, "Loading leaders…", "");
     refreshLeaders();
-    if (!leadersTimer) leadersTimer = setInterval(refreshLeaders, LEADERS_REFRESH_MS);
+    leadersTimer = setInterval(refreshLeaders, LEADERS_REFRESH_MS);
 }
 
 async function refreshLeaders() {
@@ -507,29 +514,164 @@ function renderLeaderRow(l) {
 
 function showMVP() {
     activeGameId = null;
-    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
-    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
-    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
-    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
+    clearAllTimers();
     hideAllViews();
     mvpView.hidden = false;
     renderEmpty(mvpView, "Loading MVP race…", "");
     refreshMVP();
-    if (!mvpTimer) mvpTimer = setInterval(refreshMVP, MVP_REFRESH_MS);
+    mvpTimer = setInterval(refreshMVP, MVP_REFRESH_MS);
 }
 
 // ── ABOUT VIEW ──────────────────────────────────────────────────────
 
 function showAbout() {
     activeGameId = null;
-    if (boardTimer) { clearInterval(boardTimer); boardTimer = null; }
-    if (gameTimer) { clearInterval(gameTimer); gameTimer = null; }
-    if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
-    if (leadersTimer) { clearInterval(leadersTimer); leadersTimer = null; }
-    if (mvpTimer) { clearInterval(mvpTimer); mvpTimer = null; }
+    clearAllTimers();
     hideAllViews();
     aboutView.hidden = false;
     aboutView.innerHTML = renderAbout();
+}
+
+// ── HOT MOMENTS VIEW ────────────────────────────────────────────────
+//
+// "What should I be watching RIGHT NOW?" — auto-surfaces the highest-
+// leverage live moments across the slate. Uses the existing leverage()
+// score (closeness × inning weight × runners-on). Refreshes every 15s.
+//
+// Empty when no games are live; an honest "come back at first pitch"
+// state rather than fake data.
+
+function showHot() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    hotView.hidden = false;
+    renderEmpty(hotView, "Loading hot moments…", "");
+    refreshHot();
+    hotTimer = setInterval(refreshHot, HOT_REFRESH_MS);
+}
+
+async function refreshHot() {
+    try {
+        const res = await fetch("/api/games/today");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        scheduleCache = data;
+
+        const live = (data.games || []).filter(
+            (g) => g.status === "Live" && g.inning
+        );
+        if (live.length === 0) {
+            // Look ahead to the next pregame game for a softer empty state.
+            const upcoming = (data.games || [])
+                .filter((g) => g.status === "Preview" && g.start_time)
+                .sort((a, b) => (new Date(a.start_time)) - (new Date(b.start_time)))[0];
+            const sub = upcoming
+                ? `Next first pitch: ${shortName(upcoming.away)} at ${shortName(upcoming.home)} · ${startTimeET(upcoming.start_time)} ET.`
+                : "Check back when first pitch is in.";
+            renderEmpty(hotView, "No live games right now.", sub);
+            return;
+        }
+
+        const ranked = live
+            .map((g) => ({ g, lev: leverage(g) }))
+            .sort((a, b) => b.lev - a.lev)
+            .slice(0, 6);
+
+        hotView.innerHTML = renderHot(ranked);
+    } catch (e) {
+        renderEmpty(hotView, "Couldn't load.", `${e.message || e}`);
+    }
+}
+
+function renderHot(ranked) {
+    return `
+      <header class="hot-head">
+        <h2><span class="hot-flame">🔥</span> HOT MOMENTS</h2>
+        <span class="hot-meta">
+          ${ranked.length} live game${ranked.length === 1 ? "" : "s"}
+          · sorted by leverage (closeness × late innings × runners on)
+        </span>
+      </header>
+      <div class="hot-grid">
+        ${ranked.map(({ g, lev }, i) => renderHotCard(g, lev, i)).join("")}
+      </div>
+    `;
+}
+
+function renderHotCard(g, lev, rank) {
+    const reason = hotReason(g);
+    const we = g.win_expectancy;
+    const homePct = we != null ? Math.round(we * 100) : 50;
+    const awayPct = 100 - homePct;
+    const leverageBar = Math.round(Math.min(1, lev) * 100);
+    return `
+      <a class="hot-card" href="#game/${g.game_pk}">
+        <header class="hot-card-head">
+          <span class="hot-rank">#${rank + 1}</span>
+          <span class="hot-reason">${reason}</span>
+          <span class="hot-lev">leverage ${Math.round(lev * 100)}</span>
+        </header>
+        <div class="hot-matchup">
+          <div class="hot-team">
+            <span class="hot-team-name">${g.away}</span>
+            <span class="hot-team-score">${g.away_score}</span>
+          </div>
+          <div class="hot-team">
+            <span class="hot-team-name">${g.home}</span>
+            <span class="hot-team-score">${g.home_score}</span>
+          </div>
+        </div>
+        <div class="hot-state">${stateLabel(g)}</div>
+        ${we != null ? `
+          <div class="hot-we">
+            <div class="hot-we-bar">
+              <span style="width:${homePct}%"></span>
+            </div>
+            <div class="hot-we-labels">
+              <span>${g.away} ${awayPct}%</span>
+              <span>${g.home} ${homePct}%</span>
+            </div>
+          </div>
+        ` : ""}
+        <div class="hot-meter" title="Leverage: ${lev.toFixed(2)}">
+          <span style="width:${leverageBar}%"></span>
+        </div>
+        <div class="hot-cta">Open game view →</div>
+      </a>
+    `;
+}
+
+// Plain-English reason a moment is hot. The leverage function gives us
+// the magnitude; this gives us the why.
+function hotReason(g) {
+    const diff = Math.abs((g.home_score ?? 0) - (g.away_score ?? 0));
+    const bases = g.bases || 0;
+    const basesDesc = basesShort(bases);
+    const inn = ordinalSuffix(g.inning).toLowerCase();
+    const late = g.inning >= 7;
+    const ninth = g.inning >= 9;
+
+    if (diff === 0 && ninth) {
+        return basesDesc ? `Tied in extras / 9th — ${basesDesc}` : "Tied in extras / 9th";
+    }
+    if (diff === 0 && late) {
+        return basesDesc ? `Tied, ${inn} — ${basesDesc}` : `Tied in the ${inn}`;
+    }
+    if (diff <= 1 && late) {
+        return basesDesc ? `1-run game, ${inn} — ${basesDesc}` : `1-run game, ${inn}`;
+    }
+    if (bases === 7) {
+        return `Bases loaded, ${inn}`;
+    }
+    if (bases & 4) {
+        return basesDesc ? `Scoring threat — ${basesDesc}, ${inn}` : `Scoring threat, ${inn}`;
+    }
+    if (diff <= 2 && late) {
+        return `${diff}-run game in the ${inn}`;
+    }
+    if (basesDesc) return `${basesDesc}, ${inn}`;
+    return `${diff === 0 ? "Tied" : `${diff}-run game`} in the ${inn}`;
 }
 
 function renderAbout() {
