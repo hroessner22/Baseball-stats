@@ -227,6 +227,53 @@ main.board {
 .tile[data-status="Final"] .we { color: var(--text-dim); }
 .tile[data-status="Preview"] .we { display: none; }
 
+/* Probable pitchers (pregame) and decisions (final) sit just under the state
+   line — same visual block, separated from the matchup above and the WE block
+   below by the parent flex gap. Pulled in slightly toward state since they're
+   a continuation of "what's happening with this game right now". */
+.tile .tile-extra {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text);
+    text-align: center;
+    letter-spacing: 0.01em;
+    line-height: 1.35;
+    margin-top: -8px;
+}
+.tile .tile-extra .dim {
+    color: var(--text-dim);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+/* HOT pill for close, late-inning live games. Top-right corner, red badge
+   with a pulsing white dot — same visual grammar as the header LIVE pill. */
+.tile .hot-pill {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 7px 3px 6px;
+    border-radius: 4px;
+    background: var(--accent-live);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    line-height: 1;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.45);
+    z-index: 2;
+}
+.tile .hot-pill .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #fff;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
 /* ── BOTTOM NAV ────────────────────────────────────────────────── */
 
 nav {
