@@ -101,8 +101,16 @@ export async function onRequest(context) {
     }
 
     // 6. Cache (best-effort — return the recap even if the cache write fails).
-    if (env.SUPABASE_SERVICE_KEY) {
-        cacheRecap(env, gameId, recapText, usage).catch(() => {});
+    let cacheStatus;
+    if (!env.SUPABASE_SERVICE_KEY) {
+        cacheStatus = "skipped: SUPABASE_SERVICE_KEY not set";
+    } else {
+        try {
+            await cacheRecap(env, gameId, recapText, usage);
+            cacheStatus = "written";
+        } catch (e) {
+            cacheStatus = `failed: ${e.message || e}`;
+        }
     }
 
     return jsonResponse({
@@ -111,6 +119,7 @@ export async function onRequest(context) {
         cached: false,
         model: ANTHROPIC_MODEL,
         usage,
+        cache_status: cacheStatus,
     }, 3600);
 }
 
@@ -132,7 +141,7 @@ async function fetchCached(env, gameId) {
 async function cacheRecap(env, gameId, text, usage) {
     // Write via the service-role key — anon can SELECT but not INSERT.
     const url = `${env.SUPABASE_URL}/rest/v1/game_recaps?on_conflict=game_pk`;
-    await fetch(url, {
+    const res = await fetch(url, {
         method: "POST",
         headers: {
             "apikey":        env.SUPABASE_SERVICE_KEY,
@@ -148,6 +157,10 @@ async function cacheRecap(env, gameId, text, usage) {
             completion_tokens: usage?.output_tokens ?? null,
         }),
     });
+    if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+    }
 }
 
 async function callAnthropic(apiKey, prompt) {
