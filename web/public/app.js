@@ -56,15 +56,59 @@ async function refreshBoard() {
 function renderTile(g) {
     return `
       <a class="tile" href="#game/${g.game_pk}" data-status="${g.status}">
+        ${hotPill(g)}
         <div class="matchup">
           <div class="team"><span class="name">${g.away}</span><span class="score">${g.away_score}</span></div>
           <div class="team"><span class="name">${g.home}</span><span class="score">${g.home_score}</span></div>
         </div>
         <div class="state">${stateLabel(g)}</div>
+        ${tileExtra(g)}
         ${g.status === "Live" ? diamondSVG(g.bases) : ""}
         ${weBlock(g)}
       </a>
     `;
+}
+
+// Tile content under the state line. Each game state surfaces one extra fact:
+//   Preview — probable pitchers ("RHP M. Keller vs RHP D. Cease")
+//   Final   — winning + losing (+ save) pitcher ("W Cole · L Bello · S Holmes")
+//   Live    — nothing extra here; count+outs ride on the state line itself.
+function tileExtra(g) {
+    if (g.status === "Preview" && g.probables) {
+        const fmt = (p) => p
+            ? `${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}`
+            : "TBA";
+        return `
+          <div class="tile-extra probables">
+            ${fmt(g.probables.away)} <span class="dim">vs</span> ${fmt(g.probables.home)}
+          </div>
+        `;
+    }
+    if (g.status === "Final" && g.decisions) {
+        const parts = [];
+        if (g.decisions.winner) parts.push(`<span class="dim">W</span> ${lastName(g.decisions.winner)}`);
+        if (g.decisions.loser)  parts.push(`<span class="dim">L</span> ${lastName(g.decisions.loser)}`);
+        if (g.decisions.save)   parts.push(`<span class="dim">S</span> ${lastName(g.decisions.save)}`);
+        if (parts.length === 0) return "";
+        return `<div class="tile-extra decisions">${parts.join(" · ")}</div>`;
+    }
+    return "";
+}
+
+// HOT badge for live games in the late innings that are still close. Threshold
+// is "7th inning or later AND within 2 runs" — the back half of a one-score
+// game is when every pitch starts to matter.
+function hotPill(g) {
+    if (g.status !== "Live" || !g.inning) return "";
+    const close = Math.abs((g.home_score ?? 0) - (g.away_score ?? 0)) <= 2;
+    const late = g.inning >= 7;
+    if (!(close && late)) return "";
+    return `<span class="hot-pill" aria-label="High leverage"><span class="dot"></span>HOT</span>`;
+}
+
+function lastName(fullName) {
+    const parts = fullName.trim().split(/\s+/);
+    return parts.length < 2 ? fullName : parts[parts.length - 1];
 }
 
 // ── GAME VIEW ────────────────────────────────────────────────────────
@@ -404,7 +448,10 @@ function stateLabel(g) {
     if (g.status === "Preview") return `${startTimeET(g.start_time)} ET`;
     if (g.status === "Final") return "FINAL";
     if (g.status === "Live" && g.inning) {
-        return `${arrowHalf(g.half)} ${ordinalSuffix(g.inning)}`;
+        const parts = [`${arrowHalf(g.half)} ${ordinalSuffix(g.inning)}`];
+        if (g.outs != null) parts.push(`${g.outs} OUT`);
+        if (g.balls != null && g.strikes != null) parts.push(`${g.balls}-${g.strikes}`);
+        return parts.join(" · ");
     }
     return (g.detail || g.status).toUpperCase();
 }

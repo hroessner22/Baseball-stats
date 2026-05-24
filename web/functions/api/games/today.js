@@ -13,7 +13,7 @@ export async function onRequest(context) {
 
     const upstreamUrl =
         `https://statsapi.mlb.com/api/v1/schedule` +
-        `?date=${date}&sportId=1&hydrate=linescore`;
+        `?date=${date}&sportId=1&hydrate=linescore,probablePitcher,decisions`;
 
     let upstream;
     try {
@@ -31,10 +31,25 @@ export async function onRequest(context) {
     }
 
     const data = await upstream.json();
+
+    // Pre-pass: collect every probable pitcher ID across the slate so we can
+    // resolve handedness in a single batch fetch (the schedule hydrate doesn't
+    // include pitchHand).
+    const probableIds = new Set();
+    for (const day of (data.dates || [])) {
+        for (const game of (day.games || [])) {
+            const a = game.teams?.away?.probablePitcher?.id;
+            const h = game.teams?.home?.probablePitcher?.id;
+            if (a) probableIds.add(a);
+            if (h) probableIds.add(h);
+        }
+    }
+    const handBy = await fetchHandedness([...probableIds]);
+
     const games = [];
     for (const day of (data.dates || [])) {
         for (const game of (day.games || [])) {
-            games.push(buildTile(game));
+            games.push(buildTile(game, handBy));
         }
     }
 
@@ -49,6 +64,30 @@ export async function onRequest(context) {
             "access-control-allow-origin": "*",
         },
     });
+}
+
+async function fetchHandedness(ids) {
+    const out = {};
+    if (ids.length === 0) return out;
+    const url =
+        `https://statsapi.mlb.com/api/v1/people` +
+        `?personIds=${ids.join(",")}`;
+    try {
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": "DIAMOND:CONTEXT/0.1 (+https://diamond-context.pages.dev)",
+            },
+            cf: { cacheTtl: 300, cacheEverything: true },
+        });
+        if (!res.ok) return out;
+        const j = await res.json();
+        for (const p of (j.people || [])) {
+            out[p.id] = p.pitchHand?.code || null;
+        }
+    } catch {
+        // missing handedness is degraded but tolerable — tile just omits the LHP/RHP tag.
+    }
+    return out;
 }
 
 function todayInEastern() {
@@ -70,7 +109,7 @@ function jsonError(status, message) {
     });
 }
 
-function buildTile(g) {
+function buildTile(g, handBy) {
     const status = g.status?.abstractGameState || "Unknown";
     const detail = g.status?.detailedState || "";
     const ls = g.linescore || {};
@@ -100,6 +139,31 @@ function buildTile(g) {
                  homeScore < awayScore ? 0.0 : 0.5;
     }
 
+    // Probable pitchers (pregame). Handedness is resolved from the batch
+    // /people fetch above; absence is fine — we just drop the LHP/RHP tag.
+    let probables = null;
+    if (status === "Preview") {
+        const ap = g.teams?.away?.probablePitcher;
+        const hp = g.teams?.home?.probablePitcher;
+        if (ap || hp) {
+            probables = {
+                away: ap ? { name: ap.fullName, throws: handBy[ap.id] || null } : null,
+                home: hp ? { name: hp.fullName, throws: handBy[hp.id] || null } : null,
+            };
+        }
+    }
+
+    // Decisions (final). Winning + losing pitcher are always present once a
+    // game is final; the save is only present on save-eligible wins.
+    let decisions = null;
+    if (status === "Final" && g.decisions) {
+        decisions = {
+            winner: g.decisions.winner?.fullName || null,
+            loser:  g.decisions.loser?.fullName  || null,
+            save:   g.decisions.save?.fullName   || null,
+        };
+    }
+
     return {
         game_pk: g.gamePk,
         status,
@@ -114,6 +178,8 @@ function buildTile(g) {
         bases,
         win_expectancy: winExp,
         start_time: g.gameDate,
+        probables,
+        decisions,
     };
 }
 
