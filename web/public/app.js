@@ -44,11 +44,14 @@ async function refreshBoard() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!data.games || data.games.length === 0) {
+            board.style.setProperty("--board-cols", 1);
+            board.style.setProperty("--board-rows", 1);
             renderEmpty(board, "No games on the schedule today.", "Check back tomorrow.");
             return;
         }
 
         const sorted = sortGames(data.games);
+        layoutBoard(sorted.length);
         board.innerHTML = sorted.map(renderTile).join("");
 
         // Live tiles need batter + pitcher names — the schedule endpoint
@@ -61,6 +64,33 @@ async function refreshBoard() {
         renderEmpty(board, "Could not load today's games.", `${e.message || e}`);
     }
 }
+
+// Pick a column count that gets all tiles into the viewport without
+// scrolling. Wider screens get more columns, fewer rows. The min tile width
+// keeps things readable; the rest is just ceil(games / cols).
+function layoutBoard(gameCount) {
+    const minTileWidth = 200;
+    const horizontalGap = 8;
+    const horizontalPad = 24;
+    const vw = document.documentElement.clientWidth;
+    const cols = Math.max(
+        1,
+        Math.min(
+            gameCount,
+            Math.floor((vw - horizontalPad + horizontalGap) / (minTileWidth + horizontalGap))
+        )
+    );
+    const rows = Math.ceil(gameCount / cols);
+    board.style.setProperty("--board-cols", cols);
+    board.style.setProperty("--board-rows", rows);
+    board.dataset.gameCount = gameCount;
+}
+
+// Re-layout on resize. We only need to recompute cols; rows derive from cols.
+window.addEventListener("resize", () => {
+    const n = parseInt(board.dataset.gameCount || "0", 10);
+    if (n > 0) layoutBoard(n);
+});
 
 // Sort the slate so the most interesting games come first: live games by
 // leverage (closest score × late inning × runners on), then pregame games by

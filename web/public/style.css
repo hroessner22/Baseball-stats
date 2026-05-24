@@ -98,19 +98,27 @@ header h1 .colon { color: var(--accent-win); }
 
 /* ── THE BOARD ─────────────────────────────────────────────────── */
 
+/* Viewport-locked grid: layoutBoard() in app.js sets --board-cols and
+   --board-rows based on the game count and viewport width. Tiles fill
+   each cell, no scrolling. Tile content uses overflow:hidden so a tile
+   that can't fully render at the available size crops gracefully
+   instead of pushing the grid past the viewport. */
 main.board {
     flex: 1;
-    overflow: auto;
-    padding: 12px 14px 16px;
+    min-height: 0;
+    overflow: hidden;
+    padding: 8px 12px 10px;
     display: grid;
-    grid-template-columns: repeat(auto-fill, var(--tile-w));
-    gap: 10px;
-    align-content: start;
-    justify-content: center;
+    grid-template-columns: repeat(var(--board-cols, 6), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--board-rows, 3), minmax(0, 1fr));
+    gap: 8px;
+    align-content: stretch;
+    justify-content: stretch;
 }
 
 .empty {
     grid-column: 1 / -1;
+    grid-row: 1 / -1;
     text-align: center;
     color: var(--text-dim);
     padding: 96px 16px;
@@ -128,7 +136,9 @@ main.board {
 /* ── GAME TILE ─────────────────────────────────────────────────── */
 
 .tile {
-    width: var(--tile-w);
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -142,6 +152,7 @@ main.board {
     transition: transform 150ms ease, border-color 150ms ease,
                 background 150ms ease;
     position: relative;
+    overflow: hidden;
 }
 .tile:hover {
     transform: translateY(-2px);
