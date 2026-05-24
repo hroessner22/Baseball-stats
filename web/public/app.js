@@ -784,35 +784,229 @@ async function refreshGame(id) {
         if (schedRes.ok) scheduleCache = await schedRes.json();
         if (id !== activeGameId) return;
 
-        // When the matchup pair changes (new PA, new batter, or new
-        // pitcher), drop the cached matchup card so the next render
-        // doesn't show stale numbers until the fetch completes.
-        const newKey = g.batter?.id && g.pitcher?.id
-            ? `${g.batter.id}-${g.pitcher.id}`
-            : null;
-        if (newKey !== cachedMatchupKey) {
-            cachedMatchupSlot = "";
-            cachedMatchupKey = newKey;
-        }
-
+        // Keep the cached matchup card across renders and across PA
+        // changes — clearing on pair change left a visible gap while the
+        // new fetch was in flight. Let hydrateMatchup overwrite when
+        // fresh data lands. Briefly showing the previous PA's names is
+        // less disruptive than showing nothing.
         gameView.innerHTML = renderGame(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             hydrateMatchup(g.batter.id, g.pitcher.id, id);
+        }
+        if (gameViewMode === "gamecast") {
+            refreshGamecast(id);
         }
     } catch (e) {
         renderEmpty(gameView, "Could not load this game.", `${e.message || e}`);
     }
 }
 
+// Two presentations of the same live game: the existing Live View (field,
+// WE card, matchup card) and the new Gamecast (play-by-play with pitch
+// data and predicted-vs-actual). Module-level state so the toggle survives
+// the every-15s re-render.
+let gameViewMode = "live"; // "live" | "gamecast"
+let cachedGamecastHTML = "";
+
 function renderGame(g) {
+    const isCast = gameViewMode === "gamecast";
     return `
       <a class="back-link" href="#">← BOARD</a>
       ${renderTicker(g.game_pk, scheduleCache?.games || [])}
-      <div class="game-pane">
-        ${fieldPane(g)}
-        ${cardPane(g)}
+      <div class="game-mode-toggle">
+        <button class="${!isCast ? 'active' : ''}" data-mode="live">Live View</button>
+        <button class="${isCast ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
+      </div>
+      ${isCast
+        ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
+        : `<div class="game-pane">
+             ${fieldPane(g)}
+             ${cardPane(g)}
+           </div>`}
+    `;
+}
+
+function gamecastLoadingShell() {
+    return `<div class="gamecast-loading">Loading play-by-play…</div>`;
+}
+
+// Event delegation — innerHTML rerenders kill direct handlers, so wire
+// the toggle once at module load and let it fire whenever a button with
+// data-mode is clicked.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".game-mode-toggle button[data-mode]");
+    if (!btn) return;
+    e.preventDefault();
+    const mode = btn.dataset.mode;
+    if (mode === gameViewMode) return;
+    gameViewMode = mode;
+    if (activeGameId) refreshGame(activeGameId);
+});
+
+// ── GAMECAST ────────────────────────────────────────────────────────
+
+async function refreshGamecast(gameId) {
+    if (gameViewMode !== "gamecast") return;
+    try {
+        const res = await fetch(`/api/game/${gameId}/plays`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (gameId !== activeGameId) return;
+
+        // Show the most recent dozen PAs. Older history is reachable by
+        // scrolling but we don't pre-fetch predictions for all of them —
+        // would mean hundreds of /api/matchup hits per game refresh.
+        const recent = (data.plays || []).slice(0, 12);
+
+        // Predictions per unique pair, fetched in parallel. Cloudflare's
+        // edge cache collapses duplicates from the rest of the page.
+        const pairs = [...new Set(recent.map((p) => `${p.batter.id}-${p.pitcher.id}`))];
+        const predictionMap = {};
+        await Promise.all(pairs.map(async (key) => {
+            const [b, p] = key.split("-");
+            try {
+                const r = await fetch(`/api/matchup?batter=${b}&pitcher=${p}`);
+                if (r.ok) predictionMap[key] = await r.json();
+            } catch { /* fall through; render shows "no data" for this pair */ }
+        }));
+        if (gameId !== activeGameId) return;
+
+        const html = renderGamecast(recent, predictionMap);
+        cachedGamecastHTML = html;
+        const pane = document.getElementById("gamecast-pane");
+        if (pane) pane.innerHTML = html;
+    } catch (e) {
+        const pane = document.getElementById("gamecast-pane");
+        if (pane && !cachedGamecastHTML) {
+            pane.innerHTML = `<div class="empty">Couldn't load play-by-play: ${e.message || e}</div>`;
+        }
+        // If we already had a cached gamecast, keep showing it — silent fail.
+    }
+}
+
+function renderGamecast(plays, predictionMap) {
+    if (!plays.length) {
+        return `<div class="empty">No plays yet — first pitch is on its way.</div>`;
+    }
+    return `
+      <div class="gamecast-list">
+        ${plays.map((p) => renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`])).join("")}
       </div>
     `;
+}
+
+function renderPABlock(play, prediction) {
+    const inn = `${play.half === "top" ? "▲" : "▼"} ${ordinalSuffix(play.inning)}`;
+    const score = play.score_after
+        ? `${play.score_after.away}-${play.score_after.home}`
+        : "";
+    const outcomeBadge = renderPAOutcomeBadge(play, prediction);
+
+    const predictedBlock = prediction?.available
+        ? renderPredictedDistribution(prediction.predicted, play.outcome)
+        : `<div class="pa-no-data">No historical matchup data for this pairing.</div>`;
+
+    const pitchesBlock = play.pitches.length
+        ? play.pitches.map((p, i) => renderPitchRow(p, i)).join("")
+        : `<div class="pa-no-data">No pitch data for this PA yet.</div>`;
+
+    return `
+      <article class="pa-block" data-outcome="${play.outcome || 'other'}">
+        <header class="pa-head">
+          <span class="pa-inning">${inn}</span>
+          <span class="pa-matchup">
+            <strong>${shortName(play.batter.name)}</strong>
+            <span class="dim">(${play.batter.hand}HB)</span>
+            <span class="dim"> vs </span>
+            <strong>${shortName(play.pitcher.name)}</strong>
+            <span class="dim">(${play.pitcher.hand}HP)</span>
+          </span>
+          ${score ? `<span class="pa-score">${score}</span>` : ""}
+          ${outcomeBadge}
+        </header>
+        <div class="pa-body">
+          <section class="pa-prediction">
+            <div class="pa-section-head">Predicted before PA · top 5</div>
+            ${predictedBlock}
+          </section>
+          <section class="pa-pitches">
+            <div class="pa-section-head">Pitches (${play.pitches.length})</div>
+            ${pitchesBlock}
+          </section>
+        </div>
+      </article>
+    `;
+}
+
+function renderPredictedDistribution(predicted, actualOutcome) {
+    const entries = Object.entries(predicted).sort((a, b) => b[1] - a[1]);
+    const top = entries[0]?.[1] || 1;
+    return entries.slice(0, 5).map(([o, p]) => {
+        const pct = Math.round(p * 100);
+        const width = Math.max(2, Math.round((p / top) * 100));
+        const isActual = o === actualOutcome;
+        return `
+          <div class="pa-pred-row ${isActual ? 'actual' : ''}">
+            <span class="pa-pred-label">${OUTCOME_LABEL[o] || o}</span>
+            <span class="pa-pred-bar"><span style="width:${width}%"></span></span>
+            <span class="pa-pred-pct">${pct}%</span>
+            <span class="pa-pred-check">${isActual ? '✓' : ''}</span>
+          </div>
+        `;
+    }).join("");
+}
+
+function renderPitchRow(pitch, idx) {
+    const velo = pitch.velo != null ? `${pitch.velo}` : "—";
+    const count = pitch.count_after
+        ? `${pitch.count_after.balls}-${pitch.count_after.strikes}`
+        : "";
+    const cls =
+        pitch.result_code === "B" ? "ball" :
+        (pitch.result_code === "C" || pitch.result_code === "S") ? "strike" :
+        (pitch.result_code === "F" || pitch.result_code === "T") ? "foul" :
+        (pitch.result_code === "X" || pitch.result_code === "E") ? "in-play" :
+        "";
+    return `
+      <div class="pa-pitch-row ${cls}">
+        <span class="pa-pitch-num">${idx + 1}</span>
+        <span class="pa-pitch-type">${shortenPitchType(pitch.type)}</span>
+        <span class="pa-pitch-velo">${velo}<span class="dim">mph</span></span>
+        <span class="pa-pitch-result">${pitch.result}</span>
+        <span class="pa-pitch-count">${count}</span>
+      </div>
+    `;
+}
+
+function renderPAOutcomeBadge(play, prediction) {
+    const evt = play.outcome_event || play.outcome || "?";
+    if (!prediction?.available || !play.outcome) {
+        return `<span class="pa-outcome-badge">${evt}</span>`;
+    }
+    const entries = Object.entries(prediction.predicted).sort((a, b) => b[1] - a[1]);
+    const rank = entries.findIndex(([o]) => o === play.outcome) + 1;
+    const rankSuffix = rank > 0 ? ` · model ranked #${rank}` : "";
+    return `<span class="pa-outcome-badge" data-outcome="${play.outcome}">${evt}${rankSuffix}</span>`;
+}
+
+// "Four-Seam Fastball" → "4-seam", "Knuckle Curve" → "Knuckle CB", etc.
+// The full names eat tile width on the pitch row.
+function shortenPitchType(name) {
+    if (!name) return "?";
+    const lower = name.toLowerCase();
+    if (lower.includes("four-seam"))   return "4-seam";
+    if (lower.includes("two-seam"))    return "2-seam";
+    if (lower.includes("sinker"))      return "Sinker";
+    if (lower.includes("cutter"))      return "Cutter";
+    if (lower.includes("slider"))      return "Slider";
+    if (lower.includes("sweeper"))     return "Sweeper";
+    if (lower.includes("curveball"))   return "Curve";
+    if (lower.includes("knuckle"))     return "Knuckle CB";
+    if (lower.includes("changeup"))    return "Changeup";
+    if (lower.includes("splitter"))    return "Splitter";
+    if (lower.includes("knuckleball")) return "Knuckler";
+    if (lower.includes("eephus"))      return "Eephus";
+    return name;
 }
 
 // Thin horizontal strip at the top of the Game view showing every other game
