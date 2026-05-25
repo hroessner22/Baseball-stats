@@ -67,7 +67,8 @@ async function loadFooterAccuracy() {
 
 function handleRoute() {
     const hash = window.location.hash;
-    const m = hash.match(/^#game\/(\d+)/);
+    // Accept numeric MLBAM game_pk or the literal "demo" sentinel.
+    const m = hash.match(/^#game\/(demo|\d+)/);
     if (m) {
         const id = m[1];
         if (id !== activeGameId) showGameView(id);

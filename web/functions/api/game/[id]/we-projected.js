@@ -116,7 +116,11 @@ function postPAState(state, outcome) {
 export async function onRequest(context) {
     const env = context.env || {};
     const gameId = context.params?.id;
-    if (!gameId || !/^\d+$/.test(gameId)) return jsonError(400, "invalid game id");
+    // Allow "demo" through alongside numeric MLBAM game_pks so the
+    // synthetic scenario gets the same matchup-blended projection.
+    if (!gameId || (gameId !== "demo" && !/^\d+$/.test(gameId))) {
+        return jsonError(400, "invalid game id");
+    }
     if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
         return jsonError(500, "supabase not configured");
     }

@@ -25,6 +25,49 @@ function previousHalfState(inning, half) {
 
 export async function onRequest(context) {
     const gameId = context.params?.id;
+
+    if (gameId === "demo") {
+        const { DEMO_TRACE_RAW } = await import("../_demo.js");
+        const points = [
+            { inning: 0, half: "pre", away: 0, home: 0,
+              we: PRE_GAME_HOME_WP,
+              event: "Game start", description: "First pitch." },
+        ];
+        for (const e of DEMO_TRACE_RAW) {
+            const diff = e.home - e.away;
+            const we = lookupWE(e.inning, e.half, diff, "Live");
+            points.push({
+                inning: e.inning, half: e.half,
+                away: e.away, home: e.home, we,
+                event: e.event, description: e.description,
+            });
+        }
+        // Biggest swing (same scoring as the real path)
+        let biggestSwingIdx = -1, biggestSwingDelta = 0;
+        for (let i = 1; i < points.length; i++) {
+            if (points[i].we == null || points[i - 1].we == null) continue;
+            const d = Math.abs(points[i].we - points[i - 1].we);
+            if (d > biggestSwingDelta) { biggestSwingDelta = d; biggestSwingIdx = i; }
+        }
+        if (biggestSwingIdx >= 0) {
+            points[biggestSwingIdx].biggest_swing = true;
+            points[biggestSwingIdx].we_delta =
+                points[biggestSwingIdx].we - points[biggestSwingIdx - 1].we;
+        }
+        return new Response(JSON.stringify({
+            game_pk: "demo",
+            status: "Live",
+            points,
+            fetched_at: new Date().toISOString(),
+        }), {
+            headers: {
+                "content-type": "application/json",
+                "cache-control": "no-store",
+                "access-control-allow-origin": "*",
+            },
+        });
+    }
+
     if (!gameId || !/^\d+$/.test(gameId)) {
         return jsonError(400, "invalid game id");
     }

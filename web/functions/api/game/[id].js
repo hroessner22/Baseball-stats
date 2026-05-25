@@ -7,6 +7,7 @@
 
 import { WE_TABLE } from "../games/_we_table.js";
 import { WE_TABLE_V2 } from "../games/_we_table_v2.js";
+import { DEMO_GAME } from "./_demo.js";
 
 const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
@@ -36,6 +37,29 @@ function previousHalfState(inning, half) {
 
 export async function onRequest(context) {
     const gameId = context.params?.id;
+
+    // Synthetic high-leverage scenario for testing the live-only UI
+    // without waiting for a real game to roll around. Reachable at
+    // #game/demo from the footer.
+    if (gameId === "demo") {
+        const g = { ...DEMO_GAME };
+        const basesMask =
+            (g.runners?.first  ? 1 : 0) |
+            (g.runners?.second ? 2 : 0) |
+            (g.runners?.third  ? 4 : 0);
+        g.win_expectancy = lookupWE(
+            g.inning, g.half, g.outs, basesMask,
+            g.score.home - g.score.away
+        );
+        return new Response(JSON.stringify(g), {
+            headers: {
+                "content-type": "application/json",
+                "cache-control": "no-store",
+                "access-control-allow-origin": "*",
+            },
+        });
+    }
+
     if (!gameId || !/^\d+$/.test(gameId)) {
         return jsonError(400, "invalid game id");
     }
