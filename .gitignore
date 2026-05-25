@@ -9,6 +9,17 @@ node_modules/
 data/*
 !data/.gitkeep
 
+# Per-count rate tables (~1.5MB gzipped) — deterministic outputs of
+# `python -m src.build_rates_by_count` from the local Statcast `pitches`
+# table. Committed so the upload workflow (.github/workflows/
+# upload-count-rates.yml) can ship them without each developer needing
+# the full 2GB+ rates.db. Same precedent as web/functions/api/games/
+# _we_table_v2.js, which is also generated-and-committed.
+!data/processed/
+data/processed/*
+!data/processed/batter_rates_by_count.csv.gz
+!data/processed/pitcher_rates_by_count.csv.gz
+
 # Python's auto-generated cache
 __pycache__/
 *.pyc
