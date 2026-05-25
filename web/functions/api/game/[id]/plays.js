@@ -51,6 +51,36 @@ const OUTCOME_MAP = {
 
 export async function onRequest(context) {
     const gameId = context.params?.id;
+
+    if (gameId === "demo") {
+        const { DEMO_PLAYS, DEMO_GAME } = await import("../_demo.js");
+        const plays = DEMO_PLAYS.slice().reverse().map((p) => ({
+            play_index: p.pi,
+            inning: p.inning,
+            half: p.half,
+            outs_after: null,
+            score_after: { away: p.away, home: p.home },
+            batter:  { id: 0, name: p.batter,  hand: "?" },
+            pitcher: { id: 0, name: p.pitcher, hand: "?" },
+            outcome: p.outcome,
+            outcome_event: p.event,
+            description: p.description,
+            pitches: p.pitches,
+        }));
+        return new Response(JSON.stringify({
+            game_pk: "demo",
+            teams: DEMO_GAME.teams,
+            plays,
+            fetched_at: new Date().toISOString(),
+        }), {
+            headers: {
+                "content-type": "application/json",
+                "cache-control": "no-store",
+                "access-control-allow-origin": "*",
+            },
+        });
+    }
+
     if (!gameId || !/^\d+$/.test(gameId)) {
         return jsonError(400, "invalid game id");
     }

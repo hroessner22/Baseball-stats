@@ -15,8 +15,19 @@ const MAX_TOKENS = 700;
 export async function onRequest(context) {
     const env = context.env || {};
     const gameId = context.params?.id;
-    if (!gameId || !/^\d+$/.test(gameId)) {
+    if (!gameId || (gameId !== "demo" && !/^\d+$/.test(gameId))) {
         return jsonError(400, "invalid game id");
+    }
+    // Demo games are never Final — the recap card just renders its
+    // "not yet" state rather than calling Anthropic with synthetic data.
+    if (gameId === "demo") {
+        return jsonResponse({
+            game_pk: "demo",
+            recap: null,
+            cached: false,
+            unavailable: true,
+            reason: "Demo game — recaps only generate after the game is Final.",
+        }, 60);
     }
     if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
         return jsonError(500, "SUPABASE_URL / SUPABASE_ANON_KEY not configured");
