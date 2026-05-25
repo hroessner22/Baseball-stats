@@ -1814,11 +1814,21 @@ function renderProjectedWE(d) {
     const bestLabel  = d.best?.outcome  ? `(${OUTCOME_LABEL[d.best.outcome]  || d.best.outcome})`  : "";
     const worstLabel = d.worst?.outcome ? `(${OUTCOME_LABEL[d.worst.outcome] || d.worst.outcome})` : "";
 
+    // Count-aware badge: when the matchup engine ran in count-aware
+    // mode, the projection refreshes per pitch — not just per PA.
+    // Surfacing the count makes it obvious why the number is shifting
+    // mid-PA on a Live game.
+    const countBadge = d.count_aware && d.count
+        ? `<span class="pw-count" title="Per-pitch projection using count-aware rates (Statcast 2020-2024)">${d.count.balls}-${d.count.strikes}</span>`
+        : "";
+    const headlineWord = d.count_aware ? "after this pitch" : "after this PA";
+
     return `
       <div class="projected-we">
         <div class="pw-headline">
           <span class="pw-arrow ${arrowCls}">${arrow}</span>
-          Projected after this PA: <strong>${proj}%</strong>
+          Projected ${headlineWord}: <strong>${proj}%</strong>
+          ${countBadge}
           <span class="pw-lev">leverage ±${lev} pts</span>
         </div>
         <div class="pw-range">
