@@ -43,6 +43,7 @@ function postPAState(state, outcome) {
     const on3 = (bases & 4) !== 0;
     let runs = 0;
     let new_bases = bases;
+    let outsChange = 0;
 
     switch (outcome) {
         case "K":
@@ -51,13 +52,10 @@ function postPAState(state, outcome) {
             // Treat "OUT" and "OTHER" as +1 out, runners hold. OTHER
             // covers reach-on-error / fielder's choice / interference —
             // not worth modeling base advancement for the small probability.
-            outs += 1;
-            if (outs >= 3) {
-                if (half === "bottom") inning += 1;
-                half = HALF_FLIP[half];
-                outs = 0;
-                new_bases = 0;
-            }
+            // (Note: sac flies aren't separately modeled either, which
+            // under-counts runs scored on OUTs with a runner on 3rd and
+            // <2 outs. Real-world impact is small but worth knowing.)
+            outsChange = 1;
             break;
 
         case "BB":
@@ -79,20 +77,25 @@ function postPAState(state, outcome) {
             break;
 
         case "1B":
-            // Every runner moves one base. (League average is closer to
-            // 1.25 for outfield singles but one is the right rounding.)
-            new_bases = 1;  // batter to 1st
-            if (on1) new_bases |= 2;  // 1st → 2nd
-            if (on2) new_bases |= 4;  // 2nd → 3rd
-            if (on3) runs += 1;       // 3rd scores
+            // Singles in real baseball score the runner from 3rd always
+            // and the runner from 2nd about 60% of the time — the
+            // textbook "every runner advances one base" rule was too
+            // conservative and made walk-off scenarios under-project the
+            // WE swing. Compromise: 3rd and 2nd both score, 1st takes
+            // 2nd. (Slight over-projection on infield singles; closer
+            // to truth than the strict-1-base rule.)
+            new_bases = 1;             // batter to 1st
+            if (on1) new_bases |= 2;   // 1st → 2nd
+            if (on2) runs += 1;        // 2nd → home
+            if (on3) runs += 1;        // 3rd → home
             break;
 
         case "2B":
             // Batter to 2nd; runners advance two bases.
             new_bases = 2;
-            if (on1) new_bases |= 4;  // 1st → 3rd
-            if (on2) runs += 1;       // 2nd → home
-            if (on3) runs += 1;       // 3rd → home
+            if (on1) new_bases |= 4;   // 1st → 3rd
+            if (on2) runs += 1;        // 2nd → home
+            if (on3) runs += 1;        // 3rd → home
             break;
 
         case "3B":
@@ -107,8 +110,46 @@ function postPAState(state, outcome) {
             break;
     }
 
+    // Apply the run delta to the home_lead first so walk-off checks
+    // see the post-PA score.
     if (batting_team === "home") home_lead += runs;
     else                         home_lead -= runs;
+
+    // Walk-off: home took the lead in the bottom of the 9th or later.
+    // The game ends as soon as the run scores; no need to apply outs or
+    // advance state. WE collapses to a certain 1.0.
+    if (inning >= 9 && half === "bottom" && home_lead > 0) {
+        return {
+            inning, half, outs: outs + outsChange, bases: new_bases,
+            home_lead, batting_team, terminal: 1.0,
+        };
+    }
+
+    // Apply outs and roll the inning if the PA closed the half.
+    outs += outsChange;
+    if (outs >= 3) {
+        // Bottom-of-late-inning 3rd out with home still trailing →
+        // home loses. Game over. WE = 0.
+        if (inning >= 9 && half === "bottom" && home_lead < 0) {
+            return {
+                inning, half, outs: 3, bases: new_bases,
+                home_lead, batting_team, terminal: 0.0,
+            };
+        }
+        // Top-of-late-inning 3rd out with home already leading → home
+        // doesn't need to bat; game over with home as winner. WE = 1.
+        if (inning >= 9 && half === "top" && home_lead > 0) {
+            return {
+                inning, half, outs: 3, bases: new_bases,
+                home_lead, batting_team, terminal: 1.0,
+            };
+        }
+        // Otherwise: normal half-flip / inning advance.
+        if (half === "bottom") inning += 1;
+        half = HALF_FLIP[half];
+        outs = 0;
+        new_bases = 0;
+    }
 
     return { inning, half, outs, bases: new_bases, home_lead, batting_team };
 }
@@ -179,7 +220,12 @@ export async function onRequest(context) {
         batting_team: game.half === "bottom" ? "home" : "away",
     };
 
-    // For each outcome, compute the post-PA state and its WE.
+    // For each outcome, compute the post-PA state and its WE. Walk-off
+    // and game-end states get their WE from the terminal flag (1.0 or
+    // 0.0) rather than the lookup table — those states don't exist in
+    // at_bats data (the game ended, no more PAs are recorded) so the
+    // table would return null and the projection would silently drop
+    // walk-off outcomes from the weighted sum.
     const perOutcome = {};
     let projected = 0;
     let weightSum = 0;
@@ -187,8 +233,10 @@ export async function onRequest(context) {
         const p = matchup.predicted?.[o] ?? 0;
         if (p === 0) continue;
         const post = postPAState(currentState, o);
-        const we = lookupWE(post.inning, post.half, post.outs, post.bases, post.home_lead);
-        if (we === null) continue; // skip outcomes we can't score
+        const we = post.terminal !== undefined
+            ? post.terminal
+            : lookupWE(post.inning, post.half, post.outs, post.bases, post.home_lead);
+        if (we === null) continue;
         perOutcome[o] = { probability: p, post_we: we };
         projected += p * we;
         weightSum += p;
@@ -211,7 +259,7 @@ export async function onRequest(context) {
     }
 
     return jsonResponse({
-        game_pk: parseInt(gameId, 10),
+        game_pk: gameId === "demo" ? "demo" : parseInt(gameId, 10),
         available: true,
         current_we: currentWE,
         projected_we: projected,
@@ -220,7 +268,7 @@ export async function onRequest(context) {
         worst: worstOutcome ? { outcome: worstOutcome, we: worstHome } : null,
         per_outcome: perOutcome,
         matchup_sample: matchup.sample,
-    }, 10);
+    }, gameId === "demo" ? 0 : 10);
 }
 
 function jsonResponse(body, maxAge) {
