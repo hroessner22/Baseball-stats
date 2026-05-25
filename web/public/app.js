@@ -109,6 +109,14 @@ function handleRoute() {
         setActiveNav(null);
         return;
     }
+    // #live/YYYY-MM-DD = Board for a specific date (yesterday, last week,
+    // an opening day in 2008, anything). Bare #live (or #) is today.
+    const dateMatch = hash.match(/^#live\/(\d{4}-\d{2}-\d{2})$/);
+    if (dateMatch) {
+        showBoard(dateMatch[1]);
+        setActiveNav("live");
+        return;
+    }
     showBoard();
     setActiveNav("live");
 }
@@ -118,6 +126,102 @@ function setActiveNav(route) {
         el.classList.toggle("active", el.dataset.route === route);
     });
 }
+
+// ── DATE HELPERS ────────────────────────────────────────────────────
+// Used by the Board's date navigation. Same Eastern-time anchor as the
+// API so the user's "today" matches MLB's day boundary.
+
+function todayInET() {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York",
+        year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const y = parts.find((p) => p.type === "year").value;
+    const m = parts.find((p) => p.type === "month").value;
+    const d = parts.find((p) => p.type === "day").value;
+    return `${y}-${m}-${d}`;
+}
+
+function shiftDate(yyyyMmDd, days) {
+    const [y, m, d] = yyyyMmDd.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + days);
+    const ny = dt.getUTCFullYear();
+    const nm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+    const nd = String(dt.getUTCDate()).padStart(2, "0");
+    return `${ny}-${nm}-${nd}`;
+}
+
+function formatShortDate(yyyyMmDd) {
+    const [y, m, d] = yyyyMmDd.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return new Intl.DateTimeFormat("en-US", {
+        timeZone: "UTC", month: "short", day: "numeric",
+    }).format(dt);
+}
+
+function formatLongDate(yyyyMmDd) {
+    const [y, m, d] = yyyyMmDd.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return new Intl.DateTimeFormat("en-US", {
+        timeZone: "UTC", weekday: "long",
+        month: "long", day: "numeric", year: "numeric",
+    }).format(dt);
+}
+
+// The little ← May 24 │ TODAY · Mon, May 25 │ May 26 → bar that sits
+// above the tile grid. "TODAY" pill brightens when on today; an
+// HTML5 date picker is hidden behind the date label for jumping
+// to an arbitrary day.
+function renderBoardDateBar(date) {
+    const today = todayInET();
+    const isToday = date === today;
+    const prev = shiftDate(date, -1);
+    const next = shiftDate(date, +1);
+    // Don't let the user navigate past today — MLB hasn't played
+    // tomorrow's games yet, so a "next" arrow into the future would
+    // just show the schedule with no scores or anything else useful.
+    const showNext = date < today;
+
+    const prevHref = `#live/${prev}`;
+    const nextHref = `#live/${next}`;
+    const todayHref = `#live`;
+
+    return `
+      <header class="board-datebar">
+        <a class="bd-arrow" href="${prevHref}" aria-label="Previous day">
+          ← <span class="bd-arrow-date">${formatShortDate(prev)}</span>
+        </a>
+        <div class="bd-center">
+          ${isToday
+            ? `<span class="bd-today-pill">TODAY</span>
+               <span class="bd-date">${formatLongDate(date)}</span>`
+            : `<a class="bd-today-link" href="${todayHref}">jump to today</a>
+               <span class="bd-date">${formatLongDate(date)}</span>`}
+        </div>
+        ${showNext
+            ? `<a class="bd-arrow" href="${nextHref}" aria-label="Next day">
+                 <span class="bd-arrow-date">${formatShortDate(next)}</span> →
+               </a>`
+            : `<span class="bd-arrow disabled" aria-hidden="true">
+                 <span class="bd-arrow-date">future</span> →
+               </span>`}
+        <input type="date" class="bd-jump" value="${date}" max="${today}"
+               aria-label="Jump to a date"/>
+      </header>
+    `;
+}
+
+// Wire the HTML5 date picker globally — when its value changes, route
+// to that date's Board. Event delegation survives the innerHTML
+// rerenders that Board refreshes do.
+document.addEventListener("change", (e) => {
+    if (!e.target.matches(".bd-jump")) return;
+    const v = e.target.value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+    const today = todayInET();
+    window.location.hash = v === today ? "#live" : `#live/${v}`;
+});
 
 // ── BOARD ────────────────────────────────────────────────────────────
 
@@ -146,13 +250,21 @@ function clearAllTimers() {
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
 }
 
-function showBoard() {
+// Currently-displayed Board date. Empty string = today (the API default).
+// Set by showBoard(date) when route matches #live/YYYY-MM-DD.
+let boardDate = "";
+
+function showBoard(date) {
     activeGameId = null;
+    boardDate = date || "";
     clearAllTimers();
     hideAllViews();
     board.hidden = false;
     refreshBoard();
-    boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
+    // Past dates never change — no need to keep polling.
+    if (!boardDate || boardDate === todayInET()) {
+        boardTimer = setInterval(refreshBoard, BOARD_REFRESH_MS);
+    }
 }
 
 // Cache for the most recent schedule fetch. The Game view's ticker reads
@@ -161,17 +273,27 @@ let scheduleCache = null;
 
 async function refreshBoard() {
     try {
-        const res = await fetch("/api/games/today");
+        const url = boardDate
+            ? `/api/games/today?date=${encodeURIComponent(boardDate)}`
+            : "/api/games/today";
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         scheduleCache = data;
-        if (!data.games || data.games.length === 0) {
-            renderEmpty(board, "No games on the schedule today.", "Check back tomorrow.");
+        const sorted = sortGames(data.games || []);
+        const header = renderBoardDateBar(data.date || boardDate || todayInET());
+        if (sorted.length === 0) {
+            const dateLabel = formatLongDate(data.date || boardDate || todayInET());
+            board.innerHTML = header + `
+              <div class="empty">
+                <p>No games on the schedule for ${dateLabel}.</p>
+                <p class="sub">Try another day.</p>
+              </div>
+            `;
             return;
         }
 
-        const sorted = sortGames(data.games);
-        board.innerHTML = sorted.map(renderTile).join("");
+        board.innerHTML = header + sorted.map(renderTile).join("");
 
         // Live tiles need batter + pitcher names — the schedule endpoint
         // doesn't carry those. Fire one fetch per live tile in parallel;
