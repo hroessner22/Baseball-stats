@@ -153,6 +153,31 @@ function buildGame(d) {
                  homeScore < awayScore ? 0.0 : 0.5;
     }
 
+    // This-inning play-by-play strip — every completed PA in the
+    // current half-inning, oldest first. Drives the "10TH SO FAR"
+    // summary on the Live View so the user can see how the current
+    // frame unfolded without leaving the main game pane.
+    const allPlays = liveData.plays?.allPlays || [];
+    const thisInningPlays = inning && half
+        ? allPlays
+            .filter((p) =>
+                p.about?.isComplete &&
+                p.about?.inning === inning &&
+                (p.about?.isTopInning ? "top" : "bottom") === half
+            )
+            .map((p) => ({
+                pa_index:    p.about?.atBatIndex ?? null,
+                batter:      p.matchup?.batter?.fullName || null,
+                batter_id:   p.matchup?.batter?.id || null,
+                pitcher_id:  p.matchup?.pitcher?.id || null,
+                event:       p.result?.event || null,
+                eventType:   p.result?.eventType || null,
+                description: p.result?.description || null,
+                away_score:  p.result?.awayScore ?? 0,
+                home_score:  p.result?.homeScore ?? 0,
+            }))
+        : [];
+
     return {
         game_pk: gameData.game?.pk,
         status,
@@ -168,6 +193,7 @@ function buildGame(d) {
         win_expectancy: winExp,
         venue: gameData.venue?.name || null,
         start_time: gameData.datetime?.dateTime || null,
+        this_inning: thisInningPlays,
     };
 }
 
