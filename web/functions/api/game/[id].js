@@ -7,6 +7,17 @@
 
 import { WE_TABLE } from "../games/_we_table.js";
 
+// The half-inning that just completed before the current mid-half play.
+// The WE table is keyed by end-of-half states; the previous half's end
+// is the right approximation of "WP at start of current half".
+function previousHalfState(inning, half) {
+    if (half === "top") {
+        if (inning === 1) return null;
+        return { inning: inning - 1, half: "bottom" };
+    }
+    return { inning, half: "top" };
+}
+
 export async function onRequest(context) {
     const gameId = context.params?.id;
     if (!gameId || !/^\d+$/.test(gameId)) {
@@ -85,8 +96,20 @@ function buildGame(d) {
 
     let winExp = null;
     if (status === "Live" && inning && half) {
-        const key = `${Math.min(inning, 9)}|${half}|${homeScore - awayScore}`;
-        if (WE_TABLE[key] !== undefined) winExp = WE_TABLE[key];
+        // Our WE table is keyed by END-OF-HALF-INNING state. During mid-
+        // half play, the right lookup is the END of the PREVIOUS half —
+        // that's the WP at the START of the current half. Looking up
+        // the CURRENT half mid-PA returns the "if this half ended now"
+        // probability, which collapses to 0 (or 1) when the half-end
+        // score would already decide the game (e.g. bottom 9th down 1).
+        const prev = previousHalfState(inning, half);
+        if (prev) {
+            const key = `${Math.min(prev.inning, 9)}|${prev.half}|${homeScore - awayScore}`;
+            if (WE_TABLE[key] !== undefined) winExp = WE_TABLE[key];
+        } else {
+            // Top of 1st — baseline home-field advantage.
+            winExp = 0.54;
+        }
     } else if (status === "Final") {
         winExp = homeScore > awayScore ? 1.0 :
                  homeScore < awayScore ? 0.0 : 0.5;
