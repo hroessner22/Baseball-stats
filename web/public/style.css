@@ -2401,6 +2401,48 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     line-height: 1.5;
 }
 
+/* Pitch-by-pitch sequence inside the trace tooltip — sits below the
+   event/description lines. Tight grid: number, type code, velocity,
+   result, count-after. Color the result so the eye can sweep down the
+   pitch column and find the action without reading. */
+.trace-card .tt-pitches {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+}
+.trace-card .tt-pitches-head {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+.trace-card .tt-pitch {
+    display: grid;
+    grid-template-columns: 14px 22px 52px 1fr 26px;
+    gap: 6px;
+    align-items: baseline;
+    font-size: 10px;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+.trace-card .tp-num     { color: var(--text-dim); text-align: right; }
+.trace-card .tp-type    { color: var(--text); font-weight: 700; }
+.trace-card .tp-velo    { color: var(--text-dim); }
+.trace-card .tp-res     { font-weight: 500; }
+.trace-card .tp-count   { color: var(--text-dim); text-align: right; font-weight: 600; }
+
+/* Result coloring — same accents we use elsewhere so the eye learns
+   the palette across the app. */
+.trace-card .tp-ball           { color: var(--accent-action); }
+.trace-card .tp-strike-called  { color: var(--accent-live);   }
+.trace-card .tp-strike-swing   { color: var(--accent-live);   font-weight: 700; }
+.trace-card .tp-strike-foul    { color: var(--text-dim);      }
+.trace-card .tp-in-play        { color: var(--accent-win);    font-weight: 700; }
+.trace-card .tp-hbp            { color: var(--accent-live);   }
+
 /* Situation strip — outs dots, bases diamond, base-state label. Sits
    between the head row and the event line. */
 .trace-card .tt-situation {

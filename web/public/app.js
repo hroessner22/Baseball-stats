@@ -1948,6 +1948,7 @@ function renderTraceCard(data) {
             pitcher_id: p.pitcher_id,
             we_delta: p.we_delta,
             biggest_swing: isBiggest,
+            pitches: p.pitches || null,
         }).replace(/"/g, "&quot;");
         return `
           <circle class="${cls}"
@@ -2126,6 +2127,16 @@ function showTraceTooltip(marker) {
         ? `<div class="tt-players">${batterHtml} vs ${pitcherHtml}</div>`
         : "";
 
+    // Pitch-by-pitch progression — when the PA's playEvents are
+    // attached, render each pitch as a tight one-line row showing the
+    // pitch type, velocity, result, and the count after. Last-pitch
+    // result gets colored by whether it was the PA-ending one. Skipped
+    // entirely when the trace doesn't have per-pitch data (e.g. the
+    // demo game, which uses per-half summaries instead).
+    const pitchesBlock = (data.pitches && data.pitches.length)
+        ? renderPitchSequence(data.pitches)
+        : "";
+
     tip.innerHTML = `
       <div class="tt-head">
         <span class="tt-inning">${innLabel}</span>
@@ -2136,6 +2147,7 @@ function showTraceTooltip(marker) {
       ${eventLine}
       ${playersLine}
       ${descLine}
+      ${pitchesBlock}
     `;
 
     // Position the tooltip near the marker, but stay inside the chart wrap.
@@ -2488,6 +2500,56 @@ function describeBasesShort(bases) {
     if (occ.length === 3) return "bases loaded";
     if (occ.length === 2 && (bases & 2) && (bases & 4)) return "2nd & 3rd";
     return occ.join(" & ");
+}
+
+// Render the pitch sequence for one PA as a compact monospace block,
+// one row per pitch: number, type code, velocity, result, count after.
+// Result text is colored by category (strike = orange, ball = blue,
+// in_play = green) so the eye can find the action without reading.
+// Designed for the trace tooltip so the user can hover a PA dot and
+// see HOW the at-bat unfolded, not just its eventual outcome.
+function renderPitchSequence(pitches) {
+    const resultClass = (res) => {
+        if (!res) return "";
+        const r = res.toLowerCase();
+        if (r.includes("ball"))                      return "tp-ball";
+        if (r.includes("called strike"))             return "tp-strike-called";
+        if (r.includes("swinging strike"))           return "tp-strike-swing";
+        if (r.includes("foul"))                      return "tp-strike-foul";
+        if (r.includes("in play"))                   return "tp-in-play";
+        if (r.includes("hit by pitch"))              return "tp-hbp";
+        return "";
+    };
+    // Compact result label (MLB calls "Swinging Strike" — we shorten).
+    const shortResult = (res) => {
+        if (!res) return "";
+        const r = res.toLowerCase();
+        if (r === "called strike")     return "strike (looking)";
+        if (r === "swinging strike")   return "strike (whiff)";
+        if (r === "in play, no out")   return "in play (safe)";
+        if (r === "in play, out(s)")   return "in play (out)";
+        if (r === "in play, run(s)")   return "in play (run)";
+        return res.toLowerCase();
+    };
+    const rows = pitches.map((p) => {
+        const velo = p.velo ? `${p.velo.toFixed(0)} mph` : "—";
+        const after = (p.b != null && p.s != null) ? `${p.b}-${p.s}` : "";
+        return `
+          <div class="tt-pitch">
+            <span class="tp-num">${p.num}</span>
+            <span class="tp-type">${p.type || "?"}</span>
+            <span class="tp-velo">${velo}</span>
+            <span class="tp-res ${resultClass(p.res)}">${shortResult(p.res)}</span>
+            <span class="tp-count">${after}</span>
+          </div>
+        `;
+    }).join("");
+    return `
+      <div class="tt-pitches">
+        <div class="tt-pitches-head">Pitch sequence</div>
+        ${rows}
+      </div>
+    `;
 }
 
 // Three-dot outs glyph: ●●○ for 2 out, ●○○ for 1, ○○○ for 0.
