@@ -726,120 +726,291 @@ async function refreshPlayer(mlbam) {
     }
 }
 
+// The 9 outcome buckets the engine speaks in. Used to compute slash
+// lines + rate stats from the raw counts our APIs return.
+const OUTCOMES_ARRAY = ["K", "BB", "HBP", "1B", "2B", "3B", "HR", "OUT", "OTHER"];
+
 function renderPlayer(d) {
     const p = d.player;
-    const hand = (d.batter?.bats || d.pitcher?.throws || null);
-    const handLabel = hand
-        ? (hand === "S" ? "Switch-hits" : `${hand === "L" ? "Left" : "Right"}-handed`)
-        : "";
-    const role = d.batter && d.pitcher ? "Two-way player"
-               : d.batter ? "Batter"
-               : d.pitcher ? "Pitcher"
-               : "Player";
-
     return `
       <a class="back-link" href="#">← BOARD</a>
       <article class="player-doc">
-        <header class="player-head">
-          <h1>${p.name}</h1>
-          <span class="player-meta">
-            ${role}${handLabel ? " · " + handLabel : ""}
-            ${p.retrosheet ? "" : ` · <span class="player-warning">not in Chadwick map (modern callup)</span>`}
-          </span>
-        </header>
-
-        ${d.batter ? renderBatterSection(p, d.batter, d.historical_years) : ""}
-        ${d.pitcher ? renderPitcherSection(p, d.pitcher, d.historical_years) : ""}
-
-        ${(!d.batter && !d.pitcher) ? `
-          <div class="player-empty">
-            <p>No data for this player in our ${d.historical_years.start}–${d.historical_years.end}
-               historical window, and they haven't appeared in this season's
-               daily ingest yet.</p>
-            <p>If they're a recent callup, they'll show up in the matchup
-               engine once they've taken some PAs.</p>
-          </div>
-        ` : ""}
+        ${renderHeroHeader(p, d)}
+        ${d.batter  ? renderBatterModule(d.batter,  d.current_year) : ""}
+        ${d.pitcher ? renderPitcherModule(d.pitcher, d.current_year) : ""}
+        ${(!d.batter && !d.pitcher) ? renderNoDataState(d) : ""}
       </article>
     `;
 }
 
-function renderBatterSection(player, b, years) {
+// Hero header — the convention every site uses. Name (huge) on the
+// left, jersey# on the right, a meta strip below with position, team,
+// bats/throws, age, height/weight. Missing fields just drop out
+// rather than render with em-dashes.
+function renderHeroHeader(player, d) {
+    const bio = player.bio || {};
+    const handFromBats = d.batter?.bats || bio.bats;
+    const handFromThrows = d.pitcher?.throws || bio.throws;
+    const handStr = bio.bats && bio.throws
+        ? `Bats ${bio.bats} · Throws ${bio.throws}`
+        : handFromBats
+            ? `Bats ${handFromBats}`
+            : handFromThrows
+                ? `Throws ${handFromThrows}`
+                : "";
+    const sizeLine = (bio.height && bio.weight) ? `${bio.height} / ${bio.weight} lbs` : "";
+    const jersey = bio.jersey ? `#${bio.jersey}` : "";
+    const meta = [
+        bio.position && bio.team_name
+            ? `${bio.position} · ${bio.team_name}`
+            : (bio.position || bio.team_name || ""),
+        handStr,
+        bio.age != null ? `Age ${bio.age}` : "",
+        sizeLine,
+        player.retrosheet ? "" : "modern callup",
+    ].filter(Boolean);
     return `
-      <section class="player-section">
-        <h2>Batting</h2>
-        ${b.season.pa > 0 ? renderSeasonBlock(b.season, "PA", "pitcher") : ""}
-        <div class="player-career">
-          <div class="career-head">
-            CAREER · ${years.start}–${years.end} · split by pitcher hand
-          </div>
-          <div class="career-grid">
-            ${renderCareerSplit("vs RHP", b.career.vs_RHP)}
-            ${renderCareerSplit("vs LHP", b.career.vs_LHP)}
-          </div>
+      <header class="player-hero">
+        <div class="ph-name-row">
+          <h1 class="ph-name">${player.name}</h1>
+          ${jersey ? `<span class="ph-jersey">${jersey}</span>` : ""}
         </div>
+        ${meta.length ? `<div class="ph-meta">${meta.map(m => `<span>${m}</span>`).join("<span class=\"ph-dot\">·</span>")}</div>` : ""}
+      </header>
+    `;
+}
+
+// Renders the batter module — three modules stacked:
+//   1. Slash strips: current season + career (5-tile each)
+//   2. Matchup band: vs LHP / vs RHP, current + career
+//   3. Rate profile + outcome breakdown
+//
+// "Career" here = vs_RHP + vs_LHP combined (PA-weighted) plus current-
+// season PAs from daily_pa (per PR #56).
+function renderBatterModule(b, currentYear) {
+    const careerCounts = combineSplits(b.career.vs_RHP.counts, b.career.vs_LHP.counts);
+    const seasonSlash = slashLine(b.season.overall || {});
+    const careerSlash = slashLine(careerCounts);
+
+    const rhpCareerSlash = slashLine(b.career.vs_RHP.counts);
+    const lhpCareerSlash = slashLine(b.career.vs_LHP.counts);
+    const rhpSeasonSlash = slashLine(b.season.splits?.vs_R || {});
+    const lhpSeasonSlash = slashLine(b.season.splits?.vs_L || {});
+
+    return `
+      <section class="player-module">
+        ${renderSlashStrip({
+            label: `${currentYear} Season`,
+            extra: b.season.latest_date ? `Last game ${b.season.latest_date}` : "",
+            slash: seasonSlash,
+            paLabel: "PA",
+        })}
+        ${renderSlashStrip({
+            label: "Career",
+            extra: `${(careerSlash.PA).toLocaleString()} PA combined`,
+            slash: careerSlash,
+            paLabel: "PA",
+        })}
+        ${renderMatchupBand({
+            currentYear,
+            seasonR: rhpSeasonSlash, seasonL: lhpSeasonSlash,
+            careerR: rhpCareerSlash, careerL: lhpCareerSlash,
+            handTag: "P",
+        })}
+        ${renderRateProfile(seasonSlash, careerSlash, currentYear)}
+        ${renderOutcomeBreakdown(b.career)}
       </section>
     `;
 }
 
-function renderPitcherSection(player, p, years) {
+// Same shape as the batter module but pivoted to the pitcher's view —
+// "Against" stats. For pitchers, the OPS line is what hitters do
+// AGAINST them (lower is better). vs_RHB / vs_LHB split is the
+// platoon angle on the pitching side.
+function renderPitcherModule(p, currentYear) {
+    const careerCounts = combineSplits(p.career.vs_RHB.counts, p.career.vs_LHB.counts);
+    const seasonSlash = slashLine(p.season.overall || {});
+    const careerSlash = slashLine(careerCounts);
+
+    const rhbCareerSlash = slashLine(p.career.vs_RHB.counts);
+    const lhbCareerSlash = slashLine(p.career.vs_LHB.counts);
+    const rhbSeasonSlash = slashLine(p.season.splits?.vs_R || {});
+    const lhbSeasonSlash = slashLine(p.season.splits?.vs_L || {});
+
     return `
-      <section class="player-section">
-        <h2>Pitching</h2>
-        ${p.season.pa > 0 ? renderSeasonBlock(p.season, "BF", "batter") : ""}
-        <div class="player-career">
-          <div class="career-head">
-            CAREER · ${years.start}–${years.end} · split by batter hand
-          </div>
-          <div class="career-grid">
-            ${renderCareerSplit("vs RHB", p.career.vs_RHB)}
-            ${renderCareerSplit("vs LHB", p.career.vs_LHB)}
-          </div>
-        </div>
+      <section class="player-module">
+        <div class="pm-pitcher-note">Hitter performance AGAINST this pitcher — lower is better.</div>
+        ${renderSlashStrip({
+            label: `${currentYear} Season (Against)`,
+            extra: p.season.latest_date ? `Last game ${p.season.latest_date}` : "",
+            slash: seasonSlash,
+            paLabel: "BF",
+        })}
+        ${renderSlashStrip({
+            label: "Career (Against)",
+            extra: `${(careerSlash.PA).toLocaleString()} BF combined`,
+            slash: careerSlash,
+            paLabel: "BF",
+        })}
+        ${renderMatchupBand({
+            currentYear,
+            seasonR: rhbSeasonSlash, seasonL: lhbSeasonSlash,
+            careerR: rhbCareerSlash, careerL: lhbCareerSlash,
+            handTag: "B",
+        })}
+        ${renderRateProfile(seasonSlash, careerSlash, currentYear)}
+        ${renderOutcomeBreakdown(p.career, "B")}
       </section>
     `;
 }
 
-function renderSeasonBlock(season, paLabel, oppRole) {
-    const latest = season.latest_date ? `· last ${season.latest_date}` : "";
+// 5-tile horizontal strip: AVG / OBP / SLG / OPS / HR — the canonical
+// hitter headline every baseball site leads with. Below the tiles, a
+// "PA · AB · H · 2B · 3B · HR" counting-stats line for context.
+function renderSlashStrip({ label, extra, slash, paLabel }) {
     return `
-      <div class="player-season">
-        <div class="player-section-head">
-          THIS SEASON · ${season.pa} ${paLabel} ${latest}
+      <div class="slash-strip">
+        <div class="ss-head">
+          <span class="ss-label">${label}</span>
+          ${extra ? `<span class="ss-extra">${extra}</span>` : ""}
         </div>
-        <div class="season-line">${formatSeasonOutcomes(season.overall, season.pa)}</div>
-        <div class="season-splits">
-          ${season.splits.vs_R.pa > 0 ? `
-            <div class="season-split">
-              <span class="ss-label">vs ${oppRole === "pitcher" ? "RHP" : "RHB"}</span>
-              <span class="ss-pa">${season.splits.vs_R.pa} ${paLabel}</span>
-              <span class="ss-line">${formatSeasonOutcomes(season.splits.vs_R, season.splits.vs_R.pa)}</span>
-            </div>` : ""}
-          ${season.splits.vs_L.pa > 0 ? `
-            <div class="season-split">
-              <span class="ss-label">vs ${oppRole === "pitcher" ? "LHP" : "LHB"}</span>
-              <span class="ss-pa">${season.splits.vs_L.pa} ${paLabel}</span>
-              <span class="ss-line">${formatSeasonOutcomes(season.splits.vs_L, season.splits.vs_L.pa)}</span>
-            </div>` : ""}
+        <div class="ss-grid">
+          <div class="ss-tile"><div class="ss-val">${slash.AVG}</div><div class="ss-key">AVG</div></div>
+          <div class="ss-tile"><div class="ss-val">${slash.OBP}</div><div class="ss-key">OBP</div></div>
+          <div class="ss-tile"><div class="ss-val">${slash.SLG}</div><div class="ss-key">SLG</div></div>
+          <div class="ss-tile"><div class="ss-val">${slash.OPS}</div><div class="ss-key">OPS</div></div>
+          <div class="ss-tile ss-tile-counter"><div class="ss-val">${slash.HR}</div><div class="ss-key">HR</div></div>
+        </div>
+        <div class="ss-counts">
+          <span><strong>${slash.PA}</strong> ${paLabel}</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${slash.AB}</strong> AB</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${slash.H}</strong> H</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${slash.BB}</strong> BB</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${slash.K}</strong> K</span>
         </div>
       </div>
     `;
 }
 
-function formatSeasonOutcomes(o, total) {
-    if (!total) return "—";
-    const parts = [];
-    if (o.K)   parts.push(`<strong>${o.K}</strong> K`);
-    if (o.BB)  parts.push(`<strong>${o.BB}</strong> BB`);
-    if (o.HBP) parts.push(`<strong>${o.HBP}</strong> HBP`);
-    if (o.HR)  parts.push(`<strong>${o.HR}</strong> HR`);
-    const hits = (o["1B"] || 0) + (o["2B"] || 0) + (o["3B"] || 0) + (o.HR || 0);
-    if (hits) parts.push(`<strong>${hits}</strong> H`);
-    if (o.OUT) parts.push(`<strong>${o.OUT}</strong> OUT`);
-    return parts.join(" · ");
+// THE MATCHUP band — the visual centerpiece of our player page, the
+// one thing that differentiates us from ESPN/MLB.com. Other sites
+// bury platoon splits under a "Splits" tab; we promote them above
+// career totals because the matchup-by-hand IS the pitch this app
+// makes. Renders 4 cards: vs L/R for current season + career.
+function renderMatchupBand({ currentYear, seasonR, seasonL, careerR, careerL, handTag }) {
+    const oppTagR = `RH${handTag}`;  // "RHP" or "RHB"
+    const oppTagL = `LH${handTag}`;
+    const card = (label, slash, oppTag) => {
+        if (slash.PA === 0) return `
+          <div class="mb-card mb-empty">
+            <div class="mb-head"><span class="mb-label">${label}</span><span class="mb-pa">no data</span></div>
+          </div>`;
+        return `
+          <div class="mb-card">
+            <div class="mb-head">
+              <span class="mb-label">${label}</span>
+              <span class="mb-pa">n = ${slash.PA.toLocaleString()}</span>
+            </div>
+            <div class="mb-slash">
+              <span class="mb-slash-val">${slash.AVG}</span>
+              <span class="mb-slash-sep">/</span>
+              <span class="mb-slash-val">${slash.OBP}</span>
+              <span class="mb-slash-sep">/</span>
+              <span class="mb-slash-val">${slash.SLG}</span>
+            </div>
+            <div class="mb-row"><span>OPS</span><strong>${slash.OPS}</strong></div>
+            <div class="mb-row"><span>HR</span><strong>${slash.HR}</strong></div>
+            <div class="mb-row"><span>K%</span><strong>${pct(slash.KP)}</strong></div>
+            <div class="mb-row"><span>BB%</span><strong>${pct(slash.BBP)}</strong></div>
+            <div class="mb-row"><span>ISO</span><strong>${slash.ISO}</strong></div>
+          </div>
+        `;
+    };
+    return `
+      <div class="matchup-band">
+        <div class="mb-band-title">The Matchup — split by opposing hand</div>
+        <div class="mb-section">
+          <div class="mb-section-head">${currentYear} Season</div>
+          <div class="mb-grid">
+            ${card(`vs ${oppTagR}`, seasonR, oppTagR)}
+            ${card(`vs ${oppTagL}`, seasonL, oppTagL)}
+          </div>
+        </div>
+        <div class="mb-section">
+          <div class="mb-section-head">Career</div>
+          <div class="mb-grid">
+            ${card(`vs ${oppTagR}`, careerR, oppTagR)}
+            ${card(`vs ${oppTagL}`, careerL, oppTagL)}
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+// Rate profile — the "advanced" view a la FanGraphs dashboard. Current
+// season vs career, side by side. We render the same six rates every
+// site shows because they're the digestible-yet-meaningful tier.
+function renderRateProfile(seasonSlash, careerSlash, currentYear) {
+    const row = (label, key, fmt) => `
+      <tr>
+        <th>${label}</th>
+        <td>${fmt(seasonSlash[key])}</td>
+        <td>${fmt(careerSlash[key])}</td>
+      </tr>`;
+    return `
+      <div class="rate-profile">
+        <div class="rp-head">Rate Profile</div>
+        <table class="rp-table">
+          <thead>
+            <tr><th></th><th>${currentYear}</th><th>Career</th></tr>
+          </thead>
+          <tbody>
+            ${row("K% — strikeout rate",          "KP",   pct)}
+            ${row("BB% — walk rate",              "BBP",  pct)}
+            ${row("ISO — isolated power",         "ISO",  identity)}
+            ${row("BABIP — BA on balls in play",  "BABIP", identity)}
+            ${row("HR/PA",                        "HRP",  pct)}
+            ${row("H/PA",                         "HP",   pct)}
+          </tbody>
+        </table>
+      </div>
+    `;
+}
+
+// Outcome breakdown — the existing bar-chart view of how a hitter's
+// PAs distribute across the 9 outcome buckets, kept smaller and below
+// the slash/matchup hierarchy. Useful for understanding the matchup
+// engine's logic ("Judge has 8% HR rate vs RHP overall") without
+// scrolling somewhere else.
+function renderOutcomeBreakdown(career, oppTag = "P") {
+    const oppL = `LH${oppTag}`;
+    const oppR = `RH${oppTag}`;
+    const rTable = oppTag === "P" ? career.vs_RHP : career.vs_RHB;
+    const lTable = oppTag === "P" ? career.vs_LHP : career.vs_LHB;
+    return `
+      <div class="outcome-breakdown">
+        <div class="ob-head">Outcome breakdown (career)</div>
+        <div class="ob-grid">
+          ${renderCareerSplit(`vs ${oppR}`, rTable)}
+          ${renderCareerSplit(`vs ${oppL}`, lTable)}
+        </div>
+      </div>
+    `;
 }
 
 function renderCareerSplit(label, table) {
+    if (!table || table.pa === 0) {
+        return `<div class="career-split career-split-empty">
+                  <header class="cs-head">
+                    <span class="cs-label">${label}</span>
+                    <span class="cs-pa">no data</span>
+                  </header>
+                </div>`;
+    }
     const entries = Object.entries(table.rates).sort((a, b) => b[1] - a[1]);
     const top = entries[0]?.[1] || 1;
     return `
@@ -849,14 +1020,14 @@ function renderCareerSplit(label, table) {
           <span class="cs-pa">${table.pa.toLocaleString()} PA</span>
         </header>
         ${entries.map(([o, p]) => {
-            const pct = Math.round(p * 100);
+            const pctVal = Math.round(p * 100);
             const width = Math.max(2, Math.round((p / top) * 100));
             const n = table.counts[o] || 0;
             return `
               <div class="cs-row">
                 <span class="cs-outcome">${OUTCOME_LABEL[o] || o}</span>
                 <span class="cs-bar"><span style="width:${width}%"></span></span>
-                <span class="cs-pct">${pct}%</span>
+                <span class="cs-pct">${pctVal}%</span>
                 <span class="cs-n">(${n})</span>
               </div>
             `;
@@ -864,6 +1035,76 @@ function renderCareerSplit(label, table) {
       </div>
     `;
 }
+
+function renderNoDataState(d) {
+    return `
+      <div class="player-empty">
+        <p>No data for this player in our ${d.historical_years.start}–${d.historical_years.end}
+           historical window, and they haven't appeared in this season's
+           daily ingest yet.</p>
+        <p>If they're a recent callup, they'll show up in the matchup
+           engine once they've taken some PAs.</p>
+      </div>
+    `;
+}
+
+// ── stat-line derivations ──────────────────────────────────────────
+
+// Compute a full slash line + rate-stat block from the 9 outcome
+// counts. The counts object may include extra keys (`pa`, `latest_date`)
+// — we filter to just the outcome keys so the PA sum is honest.
+function slashLine(counts) {
+    const c = (k) => counts[k] || 0;
+    const BB  = c("BB"),  HBP = c("HBP"), K = c("K");
+    const _1B = c("1B"),  _2B = c("2B"),  _3B = c("3B"), HR = c("HR");
+    const OUT = c("OUT"), OTHER = c("OTHER");
+    const H   = _1B + _2B + _3B + HR;
+    const PA  = OUTCOMES_ARRAY.reduce((s, k) => s + c(k), 0);
+    // AB = PA - BB - HBP - sacrifices. We don't track SAC separately
+    // (it's folded into OUT for sac flies/bunts, OTHER for catcher
+    // interference). Ignoring it slightly inflates AB / understates
+    // AVG — real impact: <1% drift on a regular's season.
+    const AB  = Math.max(0, PA - BB - HBP);
+    const TB  = _1B + 2 * _2B + 3 * _3B + 4 * HR;
+    const AVG = AB > 0 ? H / AB : 0;
+    const OBP = PA > 0 ? (H + BB + HBP) / PA : 0;
+    const SLG = AB > 0 ? TB / AB : 0;
+    const OPS = OBP + SLG;
+    const ISO = SLG - AVG;
+    const babipDenom = AB - K - HR;
+    return {
+        AVG: fmtAvg(AVG), OBP: fmtAvg(OBP),
+        SLG: fmtAvg(SLG), OPS: fmtAvg(OPS),
+        ISO: fmtAvg(ISO),
+        BABIP: babipDenom > 0 ? fmtAvg((H - HR) / babipDenom) : ".000",
+        PA, AB, H, HR, BB, K,
+        KP:  PA > 0 ? K   / PA : 0,
+        BBP: PA > 0 ? BB  / PA : 0,
+        HRP: PA > 0 ? HR  / PA : 0,
+        HP:  PA > 0 ? H   / PA : 0,
+    };
+}
+
+// Sum two outcome-count dicts (e.g. vs_RHP + vs_LHP → all-hands
+// career). Missing keys treated as 0.
+function combineSplits(a, b) {
+    const out = {};
+    for (const k of OUTCOMES_ARRAY) out[k] = (a?.[k] || 0) + (b?.[k] || 0);
+    return out;
+}
+
+// Baseball-convention number formatting: 3-decimal, leading zero
+// stripped (`.305`, not `0.305`). >= 1.000 keeps the leading digit.
+function fmtAvg(x) {
+    if (!Number.isFinite(x) || x < 0) return ".000";
+    if (x >= 1) return x.toFixed(3);
+    return x.toFixed(3).slice(1);
+}
+function pct(x) {
+    if (!Number.isFinite(x) || x < 0) return "0.0%";
+    return `${(x * 100).toFixed(1)}%`;
+}
+function identity(x) { return x; }
 
 // ── HOT MOMENTS VIEW ────────────────────────────────────────────────
 //

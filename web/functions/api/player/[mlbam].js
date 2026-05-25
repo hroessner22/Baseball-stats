@@ -58,6 +58,12 @@ export async function onRequest(context) {
             };
         }
 
+        // Fire the bio enrichment in parallel with the Supabase reads
+        // below — it's the slowest of the lot (MLB Stats API, ~150ms
+        // uncached) so blocking on it serially would noticeably slow
+        // the player page. Cached at the edge for 24h.
+        const bioPromise = fetchMLBPlayerBio(mlbam);
+
         // 2. Career rates (one fetch per role; both return [] if the
         //    player isn't in that table). Skip retrosheet-keyed fetches
         //    if we have no retrosheet id.
@@ -118,6 +124,8 @@ export async function onRequest(context) {
             if (y > coverageEnd) coverageEnd = y;
         }
 
+        const bio = await bioPromise;
+
         return jsonResponse({
             player: {
                 mlbam: player.mlbam,
@@ -125,6 +133,10 @@ export async function onRequest(context) {
                 name: `${player.name_first || ""} ${player.name_last || ""}`.trim(),
                 first: player.name_first,
                 last:  player.name_last,
+                // Bio fields from MLB Stats API. May be null if the
+                // fetch failed — the UI handles that gracefully (the
+                // hero header just degrades to name + handedness only).
+                bio,
             },
             batter:  batterRows.length || batterSeason.length
                 ? buildBatter(batterRows, batterSeason, currentYear)
@@ -305,6 +317,43 @@ async function fetchMLBPlayer(mlbam) {
         const p = d.people?.[0];
         if (!p) return null;
         return { first: p.firstName, last: p.lastName };
+    } catch {
+        return null;
+    }
+}
+
+// Full bio fetch — team, position, age, height/weight, jersey number.
+// Used to populate the hero header on the player view (the
+// conventional name + team + RR + age + 6'7"/282 strip). Cached
+// aggressively at the edge (24h) — bios change rarely (trade /
+// promotion / DOB never moves), so re-fetching per page view would be
+// wasteful and slow.
+async function fetchMLBPlayerBio(mlbam) {
+    try {
+        const res = await fetch(
+            `https://statsapi.mlb.com/api/v1/people/${mlbam}?hydrate=currentTeam`,
+            {
+                headers: { "User-Agent": "DIAMOND:CONTEXT/0.1" },
+                cf: { cacheTtl: 86400, cacheEverything: true },
+            },
+        );
+        if (!res.ok) return null;
+        const d = await res.json();
+        const p = d.people?.[0];
+        if (!p) return null;
+        return {
+            jersey:        p.primaryNumber || null,
+            age:           p.currentAge ?? null,
+            birth_date:    p.birthDate || null,
+            height:        p.height || null,
+            weight:        p.weight ?? null,
+            bats:          p.batSide?.code || null,
+            throws:        p.pitchHand?.code || null,
+            position:      p.primaryPosition?.abbreviation || null,
+            position_name: p.primaryPosition?.name || null,
+            team_name:     p.currentTeam?.name || null,
+            team_id:       p.currentTeam?.id ?? null,
+        };
     } catch {
         return null;
     }
