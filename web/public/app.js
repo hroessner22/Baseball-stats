@@ -1423,33 +1423,97 @@ function renderAbout() {
 
 async function refreshMVP() {
     try {
-        const res = await fetch("/api/mvp");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        // Fetch the existing OPS/ERA-based MVP races AND the new WPA
+        // leaderboards in parallel — the WPA one is the leverage-
+        // weighted contribution the old footer note promised. Both
+        // arrive together so the page renders in one shot.
+        const [mvpRes, batterWpaRes, pitcherWpaRes] = await Promise.all([
+            fetch("/api/mvp"),
+            fetch("/api/leaders/wpa?role=batter&limit=10"),
+            fetch("/api/leaders/wpa?role=pitcher&limit=10"),
+        ]);
+        if (!mvpRes.ok) throw new Error(`HTTP ${mvpRes.status}`);
+        const data = await mvpRes.json();
+        const batterWpa  = batterWpaRes.ok  ? await batterWpaRes.json()  : null;
+        const pitcherWpa = pitcherWpaRes.ok ? await pitcherWpaRes.json() : null;
         if (!data.races || data.races.length === 0) {
             renderEmpty(mvpView, "MVP race not available.", "Check back later.");
             return;
         }
-        mvpView.innerHTML = renderMVP(data);
+        mvpView.innerHTML = renderMVP(data, batterWpa, pitcherWpa);
     } catch (e) {
         renderEmpty(mvpView, "Could not load MVP race.", `${e.message || e}`);
     }
 }
 
-function renderMVP(data) {
+function renderMVP(data, batterWpa, pitcherWpa) {
     return `
       <header class="mvp-head">
         <h2>MVP RACE</h2>
-        <span class="mvp-meta">${data.season} season · top 5 by primary stat</span>
+        <span class="mvp-meta">${data.season} season</span>
       </header>
+      ${renderWpaBand(batterWpa, pitcherWpa, data.season)}
+      <div class="mvp-section-head">League leaders by traditional stats</div>
       <div class="mvp-grid">
         ${data.races.map(renderRaceCard).join("")}
       </div>
       <footer class="mvp-foot">
-        Hitters ranked by OPS · Pitchers ranked by ERA. Headline stats only —
-        WAR proxies and leverage-weighted contribution will land alongside
-        the Deep Dive engine.
+        WPA = the sum of how much each player's PAs moved the win
+        probability — leverage-weighted contribution.
+        OPS &amp; ERA are headline stats; WPA is what actually swung games.
       </footer>
+    `;
+}
+
+// The WPA band — sits ABOVE the traditional OPS/ERA grid as the
+// editorial position of this app. "Stats are stats; this is who's
+// actually moved win probability." Two cards side by side: hitter
+// WPA leaders and pitcher WPA leaders.
+function renderWpaBand(batter, pitcher, season) {
+    const card = (title, blurb, data) => {
+        if (!data || !data.leaders || data.leaders.length === 0) {
+            return `
+              <article class="wpa-card wpa-empty">
+                <header class="wpa-head">
+                  <span class="wpa-title">${title}</span>
+                  <span class="wpa-blurb">${blurb}</span>
+                </header>
+                <div class="wpa-empty-msg">
+                  WPA leaderboard not built yet for ${season} — first run lands tomorrow morning.
+                </div>
+              </article>`;
+        }
+        const rows = data.leaders.map((l) => {
+            const wpaStr = (l.wpa >= 0 ? "+" : "") + l.wpa.toFixed(2);
+            const cls = l.wpa >= 0 ? "wpa-pos" : "wpa-neg";
+            return `
+              <li class="wpa-row">
+                <span class="wpa-rank">${l.rank}</span>
+                <a class="wpa-name player-link" href="#player/${l.player_mlbam}">${shortName(l.name)}</a>
+                <span class="wpa-pa">${l.pa_count} PA</span>
+                <span class="wpa-val ${cls}">${wpaStr}</span>
+              </li>`;
+        }).join("");
+        return `
+          <article class="wpa-card">
+            <header class="wpa-head">
+              <span class="wpa-title">${title}</span>
+              <span class="wpa-blurb">${blurb}</span>
+            </header>
+            <ol class="wpa-list">${rows}</ol>
+          </article>`;
+    };
+    return `
+      <div class="wpa-band">
+        <div class="wpa-band-head">
+          <span class="wpa-band-title">Who's actually moved win probability</span>
+          <span class="wpa-band-meta">Win Probability Added · ${season} · qualifier 50+ PA/BF</span>
+        </div>
+        <div class="wpa-grid">
+          ${card("HITTERS", "Most positive WP swings on their PAs this season",          batter)}
+          ${card("PITCHERS", "Most opposing-WP suppressed across their batters faced",   pitcher)}
+        </div>
+      </div>
     `;
 }
 

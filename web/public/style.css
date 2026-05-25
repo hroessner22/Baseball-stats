@@ -715,6 +715,141 @@ main.board {
     max-width: 640px;
 }
 
+/* Sub-header above the OPS/ERA grid — lets us label the band so
+   the WPA section above feels distinct, not just "more leaders." */
+.mvp-section-head {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-top: 8px;
+}
+
+/* ── WPA BAND ───────────────────────────────────────────────────────
+   The leverage-weighted contribution leaderboard. Sits ABOVE the
+   traditional OPS/ERA grid because it's the editorial position of
+   this app — "stats are stats; this is who's actually moved win
+   probability." Subtle green tint to match the live game's
+   forecast / "edge" coloring. */
+.wpa-band {
+    background: rgba(34, 197, 94, 0.05);
+    border: 1px solid rgba(34, 197, 94, 0.18);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+}
+.wpa-band .wpa-band-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.wpa-band .wpa-band-title {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--accent-win);
+    letter-spacing: -0.005em;
+}
+.wpa-band .wpa-band-meta {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.wpa-band .wpa-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+}
+@media (min-width: 720px) {
+    .wpa-band .wpa-grid { grid-template-columns: 1fr 1fr; }
+}
+.wpa-band .wpa-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    padding: 12px 14px;
+}
+.wpa-band .wpa-empty .wpa-empty-msg {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-style: italic;
+    padding: 12px 0;
+}
+.wpa-band .wpa-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.wpa-band .wpa-title {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    text-transform: uppercase;
+}
+.wpa-band .wpa-blurb {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 500;
+}
+.wpa-band .wpa-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+.wpa-band .wpa-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 56px 48px;
+    gap: 8px;
+    align-items: baseline;
+    padding: 6px 0;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.wpa-band .wpa-row + .wpa-row {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.wpa-band .wpa-rank {
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: right;
+}
+.wpa-band .wpa-name {
+    color: var(--text);
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px dotted var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.wpa-band .wpa-name:hover {
+    color: var(--accent-action);
+    border-bottom-color: currentColor;
+}
+.wpa-band .wpa-pa {
+    color: var(--text-dim);
+    font-size: 10px;
+    text-align: right;
+    font-weight: 500;
+}
+.wpa-band .wpa-val {
+    text-align: right;
+    font-weight: 800;
+    font-size: 13px;
+}
+.wpa-band .wpa-pos { color: var(--accent-win);  }
+.wpa-band .wpa-neg { color: var(--accent-live); }
+
 .mvp-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
