@@ -1528,11 +1528,13 @@ async function refreshGame(id) {
             hydrateTrace(id, g.status);
         }
         // Projected (matchup-blended) WE only makes sense mid-PA.
+        // Pass the game object so the renderer can use team abbreviations
+        // in labels (HOME → BAL, AWAY → TB) instead of generic "home WP".
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
-            hydrateProjectedWE(id);
+            hydrateProjectedWE(id, g);
             // Bullpen-aware forward forecast — depends on lineup +
             // pitcher sequence, so refreshes per game poll.
-            hydrateForecastWE(id);
+            hydrateForecastWE(id, g);
         }
     } catch (e) {
         renderEmpty(gameView, "Could not load this game.", `${e.message || e}`);
@@ -1866,8 +1868,89 @@ function fieldPane(g) {
         ${situationStrip(g)}
         ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
         ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
+        ${renderThisInning(g)}
       </div>
     `;
+}
+
+// "This inning" play-by-play strip — every completed PA in the
+// current half-inning, oldest first. Shows the user how the frame
+// has unfolded so far without making them flip to Gamecast for
+// the same info.
+function renderThisInning(g) {
+    if (g.status !== "Live" || !g.this_inning || g.this_inning.length === 0) {
+        return "";
+    }
+    const arrow = g.half === "top" ? "▲" : "▼";
+    const innLabel = `${arrow} ${ordinalSuffix(g.inning)} so far`;
+    const rows = g.this_inning.map((p) => {
+        // Compact result chip per PA. Color = the outcome category we
+        // already use elsewhere (green for hits, red for outs/K, blue
+        // for walks, etc.).
+        const outcomeCls = paOutcomeClass(p.eventType);
+        const outcomeLabel = shortEventLabel(p.event || p.eventType || "—");
+        const batterLink = p.batter_id
+            ? `<a class="player-link" href="#player/${p.batter_id}">${shortName(p.batter)}</a>`
+            : shortName(p.batter || "—");
+        return `
+          <div class="ti-row">
+            <span class="ti-outcome ${outcomeCls}">${outcomeLabel}</span>
+            <span class="ti-batter">${batterLink}</span>
+            <span class="ti-desc">${escapeHTML(p.description || "")}</span>
+          </div>
+        `;
+    }).join("");
+    const currentRow = g.batter
+        ? `<div class="ti-row ti-now">
+              <span class="ti-outcome ti-now-chip">NOW</span>
+              <span class="ti-batter">${shortName(g.batter.name)}</span>
+              <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
+           </div>`
+        : "";
+    return `
+      <div class="this-inning">
+        <div class="ti-head">${innLabel}</div>
+        ${rows}
+        ${currentRow}
+      </div>
+    `;
+}
+
+// Map a Statcast event type to a short outcome chip label.
+function shortEventLabel(eventType) {
+    if (!eventType) return "—";
+    const e = eventType.toLowerCase();
+    if (e.includes("strikeout")) return "K";
+    if (e.includes("walk"))      return "BB";
+    if (e.includes("hit_by_pitch")) return "HBP";
+    if (e.includes("home_run") || e === "home run") return "HR";
+    if (e === "triple" || e === "3b") return "3B";
+    if (e === "double" || e === "2b") return "2B";
+    if (e === "single" || e === "1b") return "1B";
+    if (e.includes("error")) return "E";
+    if (e.includes("fielders_choice")) return "FC";
+    if (e.includes("sac_fly")) return "SF";
+    if (e.includes("sac_bunt")) return "SAC";
+    if (e.includes("double_play")) return "DP";
+    if (e.includes("triple_play")) return "TP";
+    if (e.includes("out") || e.includes("fly") || e.includes("ground"))
+        return "OUT";
+    // Capitalize first letter and shorten as a fallback
+    return (eventType[0] || "").toUpperCase() + eventType.slice(1, 4);
+}
+
+// Outcome → CSS class (color category). Matches the bar-chart colors
+// elsewhere in the app.
+function paOutcomeClass(eventType) {
+    if (!eventType) return "";
+    const e = eventType.toLowerCase();
+    if (e.includes("strikeout") || e.includes("out") || e.includes("double_play"))
+        return "ti-out";
+    if (e.includes("walk") || e.includes("hit_by_pitch"))
+        return "ti-walk";
+    if (e.includes("home_run") || e === "triple" || e === "double" || e === "single")
+        return "ti-hit";
+    return "";
 }
 
 function situationStrip(g) {
@@ -1954,6 +2037,7 @@ function cardPane(g) {
             <span>${awayAbbr} ${awayPct}%</span>
             <span>${homeAbbr} ${homePct}%</span>
           </div>
+          ${g.status === "Live" ? `<div class="why-line">${whyFavored(g, we, winning)}</div>` : ""}
 
           <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
           <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
@@ -2270,7 +2354,7 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor, balls, st
 // Renders inline in the WE card so the user sees both the current
 // state-based WE AND the expected post-PA WE given who's actually
 // pitching to whom. The gap between the two is the leverage of the PA.
-async function hydrateProjectedWE(gameId) {
+async function hydrateProjectedWE(gameId, gameForLabels) {
     try {
         const res = await fetch(`/api/game/${gameId}/we-projected`);
         if (!res.ok) return;
@@ -2278,7 +2362,7 @@ async function hydrateProjectedWE(gameId) {
         if (gameId !== String(activeGameId)) return;
         const slot = document.getElementById("projected-we-slot");
         if (!slot) return;
-        const html = renderProjectedWE(data);
+        const html = renderProjectedWE(data, gameForLabels);
         slot.innerHTML = html;
         cachedProjectedSlot = html;
     } catch {
@@ -2291,7 +2375,7 @@ async function hydrateProjectedWE(gameId) {
 // the team currently batting and the predicted reliever sequence.
 // Refreshes per game poll (every 5s) since the forecast changes when
 // the score shifts, batters cycle, or a new pitcher enters.
-async function hydrateForecastWE(gameId) {
+async function hydrateForecastWE(gameId, gameForLabels) {
     try {
         const res = await fetch(`/api/game/${gameId}/we-forward`);
         if (!res.ok) return;
@@ -2299,7 +2383,7 @@ async function hydrateForecastWE(gameId) {
         if (gameId !== String(activeGameId)) return;
         const slot = document.getElementById("forecast-we-slot");
         if (!slot) return;
-        const html = renderForecastWE(data);
+        const html = renderForecastWE(data, gameForLabels);
         slot.innerHTML = html;
         cachedForecastSlot = html;
     } catch {
@@ -2307,40 +2391,49 @@ async function hydrateForecastWE(gameId) {
     }
 }
 
-function renderForecastWE(d) {
+function renderForecastWE(d, game) {
     if (!d.available) return "";
     const homePct = Math.round((d.forecast_we || 0) * 100);
+    const awayPct = 100 - homePct;
     const curPct  = Math.round((d.current_we  || 0) * 100);
     const delta   = homePct - curPct;
     const arrow   = delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
     const arrowCls = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
 
-    // Render the pitcher sequence as a compact "Pitcher → Pitcher → Closer" chain.
-    // Only include pitchers who actually appeared in the median simulation
-    // (pa_count > 0) so the user sees the realistic path, not the full bullpen.
+    const homeAbbr = game?.teams?.home?.abbr || "HOME";
+    const awayAbbr = game?.teams?.away?.abbr || "AWAY";
+    const favored  = homePct >= awayPct ? homeAbbr : awayAbbr;
+    const favPct   = Math.max(homePct, awayPct);
+
+    // Render the pitcher sequence as a compact "Pitcher → Pitcher → Closer"
+    // chain with friendlier role labels. Only includes pitchers who actually
+    // appeared in the median simulation.
     const used = (d.pitcher_sequence || []).filter((p) => p.pa_count > 0);
     const chain = used.map((p) => {
-        const role = p.role === "closer" ? " (CL)"
-                   : p.role === "current_starter" ? ""
-                   : "";
-        return `<span class="fwe-pitcher" title="${p.pa_count} PAs · WE at exit ${p.we_at_exit !== null ? Math.round(p.we_at_exit * 100) + '%' : '—'}">${lastName(p.name)}${role}</span>`;
+        const roleHint = p.role === "closer"            ? "closer"
+                       : p.role === "current_starter"   ? "current"
+                       : p.role?.startsWith("inning_")  ? `${p.role.replace("inning_","")}th inn`
+                       : "";
+        const roleTag = roleHint ? `<span class="fwe-role">${roleHint}</span>` : "";
+        const we = p.we_at_exit !== null ? `${Math.round(p.we_at_exit * 100)}%` : "—";
+        return `<span class="fwe-pitcher" title="${p.pa_count} PAs simulated · ${homeAbbr} WP at exit ${we}">${lastName(p.name)}${roleTag}</span>`;
     }).join("<span class=\"fwe-arrow\">→</span>");
 
     return `
       <div class="forecast-we">
         <div class="fwe-headline">
           <span class="fwe-arrow-pre ${arrowCls}">${arrow}</span>
-          End-of-game forecast: <strong>${homePct}%</strong>
-          <span class="fwe-tag" title="Bullpen-aware projection: simulates the rest of the game using this team's lineup and the predicted reliever sequence">FORECAST</span>
+          End-of-game forecast: <strong>${favored} ${favPct}%</strong>
+          <span class="fwe-tag" title="Bullpen-aware Monte Carlo: simulates the rest of the game using the actual lineup and the predicted reliever sequence">FORECAST</span>
         </div>
-        ${chain ? `<div class="fwe-chain">${chain}</div>` : ""}
-        <div class="fwe-meta">Monte Carlo, ${d.n_simulations || 25} simulated games · matchup engine</div>
+        ${chain ? `<div class="fwe-chain"><span class="fwe-chain-label">Likely pitchers:</span>${chain}</div>` : ""}
+        <div class="fwe-meta">${homeAbbr} ${homePct}% · ${awayAbbr} ${awayPct}% — averaged over ${d.n_simulations || 25} simulated finishes</div>
       </div>
     `;
 }
 
 
-function renderProjectedWE(d) {
+function renderProjectedWE(d, game) {
     if (!d.available) return "";
     const proj   = Math.round((d.projected_we || 0) * 100);
     const cur    = Math.round((d.current_we   || 0) * 100);
@@ -2349,13 +2442,16 @@ function renderProjectedWE(d) {
     const worst  = Math.round((d.worst?.we    || 0) * 100);
     const arrow  = proj > cur ? "▲" : proj < cur ? "▼" : "→";
     const arrowCls = proj > cur ? "up" : proj < cur ? "down" : "flat";
-    const bestLabel  = d.best?.outcome  ? `(${OUTCOME_LABEL[d.best.outcome]  || d.best.outcome})`  : "";
-    const worstLabel = d.worst?.outcome ? `(${OUTCOME_LABEL[d.worst.outcome] || d.worst.outcome})` : "";
 
-    // Count-aware badge: when the matchup engine ran in count-aware
-    // mode, the projection refreshes per pitch — not just per PA.
-    // Surfacing the count makes it obvious why the number is shifting
-    // mid-PA on a Live game.
+    // Team abbreviations — the projection numbers are always HOME WP,
+    // so label them by the home team's abbr so users don't have to
+    // remember which side is which.
+    const homeAbbr = game?.teams?.home?.abbr || "HOME";
+    const awayAbbr = game?.teams?.away?.abbr || "AWAY";
+
+    const bestLabel  = d.best?.outcome  ? `${OUTCOME_LABEL[d.best.outcome]  || d.best.outcome}`  : "";
+    const worstLabel = d.worst?.outcome ? `${OUTCOME_LABEL[d.worst.outcome] || d.worst.outcome}` : "";
+
     const countBadge = d.count_aware && d.count
         ? `<span class="pw-count" title="Per-pitch projection using count-aware rates (Statcast 2020-2024)">${d.count.balls}-${d.count.strikes}</span>`
         : "";
@@ -2365,14 +2461,13 @@ function renderProjectedWE(d) {
       <div class="projected-we">
         <div class="pw-headline">
           <span class="pw-arrow ${arrowCls}">${arrow}</span>
-          Projected ${headlineWord}: <strong>${proj}%</strong>
+          ${homeAbbr} ${headlineWord}: <strong>${proj}%</strong> · ${awayAbbr} <strong>${100 - proj}%</strong>
           ${countBadge}
-          <span class="pw-lev">leverage ±${lev} pts</span>
+          <span class="pw-lev">${lev}-pt swing</span>
         </div>
         <div class="pw-range">
-          home WP could land between
-          <strong>${worst}%</strong> ${worstLabel} and
-          <strong>${best}%</strong> ${bestLabel}
+          best case for ${homeAbbr}: <strong>${best}%</strong> on a ${bestLabel}
+          · worst case: <strong>${worst}%</strong> on a ${worstLabel}
         </div>
       </div>
     `;
@@ -3057,6 +3152,64 @@ function describeRecentOutcomes(total, outcomes) {
     if (hits) parts.push(`${hits} H`);
     if (outs) parts.push(`${outs} OUT`);
     return `${total} PA — ${parts.join(" · ")}`;
+}
+
+// One-sentence "why is this team favored?" — picks the most salient
+// state factor (score, base situation, late-inning leverage) and
+// builds a short explainer. Shown under the bar labels on Live games
+// so users see why the number is what it is, not just the number.
+function whyFavored(g, we, favoredAbbr) {
+    if (g.status !== "Live" || !g.inning) return "";
+    const homeAbbr = g.teams.home.abbr;
+    const awayAbbr = g.teams.away.abbr;
+    const otherAbbr = favoredAbbr === homeAbbr ? awayAbbr : homeAbbr;
+
+    const lead    = (g.score?.home ?? 0) - (g.score?.away ?? 0);
+    const margin  = Math.abs(lead);
+    const inning  = g.inning;
+    const half    = g.half;
+    const outs    = g.outs ?? 0;
+    const bases   = (g.runners?.first ? 1 : 0) | (g.runners?.second ? 2 : 0) | (g.runners?.third ? 4 : 0);
+    const balls   = g.balls ?? 0;
+    const strikes = g.strikes ?? 0;
+    const battingAbbr = half === "bottom" ? homeAbbr : awayAbbr;
+    const innOrd  = ordinalSuffix(inning).toLowerCase();
+    const fullCount = balls === 3 && strikes === 2;
+
+    // Coin-flip range: no clear favorite, explain the leverage.
+    if (Math.abs(we - 0.5) < 0.05) {
+        if (bases === 7) return `Bases loaded with ${outs} out — any contact swings it.`;
+        if (margin === 0 && inning >= 9) return `Tied in extras — every pitch matters.`;
+        if (margin === 0) return `Tied in the ${innOrd} — a true coin flip.`;
+        return `Within a run — the next PA decides the leverage.`;
+    }
+
+    const parts = [];
+
+    // Lead is the single biggest factor.
+    if (margin >= 5) {
+        parts.push(`${favoredAbbr} up ${margin}`);
+    } else if (margin >= 2 && inning >= 7) {
+        parts.push(`${favoredAbbr} up ${margin} in the late innings`);
+    } else if (margin >= 1) {
+        parts.push(`${favoredAbbr} up ${margin}`);
+    } else {
+        // Tied — the situation IS the story.
+        parts.push(`tied in the ${innOrd}`);
+    }
+
+    // Base situation when interesting.
+    if (bases === 7) parts.push(`${battingAbbr} bases loaded`);
+    else if (bases === 6) parts.push(`${battingAbbr} runners on 2nd & 3rd`);
+    else if ((bases & 4) && outs <= 1) parts.push(`${battingAbbr} runner on 3rd, ${outs} out`);
+    else if (bases === 2 && inning >= 10) parts.push(`ghost runner on 2nd`);
+
+    // Outs + count for leverage.
+    if (outs === 2 && fullCount) parts.push(`2 outs, full count`);
+    else if (outs === 2 && (bases & 4)) parts.push(`2 outs (runner on 3rd needs the hit)`);
+    else if (fullCount && bases !== 0) parts.push(`full count`);
+
+    return parts.join(" · ") + ".";
 }
 
 function liveRead(g, we) {

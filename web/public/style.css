@@ -2636,6 +2636,114 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-weight: 500;
     font-style: italic;
 }
+.forecast-we .fwe-chain-label {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-right: 4px;
+}
+.forecast-we .fwe-role {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 600;
+    margin-left: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* "Why is X favored?" — one-liner under the bar labels that explains
+   the WE in plain English (bases, outs, count, lead). Replaces the
+   "what does this number mean?" blank stare. */
+.card .why-line {
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: rgba(148, 163, 184, 0.06);
+    border-left: 2px solid var(--accent-action);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.45;
+    font-style: italic;
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+/* ── THIS INNING strip ──────────────────────────────────────────────
+   Plays from the current half-inning, oldest first, ending with the
+   live "NOW" row for the at-bat in progress. Sits under the field
+   pane's diamond + AT BAT / PITCHING rows on the Live View. */
+.this-inning {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.this-inning .ti-head {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.this-inning .ti-row {
+    display: grid;
+    grid-template-columns: 42px minmax(80px, 1fr) 3fr;
+    gap: 8px;
+    align-items: baseline;
+    padding: 4px 0;
+    font-size: 12px;
+    line-height: 1.45;
+}
+.this-inning .ti-row + .ti-row {
+    border-top: 1px solid rgba(255,255,255,0.04);
+}
+.this-inning .ti-outcome {
+    text-align: center;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-dim);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+}
+.this-inning .ti-out  { background: rgba(239, 68, 68, 0.15);  color: var(--accent-live); }
+.this-inning .ti-walk { background: rgba(59, 130, 246, 0.15); color: var(--accent-action); }
+.this-inning .ti-hit  { background: rgba(34, 197, 94, 0.18);  color: var(--accent-win); }
+.this-inning .ti-batter {
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.this-inning .ti-batter a {
+    color: var(--text);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--text-dim);
+}
+.this-inning .ti-batter a:hover {
+    color: var(--accent-action);
+    border-bottom-color: currentColor;
+}
+.this-inning .ti-desc {
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.4;
+}
+.this-inning .ti-now {
+    background: rgba(59, 130, 246, 0.06);
+    margin: 4px -12px -10px;
+    padding: 6px 12px 8px;
+    border-radius: 0 0 var(--radius) var(--radius);
+    border-top: 1px solid rgba(59, 130, 246, 0.18);
+}
+.this-inning .ti-now-chip {
+    background: var(--accent-action);
+    color: white;
+}
 
 .card .situation-line {
     color: var(--text);

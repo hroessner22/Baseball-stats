@@ -586,11 +586,14 @@ function postPAState(state, outcome) {
                 home_lead, batting_team, terminal: 1.0,
             };
         }
-        // Normal half-flip.
+        // Normal half-flip. Since MLB's 2020 rule change, the 10th+
+        // inning starts with a runner on 2nd (the "ghost runner" /
+        // "Manfred man") — set bases = 2 when flipping into extras so
+        // the forward simulation reads from the right state.
         if (half === "bottom") inning += 1;
         half = HALF_FLIP[half];
         outs = 0;
-        new_bases = 0;
+        new_bases = inning >= 10 ? 2 : 0;
         batting_team = batting_team === "home" ? "away" : "home";
     }
 
