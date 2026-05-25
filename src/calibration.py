@@ -282,7 +282,25 @@ def main() -> int:
     }
 
     # Track aggregates per variant.
-    variants = ["naive", "v1_historical", "v2_with_daily", "v3_recency"]
+    #
+    # Variants we're sweeping today are about REWEIGHTING the daily_pa
+    # contribution relative to career. The original v2/v3 added daily
+    # PAs equally weighted (1×) with career PAs from Retrosheet 2020-24.
+    # For regulars with ~250 daily PAs vs ~2700 career, that's only 8%
+    # season weight before log5 and the 100-PA league regression — way
+    # too thin for recency to actually shift predictions. Daily-PA
+    # weight bumps give recent data more authority before regression.
+    variants = [
+        "naive",
+        "v1_historical",
+        "v2_with_daily",            # daily × 1, no recency
+        "v3_recency",               # daily × 1 + recency form factor
+        "v4_daily_3x",              # daily × 3, no recency
+        "v4_daily_5x",              # daily × 5, no recency
+        "v4_daily_10x",             # daily × 10, no recency
+        "v5_daily_5x_plus_recency", # daily × 5 + recency form factor
+        "v5_daily_10x_plus_recency",# daily × 10 + recency form factor
+    ]
     sample: dict[str, int] = defaultdict(int)
     top1:   dict[str, int] = defaultdict(int)
     top3:   dict[str, int] = defaultdict(int)
@@ -370,6 +388,46 @@ def main() -> int:
         top1["v3_recency"]   += t1
         top3["v3_recency"]   += t3
         brier["v3_recency"]  += br
+
+        # === v4_daily_{3,5,10}x — same composition as v2 but daily_pa
+        # counts get multiplied by N before being added to career, so
+        # current-season data dominates the prediction more. Higher N =
+        # more responsive to recent form, less reliance on 2020-24
+        # historical baseline. Pure additive amplification; no recency
+        # window weighting on top.
+        for daily_weight in [3, 5, 10]:
+            v_name = f"v4_daily_{daily_weight}x"
+            b_counts_v4 = dict(b_counts_hist)
+            p_counts_v4 = dict(p_counts_hist)
+            for o in OUTCOMES:
+                b_counts_v4[o] = b_counts_v4.get(o, 0) + b_daily.get(o, 0) * daily_weight
+                p_counts_v4[o] = p_counts_v4.get(o, 0) + p_daily.get(o, 0) * daily_weight
+            predicted_v4 = predict(b_counts_v4, p_counts_v4, l_counts)
+            t1, t3, br = score_predictions(predicted_v4, actual)
+            sample[v_name] += 1
+            top1[v_name]   += t1
+            top3[v_name]   += t3
+            brier[v_name]  += br
+
+        # === v5_daily_{5,10}x_plus_recency — v4 + recency form factor.
+        # The form factor operates on the now-heavier daily sample, so
+        # within-season hot/cold streaks actually shift predictions
+        # instead of being washed out by 3-year-old career data.
+        for daily_weight in [5, 10]:
+            v_name = f"v5_daily_{daily_weight}x_plus_recency"
+            b_counts_v5 = dict(b_counts_hist)
+            p_counts_v5 = dict(p_counts_hist)
+            for o in OUTCOMES:
+                b_counts_v5[o] = b_counts_v5.get(o, 0) + b_daily.get(o, 0) * daily_weight
+                p_counts_v5[o] = p_counts_v5.get(o, 0) + p_daily.get(o, 0) * daily_weight
+            b_counts_v5 = apply_form_factor(b_counts_v5, b_form)
+            p_counts_v5 = apply_form_factor(p_counts_v5, p_form)
+            predicted_v5 = predict(b_counts_v5, p_counts_v5, l_counts)
+            t1, t3, br = score_predictions(predicted_v5, actual)
+            sample[v_name] += 1
+            top1[v_name]   += t1
+            top3[v_name]   += t3
+            brier[v_name]  += br
 
     # ── output + insert ─────────────────────────────────────────────
     print("", file=sys.stderr)
