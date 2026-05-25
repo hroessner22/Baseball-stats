@@ -1345,6 +1345,180 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     letter-spacing: 0.04em;
 }
 
+/* ── BOX SCORE ──────────────────────────────────────────────────── */
+
+/* Box-score pane mirrors the gamecast pane's outer chrome — same
+   horizontal padding, same scrollable region. Inside, we stack a
+   line-score grid and four team blocks (away batting, home batting,
+   away pitching, home pitching) for textbook readability. */
+.boxscore-pane {
+    padding: 0 32px;
+    flex: 1;
+    min-height: 0;
+}
+.boxscore-loading,
+.boxscore-pane .empty {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 60px 16px;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+}
+.boxscore {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding-bottom: 32px;
+}
+
+/* Line score: tight grid, big numbers, R/H/E pulled out with a
+   stronger border so the eye lands on totals first. */
+.bs-linescore {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.bs-linescore th,
+.bs-linescore td {
+    padding: 8px 10px;
+    text-align: right;
+    font-size: 13px;
+    color: var(--text);
+}
+.bs-linescore thead th {
+    background: var(--bg);
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+}
+.bs-linescore th.ls-tot-h {
+    color: var(--text);
+    font-weight: 800;
+    background: var(--bg);
+}
+.bs-linescore .ls-team {
+    text-align: left;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+}
+.bs-linescore td.ls-tot {
+    font-weight: 700;
+    background: rgba(255, 255, 255, 0.02);
+    border-left: 1px solid var(--border);
+}
+.bs-linescore td.ls-tot-r {
+    color: var(--accent-win);
+    font-weight: 800;
+    font-size: 14px;
+    border-left: 1px solid var(--border);
+}
+.bs-linescore tbody tr + tr td,
+.bs-linescore tbody tr + tr th {
+    border-top: 1px solid var(--border);
+}
+
+/* Per-team batting and pitching blocks. */
+.bs-team-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.bs-team-head {
+    padding: 10px 14px;
+    margin: 0;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+}
+.bs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+}
+.bs-table th,
+.bs-table td {
+    padding: 7px 8px;
+    text-align: right;
+    color: var(--text);
+}
+.bs-table thead th {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+}
+.bs-table tbody tr + tr td { border-top: 1px solid rgba(255,255,255,0.04); }
+.bs-table tfoot td {
+    border-top: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 700;
+    background: var(--bg);
+}
+.bs-table .bs-order {
+    color: var(--text-dim);
+    font-size: 11px;
+    width: 24px;
+    text-align: right;
+    padding-right: 4px;
+}
+.bs-table .bs-name {
+    text-align: left;
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+}
+.bs-table .bs-name .player-link {
+    color: var(--text);
+    border-bottom: 1px dotted var(--text-dim);
+    text-decoration: none;
+}
+.bs-table .bs-name .player-link:hover {
+    color: var(--accent-action);
+    border-bottom-color: currentColor;
+}
+.bs-table .bs-pos {
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.bs-table .bs-decision {
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent-action);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.bs-table .bs-season {
+    color: var(--text-dim);
+    font-weight: 500;
+    border-left: 1px solid var(--border);
+    padding-left: 10px;
+}
+.bs-table .bs-pitches {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+}
+
 .gamecast-list {
     display: flex;
     flex-direction: column;

@@ -1275,6 +1275,9 @@ async function refreshGame(id) {
         if (gameViewMode === "gamecast") {
             refreshGamecast(id);
         }
+        if (gameViewMode === "boxscore") {
+            hydrateBoxscore(id, g.status);
+        }
         if (g.status === "Final") {
             hydrateRecap(id);
         }
@@ -1292,24 +1295,31 @@ async function refreshGame(id) {
     }
 }
 
-// Two presentations of the same live game: the existing Live View (field,
-// WE card, matchup card) and the new Gamecast (play-by-play with pitch
-// data and predicted-vs-actual). Module-level state so the toggle survives
-// the every-15s re-render.
-let gameViewMode = "live"; // "live" | "gamecast"
+// Three presentations of the same game: Live View (field + WE card +
+// matchup), Gamecast (play-by-play with pitch data + predicted vs
+// actual), Box Score (line score + batting/pitching tables — the
+// textbook page from any newspaper). Module-level state so the toggle
+// survives the every-5s re-render.
+let gameViewMode = "live"; // "live" | "gamecast" | "boxscore"
 let cachedGamecastHTML = "";
+let cachedBoxscoreHTML = "";
+let cachedBoxscorePk = null;
+let cachedBoxscoreStatus = null;
 
 function renderGame(g) {
-    const isCast = gameViewMode === "gamecast";
+    const mode = gameViewMode;
     return `
       <a class="back-link" href="#">← BOARD</a>
       ${renderTicker(g.game_pk, scheduleCache?.games || [])}
       <div class="game-mode-toggle">
-        <button class="${!isCast ? 'active' : ''}" data-mode="live">Live View</button>
-        <button class="${isCast ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
+        <button class="${mode === 'live'     ? 'active' : ''}" data-mode="live">Live View</button>
+        <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
+        <button class="${mode === 'boxscore' ? 'active' : ''}" data-mode="boxscore">Box Score</button>
       </div>
-      ${isCast
+      ${mode === 'gamecast'
         ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
+        : mode === 'boxscore'
+        ? `<div id="boxscore-pane" class="boxscore-pane">${cachedBoxscoreHTML || boxscoreLoadingShell()}</div>`
         : `<div class="game-pane">
              ${fieldPane(g)}
              ${cardPane(g)}
@@ -1319,6 +1329,9 @@ function renderGame(g) {
 
 function gamecastLoadingShell() {
     return `<div class="gamecast-loading">Loading play-by-play…</div>`;
+}
+function boxscoreLoadingShell() {
+    return `<div class="boxscore-loading">Loading box score…</div>`;
 }
 
 // Event delegation — innerHTML rerenders kill direct handlers, so wire
@@ -1735,6 +1748,193 @@ let cachedTraceStatus = null;
 // the current PA. Refreshes with the game (every 5s) so the leverage
 // number stays current.
 let cachedProjectedSlot = "";
+
+// ── BOX SCORE ───────────────────────────────────────────────────────
+
+// Fetches and renders the textbook newspaper-style box score (line
+// score + per-batter + per-pitcher lines). For Final games we cache
+// forever (data is frozen); for Live games we refresh each tick (5s)
+// so the score and stat lines tick up as the game progresses.
+async function hydrateBoxscore(gameId, status) {
+    if (status === "Final"
+        && cachedBoxscorePk === gameId
+        && cachedBoxscoreStatus === "Final") {
+        return;  // immutable
+    }
+    try {
+        const res = await fetch(`/api/game/${gameId}/boxscore`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (gameId !== String(activeGameId)) return;
+        const pane = document.getElementById("boxscore-pane");
+        if (!pane) return;
+        const html = renderBoxscore(data);
+        pane.innerHTML = html;
+        cachedBoxscoreHTML = html;
+        cachedBoxscorePk = gameId;
+        cachedBoxscoreStatus = data.status;
+    } catch {
+        // silent — pane stays with cached content (or loading shell)
+    }
+}
+
+function renderBoxscore(d) {
+    if (!d.available) {
+        return `<div class="empty">${d.reason || "Box score not available."}</div>`;
+    }
+    return `
+      <div class="boxscore">
+        ${renderLineScore(d)}
+        ${renderBattingTable("away", d)}
+        ${renderBattingTable("home", d)}
+        ${renderPitchingTable("away", d)}
+        ${renderPitchingTable("home", d)}
+      </div>
+    `;
+}
+
+// Top-of-page rectangle. Innings 1..N across, then R H E columns.
+// Cells show "—" for innings the team didn't bat (walk-off bottom-9
+// games, top-of-9 unplayed when home is ahead, future innings of a
+// game in progress).
+function renderLineScore(d) {
+    const innings = d.line_score.innings;
+    const inningCols = innings.map((inn) => `<th>${inn.num}</th>`).join("");
+    const rowFor = (side) => {
+        const cells = innings.map((inn) => {
+            const runs = inn[side]?.runs;
+            return `<td>${runs == null ? "—" : runs}</td>`;
+        }).join("");
+        const t = d.line_score.totals[side] || {};
+        return `
+          <tr>
+            <th scope="row" class="ls-team">${d.teams[side].abbr}</th>
+            ${cells}
+            <td class="ls-tot ls-tot-r">${t.runs ?? "—"}</td>
+            <td class="ls-tot">${t.hits ?? "—"}</td>
+            <td class="ls-tot">${t.errors ?? "—"}</td>
+          </tr>
+        `;
+    };
+    return `
+      <table class="bs-linescore">
+        <thead>
+          <tr>
+            <th></th>${inningCols}
+            <th class="ls-tot-h">R</th>
+            <th class="ls-tot-h">H</th>
+            <th class="ls-tot-h">E</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowFor("away")}
+          ${rowFor("home")}
+        </tbody>
+      </table>
+    `;
+}
+
+function renderBattingTable(side, d) {
+    const team  = d.teams[side];
+    const lines = d.batting[side];
+    const tot   = d.batting.totals[side];
+    const rows  = lines.map((b) => `
+      <tr>
+        <td class="bs-order">${b.order ?? ""}</td>
+        <td class="bs-name">
+          ${b.mlbam
+            ? `<a class="player-link" href="#player/${b.mlbam}">${b.box_name}</a>`
+            : b.box_name}
+          <span class="bs-pos">${b.position}</span>
+        </td>
+        <td>${b.AB}</td>
+        <td>${b.R}</td>
+        <td>${b.H}</td>
+        <td>${b.RBI}</td>
+        <td>${b.BB}</td>
+        <td>${b.K}</td>
+        <td>${b.LOB}</td>
+        <td class="bs-season">${b.season.AVG}</td>
+      </tr>
+    `).join("");
+    return `
+      <div class="bs-team-block">
+        <h3 class="bs-team-head">${team.name} · Batting</h3>
+        <table class="bs-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="bs-name">Batter</th>
+              <th>AB</th><th>R</th><th>H</th><th>RBI</th>
+              <th>BB</th><th>K</th><th>LOB</th>
+              <th class="bs-season">AVG</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr>
+              <td></td>
+              <td class="bs-name">Totals</td>
+              <td>${tot.AB}</td><td>${tot.R}</td><td>${tot.H}</td><td>${tot.RBI}</td>
+              <td>${tot.BB}</td><td>${tot.K}</td><td>${tot.LOB}</td>
+              <td class="bs-season">${tot.AVG}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    `;
+}
+
+function renderPitchingTable(side, d) {
+    const team  = d.teams[side];
+    const lines = d.pitching[side];
+    const tot   = d.pitching.totals[side];
+    const rows  = lines.map((p) => `
+      <tr>
+        <td class="bs-name">
+          ${p.mlbam
+            ? `<a class="player-link" href="#player/${p.mlbam}">${p.box_name}</a>`
+            : p.box_name}
+          ${p.decision ? `<span class="bs-decision">${p.decision}</span>` : ""}
+        </td>
+        <td>${p.IP}</td>
+        <td>${p.H}</td>
+        <td>${p.R}</td>
+        <td>${p.ER}</td>
+        <td>${p.BB}</td>
+        <td>${p.K}</td>
+        <td>${p.HR}</td>
+        <td class="bs-pitches">${p.pitches}-${p.strikes}</td>
+        <td class="bs-season">${p.season.ERA}</td>
+      </tr>
+    `).join("");
+    return `
+      <div class="bs-team-block">
+        <h3 class="bs-team-head">${team.name} · Pitching</h3>
+        <table class="bs-table">
+          <thead>
+            <tr>
+              <th class="bs-name">Pitcher</th>
+              <th>IP</th><th>H</th><th>R</th><th>ER</th>
+              <th>BB</th><th>K</th><th>HR</th>
+              <th class="bs-pitches" title="Pitches – Strikes">PI-ST</th>
+              <th class="bs-season">ERA</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr>
+              <td class="bs-name">Totals</td>
+              <td>${tot.IP}</td><td>${tot.H}</td><td>${tot.R}</td><td>${tot.ER}</td>
+              <td>${tot.BB}</td><td>${tot.K}</td><td>${tot.HR}</td>
+              <td class="bs-pitches"></td>
+              <td class="bs-season">${tot.ERA}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    `;
+}
 
 // ── MATCHUP ENGINE (Phase 3.2) ──────────────────────────────────────
 
