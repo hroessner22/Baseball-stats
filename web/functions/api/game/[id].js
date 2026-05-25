@@ -6,10 +6,26 @@
 // minimal shape the Game view needs.
 
 import { WE_TABLE } from "../games/_we_table.js";
+import { WE_TABLE_V2 } from "../games/_we_table_v2.js";
 
-// The half-inning that just completed before the current mid-half play.
-// The WE table is keyed by end-of-half states; the previous half's end
-// is the right approximation of "WP at start of current half".
+const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+// PA-state win probability for the home team. Tries the new v2 table
+// (15M-PA aggregation keyed by inning, half, outs, bases, home_lead)
+// first; falls back to the half-level table if v2 has a hole.
+function lookupWE(inning, half, outs, bases, homeLead) {
+    const innC  = clip(inning, 1, 9);
+    const leadC = clip(homeLead, -10, 10);
+    const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
+    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
+    const prev = previousHalfState(innC, half);
+    if (prev) {
+        const k1 = `${Math.min(prev.inning, 9)}|${prev.half}|${homeLead}`;
+        if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
+    }
+    return null;
+}
+
 function previousHalfState(inning, half) {
     if (half === "top") {
         if (inning === 1) return null;
@@ -96,18 +112,16 @@ function buildGame(d) {
 
     let winExp = null;
     if (status === "Live" && inning && half) {
-        // Our WE table is keyed by END-OF-HALF-INNING state. During mid-
-        // half play, the right lookup is the END of the PREVIOUS half —
-        // that's the WP at the START of the current half. Looking up
-        // the CURRENT half mid-PA returns the "if this half ended now"
-        // probability, which collapses to 0 (or 1) when the half-end
-        // score would already decide the game (e.g. bottom 9th down 1).
-        const prev = previousHalfState(inning, half);
-        if (prev) {
-            const key = `${Math.min(prev.inning, 9)}|${prev.half}|${homeScore - awayScore}`;
-            if (WE_TABLE[key] !== undefined) winExp = WE_TABLE[key];
-        } else {
-            // Top of 1st — baseline home-field advantage.
+        // PA-state lookup via the v2 table (15M-PA aggregation that
+        // includes outs and bases). With this, "bottom 9th, bases
+        // loaded, 1 out, home down 1" returns ~54% — what history
+        // actually says — instead of the half-level table's 0%.
+        const basesMask =
+            (offense.first  ? 1 : 0) |
+            (offense.second ? 2 : 0) |
+            (offense.third  ? 4 : 0);
+        winExp = lookupWE(inning, half, outs, basesMask, homeScore - awayScore);
+        if (winExp === null && inning === 1 && half === "top") {
             winExp = 0.54;
         }
     } else if (status === "Final") {

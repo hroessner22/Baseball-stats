@@ -6,10 +6,31 @@
 // few seconds.
 
 import { WE_TABLE } from "./_we_table.js";
+import { WE_TABLE_V2 } from "./_we_table_v2.js";
 
-// The state that just completed before the current mid-half play.
-// Used so the WE lookup returns "WP at start of current half" instead
-// of "WP if current half ended right now" (which is wrong mid-PA).
+// Clip helpers — keep WE state inside the indexed range of v2.
+const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+// Pre-PA win probability for the home team. Tries the new state-keyed
+// table (inning, half, outs, bases, home_lead) first; falls back to the
+// half-level table (using the previous half's end as an approximation
+// of "WP at start of current half") if the v2 cell is missing.
+function lookupWE(inning, half, outs, bases, homeLead) {
+    const innC  = clip(inning, 1, 9);
+    const leadC = clip(homeLead, -10, 10);
+    const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
+    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
+    // Fallback path (rare — only when v2 has a hole the smoothing
+    // couldn't fill). Use the half-level table at the start of the
+    // current half, same approximation as before v2 landed.
+    const prev = previousHalfState(innC, half);
+    if (prev) {
+        const k1 = `${Math.min(prev.inning, 9)}|${prev.half}|${homeLead}`;
+        if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
+    }
+    return null;
+}
+
 function previousHalfState(inning, half) {
     if (half === "top") {
         if (inning === 1) return null;
@@ -141,19 +162,15 @@ function buildTile(g, handBy) {
 
     let winExp = null;
     if (status === "Live" && inning) {
-        // Our WE table is keyed by END-OF-HALF-INNING state. During mid-
-        // half play, the right lookup is the END of the PREVIOUS half —
-        // that's the WP at the start of the current half, the closest
-        // approximation a half-level table can give us. The fully
-        // correct fix needs a per-pitch WE table that incorporates
-        // count / bases / outs; this gets the sign right in the meantime.
-        const prev = previousHalfState(inning, half);
-        if (prev) {
-            const key = `${Math.min(prev.inning, 9)}|${prev.half}|${homeScore - awayScore}`;
-            if (WE_TABLE[key] !== undefined) winExp = WE_TABLE[key];
-        } else {
-            // Top of 1st — pre-game / first PA. Default to a baseline
-            // home-field advantage (MLB historical: ~54%).
+        // PA-state lookup using the new (inning, half, outs, bases,
+        // home_lead) table aggregated from 15M historical PAs. Honest
+        // at the per-PA level — fixes the "100% bottom 9th down 1"
+        // class of bugs the half-level table produced.
+        const outsN  = ls.outs ?? 0;
+        const basesN = bases;
+        winExp = lookupWE(inning, half, outsN, basesN, homeScore - awayScore);
+        if (winExp === null && inning === 1 && half === "top") {
+            // Pre-game start state — baseline home-field advantage.
             winExp = 0.54;
         }
     } else if (status === "Final") {
