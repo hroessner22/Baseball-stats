@@ -1530,6 +1530,9 @@ async function refreshGame(id) {
         // Projected (matchup-blended) WE only makes sense mid-PA.
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             hydrateProjectedWE(id);
+            // Bullpen-aware forward forecast — depends on lineup +
+            // pitcher sequence, so refreshes per game poll.
+            hydrateForecastWE(id);
         }
     } catch (e) {
         renderEmpty(gameView, "Could not load this game.", `${e.message || e}`);
@@ -1953,6 +1956,7 @@ function cardPane(g) {
           </div>
 
           <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
+          <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
 
           <div class="evidence">
             From 115 seasons of Retrosheet game logs — how often a team in
@@ -1992,6 +1996,11 @@ let cachedTraceStatus = null;
 // the current PA. Refreshes with the game (every 5s) so the leverage
 // number stays current.
 let cachedProjectedSlot = "";
+
+// Forward forecast (bullpen-aware Monte Carlo). Refreshes per game
+// poll. The number changes more slowly than projected-WE since it
+// depends on game state + lineup + bullpen sequence, not just count.
+let cachedForecastSlot = "";
 
 // ── BOX SCORE ───────────────────────────────────────────────────────
 
@@ -2276,6 +2285,60 @@ async function hydrateProjectedWE(gameId) {
         // silent — slot stays with cached content
     }
 }
+
+// Loads the bullpen-aware forward forecast — the Monte Carlo end-of-
+// game WE projection that uses the actual lineup + matchup engine for
+// the team currently batting and the predicted reliever sequence.
+// Refreshes per game poll (every 5s) since the forecast changes when
+// the score shifts, batters cycle, or a new pitcher enters.
+async function hydrateForecastWE(gameId) {
+    try {
+        const res = await fetch(`/api/game/${gameId}/we-forward`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (gameId !== String(activeGameId)) return;
+        const slot = document.getElementById("forecast-we-slot");
+        if (!slot) return;
+        const html = renderForecastWE(data);
+        slot.innerHTML = html;
+        cachedForecastSlot = html;
+    } catch {
+        // silent — slot stays with cached content
+    }
+}
+
+function renderForecastWE(d) {
+    if (!d.available) return "";
+    const homePct = Math.round((d.forecast_we || 0) * 100);
+    const curPct  = Math.round((d.current_we  || 0) * 100);
+    const delta   = homePct - curPct;
+    const arrow   = delta > 0 ? "▲" : delta < 0 ? "▼" : "→";
+    const arrowCls = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+
+    // Render the pitcher sequence as a compact "Pitcher → Pitcher → Closer" chain.
+    // Only include pitchers who actually appeared in the median simulation
+    // (pa_count > 0) so the user sees the realistic path, not the full bullpen.
+    const used = (d.pitcher_sequence || []).filter((p) => p.pa_count > 0);
+    const chain = used.map((p) => {
+        const role = p.role === "closer" ? " (CL)"
+                   : p.role === "current_starter" ? ""
+                   : "";
+        return `<span class="fwe-pitcher" title="${p.pa_count} PAs · WE at exit ${p.we_at_exit !== null ? Math.round(p.we_at_exit * 100) + '%' : '—'}">${lastName(p.name)}${role}</span>`;
+    }).join("<span class=\"fwe-arrow\">→</span>");
+
+    return `
+      <div class="forecast-we">
+        <div class="fwe-headline">
+          <span class="fwe-arrow-pre ${arrowCls}">${arrow}</span>
+          End-of-game forecast: <strong>${homePct}%</strong>
+          <span class="fwe-tag" title="Bullpen-aware projection: simulates the rest of the game using this team's lineup and the predicted reliever sequence">FORECAST</span>
+        </div>
+        ${chain ? `<div class="fwe-chain">${chain}</div>` : ""}
+        <div class="fwe-meta">Monte Carlo, ${d.n_simulations || 25} simulated games · matchup engine</div>
+      </div>
+    `;
+}
+
 
 function renderProjectedWE(d) {
     if (!d.available) return "";
