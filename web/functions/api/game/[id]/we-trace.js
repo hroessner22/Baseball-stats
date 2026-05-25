@@ -64,26 +64,39 @@ export async function onRequest(context) {
 
 function buildTrace(allPlays, status) {
     // Walk plays; for each completed half-inning, keep the LAST play's
-    // post-state score. That state's WE goes on the chart.
+    // post-state score AND short description. The description gives the
+    // interactive trace its "what happened here" tooltip — the moment
+    // that put us at that point on the curve.
     const lastInHalf = new Map();
     for (const p of allPlays) {
         if (p.about?.isComplete === false) continue;
         const inning = p.about?.inning;
         if (!inning) continue;
         const half = p.about?.isTopInning ? "top" : "bottom";
-        // Half-end key sorted as e.g. "01-top" so chronological iteration
-        // walks 1-top → 1-bottom → 2-top → ...
         const sortKey = `${String(inning).padStart(2, "0")}-${half === "top" ? "0" : "1"}`;
         lastInHalf.set(sortKey, {
             inning,
             half,
             away: p.result?.awayScore ?? 0,
             home: p.result?.homeScore ?? 0,
+            // Description of the LAST play in this half — the one that
+            // ended the inning. Falls back to event ("Lineout") if a
+            // full description isn't in the feed.
+            event: p.result?.event || p.result?.eventType || null,
+            description: p.result?.description || null,
+            batter:  p.matchup?.batter?.fullName || null,
+            pitcher: p.matchup?.pitcher?.fullName || null,
         });
     }
 
     const points = [
-        { inning: 0, half: "pre", away: 0, home: 0, we: PRE_GAME_HOME_WP },
+        {
+            inning: 0, half: "pre",
+            away: 0, home: 0,
+            we: PRE_GAME_HOME_WP,
+            event: "Game start",
+            description: "First pitch.",
+        },
     ];
 
     const sortedKeys = [...lastInHalf.keys()].sort();
@@ -91,16 +104,42 @@ function buildTrace(allPlays, status) {
         const e = lastInHalf.get(k);
         const diff = e.home - e.away;
         const we = lookupWE(e.inning, e.half, diff, status);
-        points.push({ inning: e.inning, half: e.half, away: e.away, home: e.home, we });
+        points.push({
+            inning: e.inning,
+            half: e.half,
+            away: e.away,
+            home: e.home,
+            we,
+            event: e.event,
+            description: e.description,
+            batter: e.batter,
+            pitcher: e.pitcher,
+        });
     }
 
     // For a Final game, force the last point to the certain outcome (0 or 1).
-    // This matters when the game ended mid-half via walk-off — the WE_TABLE
-    // entry can be slightly off, but the truth at game-end is binary.
     if (status === "Final" && points.length > 1) {
         const last = points[points.length - 1];
         if (last.home > last.away) last.we = 1;
         else if (last.home < last.away) last.we = 0;
+    }
+
+    // Find the BIGGEST swing — the half-to-half |Δ WE| that's largest.
+    // Marked separately so the frontend can highlight it visually.
+    let biggestSwingIdx = -1;
+    let biggestSwingDelta = 0;
+    for (let i = 1; i < points.length; i++) {
+        if (points[i].we == null || points[i - 1].we == null) continue;
+        const d = Math.abs(points[i].we - points[i - 1].we);
+        if (d > biggestSwingDelta) {
+            biggestSwingDelta = d;
+            biggestSwingIdx = i;
+        }
+    }
+    if (biggestSwingIdx >= 0) {
+        points[biggestSwingIdx].biggest_swing = true;
+        points[biggestSwingIdx].we_delta = points[biggestSwingIdx].we
+            - points[biggestSwingIdx - 1].we;
     }
 
     return points;

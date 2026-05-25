@@ -1686,38 +1686,93 @@ function renderTraceCard(data) {
     const homeAbbr = "HOME";  // We don't have team abbrs here; could pass them in
     const awayAbbr = "AWAY";
 
+    // Interactive markers — one circle per data point, hoverable. Bigger
+    // for the biggest-swing and for the final/current point. data-point
+    // carries the JSON the tooltip displays.
+    const markersSvg = points.map((p, i) => {
+        const x = xAt(i);
+        const y = yAt(p.we);
+        const isBiggest = !!p.biggest_swing;
+        const isLast    = i === points.length - 1;
+        const r = isBiggest ? 5 : isLast ? 3.5 : 2.5;
+        const fill = isBiggest
+            ? "var(--accent-live)"
+            : isLast
+                ? (p.we >= 0.5 ? "var(--accent-win)" : "var(--accent-live)")
+                : "var(--accent-action)";
+        const cls = `trace-marker${isBiggest ? " biggest" : ""}${isLast ? " final" : ""}`;
+        const payload = JSON.stringify({
+            i,
+            inning: p.inning,
+            half:   p.half,
+            home:   p.home,
+            away:   p.away,
+            we:     p.we,
+            event:  p.event,
+            description: p.description,
+            batter:  p.batter,
+            pitcher: p.pitcher,
+            we_delta: p.we_delta,
+            biggest_swing: isBiggest,
+        }).replace(/"/g, "&quot;");
+        return `
+          <circle class="${cls}"
+                  cx="${x.toFixed(1)}" cy="${y.toFixed(1)}"
+                  r="${r}"
+                  fill="${fill}"
+                  stroke="var(--bg)" stroke-width="1.5"
+                  data-trace-point="${payload}"
+                  tabindex="0"/>
+        `;
+    }).join("");
+
+    // Big-swing call-out below the chart (text version of the biggest_swing
+    // marker so it's discoverable even without hovering).
+    const biggest = points.find((p) => p.biggest_swing);
+    let biggestLine = "";
+    if (biggest) {
+        const deltaPct = Math.round((biggest.we_delta || 0) * 100);
+        const sign = deltaPct >= 0 ? "+" : "";
+        const innLabel = `${biggest.half === "top" ? "▲" : "▼"} ${ordinalSuffix(biggest.inning).toLowerCase()}`;
+        const what = biggest.event ? biggest.event : "Big swing";
+        biggestLine = `
+          <div class="trace-biggest">
+            <span class="tb-dot"></span>
+            Biggest swing: <strong>${sign}${deltaPct}%</strong>
+            in the ${innLabel} — ${what}.
+          </div>`;
+    }
+
     return `
       <div class="card trace-card">
         <div class="trace-head">
           <span class="trace-label">WE TRACE</span>
-          <span class="trace-meta">${points.length - 1} half-inning${points.length - 1 === 1 ? "" : "s"} · home-team win % over time</span>
+          <span class="trace-meta">${points.length - 1} half-inning${points.length - 1 === 1 ? "" : "s"} · hover the curve to see what happened</span>
         </div>
-        <svg class="trace-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="we-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stop-color="rgba(34, 197, 94, 0.35)"/>
-              <stop offset="50%"  stop-color="rgba(34, 197, 94, 0.05)"/>
-              <stop offset="100%" stop-color="rgba(239, 68, 68, 0.05)"/>
-            </linearGradient>
-          </defs>
-          <!-- 50% reference -->
-          <line x1="${PAD.l}" y1="${refY.toFixed(1)}" x2="${(W - PAD.r).toFixed(1)}" y2="${refY.toFixed(1)}"
-                stroke="rgba(148, 163, 184, 0.25)" stroke-dasharray="3,4" stroke-width="1"/>
-          <!-- area under curve -->
-          <path d="${homeAreaPath}" fill="url(#we-grad)"/>
-          <!-- the line itself -->
-          <polyline points="${linePts}" fill="none"
-                    stroke="var(--accent-action)" stroke-width="2"
-                    stroke-linejoin="round" stroke-linecap="round"/>
-          <!-- last-point marker -->
-          <circle cx="${lastDotX}" cy="${lastDotY}" r="3.5"
-                  fill="${lastIsHomeFav ? 'var(--accent-win)' : 'var(--accent-live)'}"
-                  stroke="var(--bg)" stroke-width="1.5"/>
-        </svg>
+        <div class="trace-chart-wrap">
+          <svg class="trace-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="we-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%"   stop-color="rgba(34, 197, 94, 0.35)"/>
+                <stop offset="50%"  stop-color="rgba(34, 197, 94, 0.05)"/>
+                <stop offset="100%" stop-color="rgba(239, 68, 68, 0.05)"/>
+              </linearGradient>
+            </defs>
+            <line x1="${PAD.l}" y1="${refY.toFixed(1)}" x2="${(W - PAD.r).toFixed(1)}" y2="${refY.toFixed(1)}"
+                  stroke="rgba(148, 163, 184, 0.25)" stroke-dasharray="3,4" stroke-width="1"/>
+            <path d="${homeAreaPath}" fill="url(#we-grad)"/>
+            <polyline points="${linePts}" fill="none"
+                      stroke="var(--accent-action)" stroke-width="2"
+                      stroke-linejoin="round" stroke-linecap="round"/>
+            ${markersSvg}
+          </svg>
+          <div class="trace-tooltip" hidden></div>
+        </div>
         <div class="trace-axis">
           <span class="trace-axis-end left">start</span>
           <span class="trace-axis-end right">${data.status === "Final" ? "final" : "now"}</span>
         </div>
+        ${biggestLine}
         <div class="trace-foot">
           ${last.we >= 0.5
             ? `Home at <strong>${Math.round(last.we * 100)}%</strong>${data.status === "Final" ? " (final)" : " right now"}.`
@@ -1725,6 +1780,101 @@ function renderTraceCard(data) {
         </div>
       </div>
     `;
+}
+
+// Document-level delegation for trace-marker hover. Tooltips position
+// themselves near the marker; clicking a marker pins it open until the
+// user clicks elsewhere.
+let tracePinnedMarker = null;
+document.addEventListener("mouseover", (e) => {
+    const marker = e.target.closest(".trace-marker");
+    if (!marker || tracePinnedMarker) return;
+    showTraceTooltip(marker);
+});
+document.addEventListener("mouseout", (e) => {
+    if (!e.target.closest(".trace-marker") || tracePinnedMarker) return;
+    hideTraceTooltip();
+});
+document.addEventListener("click", (e) => {
+    const marker = e.target.closest(".trace-marker");
+    if (marker) {
+        e.preventDefault();
+        tracePinnedMarker = marker;
+        showTraceTooltip(marker);
+        return;
+    }
+    if (tracePinnedMarker && !e.target.closest(".trace-tooltip")) {
+        tracePinnedMarker = null;
+        hideTraceTooltip();
+    }
+});
+
+function showTraceTooltip(marker) {
+    const wrap = marker.closest(".trace-chart-wrap");
+    const tip = wrap?.querySelector(".trace-tooltip");
+    if (!tip) return;
+    let data;
+    try { data = JSON.parse(marker.dataset.tracePoint); }
+    catch { return; }
+
+    const arrow = data.half === "top" ? "▲" : data.half === "bottom" ? "▼" : "·";
+    const innLabel = data.inning === 0
+        ? "PRE-GAME"
+        : `${arrow} ${ordinalSuffix(data.inning).toUpperCase()}`;
+    const we = Math.round(data.we * 100);
+    const score = `${data.away}-${data.home}`;
+    const delta = data.we_delta != null
+        ? `${data.we_delta >= 0 ? "+" : ""}${Math.round(data.we_delta * 100)}%`
+        : "";
+    const swingNote = data.biggest_swing
+        ? ` <span class="tt-swing">biggest swing ${delta}</span>`
+        : "";
+
+    const eventLine = data.event
+        ? `<div class="tt-event">${data.event}</div>`
+        : "";
+    const descLine = data.description
+        ? `<div class="tt-desc">${escapeHTML(data.description)}</div>`
+        : "";
+    const playersLine = (data.batter && data.pitcher)
+        ? `<div class="tt-players">${shortName(data.batter)} vs ${shortName(data.pitcher)}</div>`
+        : "";
+
+    tip.innerHTML = `
+      <div class="tt-head">
+        <span class="tt-inning">${innLabel}</span>
+        <span class="tt-score">${score}</span>
+        <span class="tt-we">${we}%</span>${swingNote}
+      </div>
+      ${eventLine}
+      ${playersLine}
+      ${descLine}
+    `;
+
+    // Position the tooltip near the marker, but stay inside the chart wrap.
+    const wrapRect = wrap.getBoundingClientRect();
+    const mRect = marker.getBoundingClientRect();
+    const mxInWrap = mRect.left + mRect.width / 2 - wrapRect.left;
+    const myInWrap = mRect.top  + mRect.height / 2 - wrapRect.top;
+
+    // Default: tooltip BELOW the marker; if it would overflow, swap above.
+    tip.hidden = false;
+    const ttRect = tip.getBoundingClientRect();
+    let left = mxInWrap - ttRect.width / 2;
+    let top  = myInWrap + 12;
+    if (left < 4) left = 4;
+    if (left + ttRect.width > wrapRect.width - 4) {
+        left = wrapRect.width - ttRect.width - 4;
+    }
+    if (top + ttRect.height > wrapRect.height + 80) {
+        top = myInWrap - ttRect.height - 10;
+    }
+    tip.style.left = `${left}px`;
+    tip.style.top  = `${top}px`;
+}
+
+function hideTraceTooltip() {
+    document.querySelectorAll(".trace-tooltip").forEach((tip) => { tip.hidden = true; });
 }
 
 // Loads the LLM-generated recap for a Final game. Server-side caches in
