@@ -107,6 +107,40 @@ lefty/righty, by count, by era — and never gets lost.
 
 **Size:** Medium–Large.
 
+### Next planned chunk: real per-pitch Win Expectancy
+
+The current WE engine is keyed only by `(inning, half, run_diff)`. Two visible
+artefacts of that limitation:
+
+- the "100% WSH" bug we patched on 2026-05-24 — mid-half states have no
+  honest answer in a half-level table
+- the WE Trace chart's granularity is one point per half-inning, not one
+  point per PA or pitch
+
+The user-stated spec for the next big WE pass (deliberately deferred so it
+gets its own focused session):
+
+1. **State the table by `(inning, half, run_diff, outs, base_state, balls, strikes)`.**
+   A re-aggregation of historical PBP indexed by those dimensions. ~100K cells;
+   fits comfortably in JS. Honest WE at any pitch-level state.
+2. **Update WE on every event that changes state.** Every pitch (count moves),
+   every PA-completion (outs/bases/score), every pitching change (the
+   pitcher's quality changes — needs blending with the matchup engine's
+   outcome distribution for the current PA).
+3. **Make the trace chart interactive.** Hover any point on the curve →
+   tooltip with the inning, score, and the play that caused the WE delta.
+   Auto-highlight the biggest swings (largest |Δ WE| per PA) with annotations.
+4. **Account for pitcher quality, not just state.** A 95th-percentile reliever
+   entering with a 1-run lead has a different WE than a replacement-level
+   reliever in the same spot. The matchup engine output for the current PA
+   plus the in-game state should both feed the WE.
+
+Rough size: ~12–17 hours of focused work split across data re-aggregation,
+new endpoint shape, and frontend chart interactivity. Worth its own session,
+not a tack-on.
+
+**Size:** Medium (alone) — wraps into the broader Phase 4 Deep Dive.
+
 ## Phase 5 — Production & every scale
 
 **Goal:** the real, polished product — the engine pointed at every scale.
