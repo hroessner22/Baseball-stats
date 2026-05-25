@@ -2562,6 +2562,81 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-weight: 700;
 }
 
+/* ── BULLPEN-AWARE FORECAST ────────────────────────────────────────
+   The Monte Carlo end-of-game projection that uses THIS team's actual
+   lineup + matchup engine + predicted reliever sequence. Subtle green
+   tint to signal "forward-looking — the edge over public engines."
+   Sits just below the projected-WE block. */
+.forecast-we {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: rgba(34, 197, 94, 0.05);
+    border: 1px solid rgba(34, 197, 94, 0.18);
+    border-radius: var(--radius);
+    font-size: 11px;
+    line-height: 1.4;
+}
+.forecast-we .fwe-headline {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+    color: var(--text);
+    font-weight: 500;
+}
+.forecast-we .fwe-headline strong {
+    color: var(--text);
+    font-weight: 800;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+}
+.forecast-we .fwe-arrow-pre {
+    font-weight: 800;
+}
+.forecast-we .fwe-arrow-pre.up   { color: var(--accent-win); }
+.forecast-we .fwe-arrow-pre.down { color: var(--accent-live); }
+.forecast-we .fwe-arrow-pre.flat { color: var(--text-dim); }
+.forecast-we .fwe-tag {
+    margin-left: auto;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-win);
+    background: rgba(34, 197, 94, 0.12);
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: help;
+}
+.forecast-we .fwe-chain {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 11px;
+}
+.forecast-we .fwe-pitcher {
+    color: var(--text);
+    cursor: help;
+    border-bottom: 1px dotted var(--text-dim);
+}
+.forecast-we .fwe-arrow {
+    color: var(--text-dim);
+    opacity: 0.5;
+    font-size: 10px;
+}
+.forecast-we .fwe-meta {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 500;
+    font-style: italic;
+}
+
 .card .situation-line {
     color: var(--text);
     font-size: 13px;
