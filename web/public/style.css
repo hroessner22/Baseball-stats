@@ -2023,6 +2023,61 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-weight: 400;
 }
 
+/* ── WE TRACE CARD ────────────────────────────────────────────── */
+/* The win-expectancy curve over the game. One point per completed
+   half-inning. Visual companion to the "WE right now" number above. */
+.card-pane > .trace-card { margin-top: 20px; }
+
+.trace-card .trace-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.trace-card .trace-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+}
+.trace-card .trace-meta {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    text-align: right;
+}
+.trace-card .trace-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    margin: 4px 0 6px;
+}
+.trace-card .trace-axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.trace-card .trace-foot {
+    font-size: 12px;
+    color: var(--text);
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    line-height: 1.4;
+}
+.trace-card .trace-foot strong {
+    color: var(--accent-win);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
 /* ── RECAP CARD ──────────────────────────────────────────────── */
 /* Appears on Final games above the matchup card. LLM-generated narrative
    that explicitly leans on our predicted-vs-actual data — "the model

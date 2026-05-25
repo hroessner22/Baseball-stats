@@ -1146,6 +1146,11 @@ async function refreshGame(id) {
         if (g.status === "Final") {
             hydrateRecap(id);
         }
+        // Trace runs for both live and final — live games keep adding
+        // points as half-innings complete; final games have the full curve.
+        if (g.status === "Live" || g.status === "Final") {
+            hydrateTrace(id, g.status);
+        }
     } catch (e) {
         renderEmpty(gameView, "Could not load this game.", `${e.message || e}`);
     }
@@ -1547,6 +1552,7 @@ function cardPane(g) {
 
           <div class="read">${liveRead(g, we)}</div>
         </div>
+        <div id="trace-slot">${cachedTraceSlot}</div>
         ${g.status === "Final" ? `<div id="recap-slot">${cachedRecapSlot}</div>` : ""}
         <div id="matchup-slot">${cachedMatchupSlot}</div>
       </div>
@@ -1566,6 +1572,12 @@ let cachedMatchupKey = null;
 // per Game view session (or once per game across users, server-side).
 let cachedRecapSlot = "";
 let cachedRecapPk = null;
+
+// WE trace card cache. Final games cache forever (data doesn't change);
+// live games refresh because new half-innings add points.
+let cachedTraceSlot = "";
+let cachedTracePk = null;
+let cachedTraceStatus = null;
 
 // ── MATCHUP ENGINE (Phase 3.2) ──────────────────────────────────────
 
@@ -1598,6 +1610,121 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor) {
     } catch (e) {
         // silently absent — the page works without the matchup card
     }
+}
+
+// Loads the WE trace — one data point per completed half-inning,
+// rendered as an SVG line chart. For Final games we cache forever
+// (data is frozen). For Live games we re-fetch each tick — the edge
+// cache (30s) and small payload absorb the cost.
+async function hydrateTrace(gameId, status) {
+    if (status === "Final" && cachedTracePk === gameId && cachedTraceStatus === "Final") {
+        return; // Final-game trace is immutable
+    }
+    try {
+        const res = await fetch(`/api/game/${gameId}/we-trace`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (gameId !== String(activeGameId)) return;
+        const slot = document.getElementById("trace-slot");
+        if (!slot) return;
+        const html = renderTraceCard(data);
+        slot.innerHTML = html;
+        cachedTraceSlot = html;
+        cachedTracePk = gameId;
+        cachedTraceStatus = data.status;
+    } catch {
+        // silent — slot just stays empty / cached
+    }
+}
+
+function renderTraceCard(data) {
+    const points = (data.points || []).filter((p) => p.we !== null);
+    if (points.length < 2) {
+        // Not enough completed halves to plot. Hide entirely (no card).
+        return "";
+    }
+
+    // SVG dimensions. preserveAspectRatio: none lets the SVG stretch to
+    // whatever the parent card's width is.
+    const W = 360;
+    const H = 110;
+    const PAD = { l: 4, r: 4, t: 6, b: 16 };
+
+    const innerW = W - PAD.l - PAD.r;
+    const innerH = H - PAD.t - PAD.b;
+
+    const xAt = (i) => PAD.l + (i / (points.length - 1)) * innerW;
+    const yAt = (we) => PAD.t + (1 - we) * innerH;
+    const refY = yAt(0.5);
+
+    // Line: a single polyline through every (x, y). Plus a filled area
+    // beneath it for the home team (above 50%) and a separate area for
+    // the away team (below 50%) so the chart visually reads "who's
+    // ahead in WE."
+    const linePts = points.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.we).toFixed(1)}`).join(" ");
+
+    // Build a filled path that follows the line then closes to the
+    // bottom of the chart — for the "home WE shaded green" area.
+    const lastX = xAt(points.length - 1).toFixed(1);
+    const firstX = xAt(0).toFixed(1);
+    const bottomY = (PAD.t + innerH).toFixed(1);
+    const homeAreaPath =
+        `M ${firstX},${bottomY} L ` + linePts.split(" ").join(" L ") + ` L ${lastX},${bottomY} Z`;
+
+    // Final point marker so the end of the curve is unambiguous.
+    const last = points[points.length - 1];
+    const lastDotX = xAt(points.length - 1);
+    const lastDotY = yAt(last.we);
+    const lastIsHomeFav = last.we >= 0.5;
+
+    // Inning tick marks — only major innings (1, 3, 5, 7, 9) to keep
+    // axis legible. We skip the "pre-game" point's label.
+    const ticks = points.map((p, i) => ({ idx: i, p })).filter(
+        ({ p }) => p.inning > 0 && [1, 3, 5, 7, 9].includes(p.inning) && p.half === "bottom"
+    );
+
+    const homeAbbr = "HOME";  // We don't have team abbrs here; could pass them in
+    const awayAbbr = "AWAY";
+
+    return `
+      <div class="card trace-card">
+        <div class="trace-head">
+          <span class="trace-label">WE TRACE</span>
+          <span class="trace-meta">${points.length - 1} half-inning${points.length - 1 === 1 ? "" : "s"} · home-team win % over time</span>
+        </div>
+        <svg class="trace-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="we-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stop-color="rgba(34, 197, 94, 0.35)"/>
+              <stop offset="50%"  stop-color="rgba(34, 197, 94, 0.05)"/>
+              <stop offset="100%" stop-color="rgba(239, 68, 68, 0.05)"/>
+            </linearGradient>
+          </defs>
+          <!-- 50% reference -->
+          <line x1="${PAD.l}" y1="${refY.toFixed(1)}" x2="${(W - PAD.r).toFixed(1)}" y2="${refY.toFixed(1)}"
+                stroke="rgba(148, 163, 184, 0.25)" stroke-dasharray="3,4" stroke-width="1"/>
+          <!-- area under curve -->
+          <path d="${homeAreaPath}" fill="url(#we-grad)"/>
+          <!-- the line itself -->
+          <polyline points="${linePts}" fill="none"
+                    stroke="var(--accent-action)" stroke-width="2"
+                    stroke-linejoin="round" stroke-linecap="round"/>
+          <!-- last-point marker -->
+          <circle cx="${lastDotX}" cy="${lastDotY}" r="3.5"
+                  fill="${lastIsHomeFav ? 'var(--accent-win)' : 'var(--accent-live)'}"
+                  stroke="var(--bg)" stroke-width="1.5"/>
+        </svg>
+        <div class="trace-axis">
+          <span class="trace-axis-end left">start</span>
+          <span class="trace-axis-end right">${data.status === "Final" ? "final" : "now"}</span>
+        </div>
+        <div class="trace-foot">
+          ${last.we >= 0.5
+            ? `Home at <strong>${Math.round(last.we * 100)}%</strong>${data.status === "Final" ? " (final)" : " right now"}.`
+            : `Home at <strong>${Math.round(last.we * 100)}%</strong> — away favored${data.status === "Final" ? " (final)" : " right now"}.`}
+        </div>
+      </div>
+    `;
 }
 
 // Loads the LLM-generated recap for a Final game. Server-side caches in
