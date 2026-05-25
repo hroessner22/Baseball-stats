@@ -1305,6 +1305,9 @@ let cachedGamecastHTML = "";
 let cachedBoxscoreHTML = "";
 let cachedBoxscorePk = null;
 let cachedBoxscoreStatus = null;
+// Raw JSON kept around so the team toggle can re-render a slice of
+// the existing data without re-hitting the API on every flip.
+let cachedBoxscoreData = null;
 
 function renderGame(g) {
     const mode = gameViewMode;
@@ -1773,25 +1776,56 @@ async function hydrateBoxscore(gameId, status) {
         cachedBoxscoreHTML = html;
         cachedBoxscorePk = gameId;
         cachedBoxscoreStatus = data.status;
+        cachedBoxscoreData = data;
     } catch {
         // silent — pane stays with cached content (or loading shell)
     }
 }
 
+// Which team's batting + pitching tables to show in the box score.
+// Toggle is a segmented control INSIDE the boxscore pane so it doesn't
+// fight the outer Live View / Gamecast / Box Score tab strip. Default
+// to "home" — the average user is more likely to be following their
+// home team than the visitor.
+let boxscoreTeam = "home";  // "home" | "away"
+
 function renderBoxscore(d) {
     if (!d.available) {
         return `<div class="empty">${d.reason || "Box score not available."}</div>`;
     }
+    const team = boxscoreTeam;
     return `
       <div class="boxscore">
         ${renderLineScore(d)}
-        ${renderBattingTable("away", d)}
-        ${renderBattingTable("home", d)}
-        ${renderPitchingTable("away", d)}
-        ${renderPitchingTable("home", d)}
+        <div class="bs-team-toggle" role="tablist">
+          <button class="${team === 'away' ? 'active' : ''}" data-bs-team="away" role="tab">${d.teams.away.abbr}</button>
+          <button class="${team === 'home' ? 'active' : ''}" data-bs-team="home" role="tab">${d.teams.home.abbr}</button>
+        </div>
+        ${renderBattingTable(team, d)}
+        ${renderPitchingTable(team, d)}
       </div>
     `;
 }
+
+// Toggle the box-score team WITHOUT re-fetching — the JSON is already
+// in cachedBoxscoreData, we just re-render which slice we show. Same
+// delegated-click pattern as the outer game-mode toggle.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".bs-team-toggle button[data-bs-team]");
+    if (!btn) return;
+    e.preventDefault();
+    const team = btn.dataset.bsTeam;
+    if (team === boxscoreTeam) return;
+    boxscoreTeam = team;
+    if (cachedBoxscoreData) {
+        const pane = document.getElementById("boxscore-pane");
+        if (pane) {
+            const html = renderBoxscore(cachedBoxscoreData);
+            pane.innerHTML = html;
+            cachedBoxscoreHTML = html;
+        }
+    }
+});
 
 // Top-of-page rectangle. Innings 1..N across, then R H E columns.
 // Cells show "—" for innings the team didn't bat (walk-off bottom-9
@@ -2156,6 +2190,7 @@ function renderTraceCard(data) {
                   r="${r}"
                   fill="${fill}"
                   stroke="var(--bg)" stroke-width="1.5"
+                  data-trace-idx="${i}"
                   data-trace-point="${payload}"
                   tabindex="0"/>
         `;
@@ -2184,7 +2219,10 @@ function renderTraceCard(data) {
           <span class="trace-label">WE TRACE</span>
           <span class="trace-meta">${points.length - 1} plate appearance${points.length - 1 === 1 ? "" : "s"} · hover any point</span>
         </div>
-        <div class="trace-chart-wrap">
+        <div class="trace-chart-wrap"
+             data-trace-w="${W}" data-trace-h="${H}"
+             data-trace-pad-l="${PAD.l}" data-trace-pad-r="${PAD.r}"
+             data-trace-n="${points.length}">
           <svg class="trace-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
             <defs>
               <linearGradient id="we-grad" x1="0" y1="0" x2="0" y2="1">
@@ -2199,6 +2237,22 @@ function renderTraceCard(data) {
             <polyline points="${linePts}" fill="none"
                       stroke="var(--accent-action)" stroke-width="2"
                       stroke-linejoin="round" stroke-linecap="round"/>
+            <!-- Transparent overlay rect captures pointer events anywhere
+                 in the chart area — gives users a continuous hover surface
+                 instead of having to land on tiny 1.8px PA dots. Painted
+                 BEFORE markers so markers and guides remain interactive
+                 (overlay sits underneath in paint order). -->
+            <rect class="trace-overlay" x="0" y="0" width="${W}" height="${H}"
+                  fill="transparent"/>
+            <!-- Crosshair guide (hidden until mouseenter on the chart). One
+                 vertical line + a follower dot. Both repositioned by the
+                 chart-hover handler in viewBox coordinates. -->
+            <line class="trace-guide" x1="0" y1="${PAD.t}" x2="0" y2="${(H - PAD.b).toFixed(1)}"
+                  stroke="rgba(255,255,255,0.32)" stroke-width="1" stroke-dasharray="2,3"
+                  visibility="hidden"/>
+            <circle class="trace-guide-dot" r="3.5"
+                    fill="var(--accent-action)" stroke="var(--bg)" stroke-width="1.5"
+                    visibility="hidden"/>
             ${markersSvg}
           </svg>
           <div class="trace-tooltip" hidden></div>
@@ -2223,27 +2277,90 @@ function renderTraceCard(data) {
     `;
 }
 
-// Document-level delegation for trace-marker hover. Tooltips position
-// themselves near the marker; clicking a marker pins it open until the
-// user clicks elsewhere.
+// Document-level delegation for trace-marker hover + chart-area hover.
+// The chart-area handler (mousemove anywhere over .trace-chart-wrap)
+// gives users a continuous hover surface — they don't have to land on
+// the small per-PA dots. As the cursor moves, we snap to the nearest
+// PA index, render a vertical guide line + follower dot at that index,
+// and show its tooltip. Clicking a marker still pins it.
 let tracePinnedMarker = null;
+let traceHoverFrame = null;   // requestAnimationFrame token for throttling
 document.addEventListener("mouseover", (e) => {
     const marker = e.target.closest(".trace-marker");
     if (!marker || tracePinnedMarker) return;
     showTraceTooltip(marker);
 });
-// Mouseout: only hide when the cursor truly leaves the marker AND isn't
-// moving into the tooltip (so the user can hover into the tooltip to
-// click a batter / pitcher link without it vanishing under them).
+// Mouseout: hide when the cursor leaves the chart area entirely (the
+// chart-wrap, the tooltip, OR a marker) AND isn't moving into one of
+// those safe targets. This lets the user move freely between marker →
+// tooltip → another marker without the tooltip vanishing under them.
 document.addEventListener("mouseout", (e) => {
     if (tracePinnedMarker) return;
-    const leftMarker  = e.target.closest(".trace-marker");
+    const leftWrap    = e.target.closest(".trace-chart-wrap");
     const leftTooltip = e.target.closest(".trace-tooltip");
-    if (!leftMarker && !leftTooltip) return;
-    const intoSafe = e.relatedTarget?.closest?.(".trace-marker, .trace-tooltip");
+    if (!leftWrap && !leftTooltip) return;
+    const intoSafe = e.relatedTarget?.closest?.(".trace-chart-wrap, .trace-tooltip");
     if (intoSafe) return;
     hideTraceTooltip();
+    hideTraceGuide();
 });
+// Continuous-hover handler — anywhere in the chart, snap to the nearest
+// PA's marker, show its tooltip, and draw a vertical guide line. rAF-
+// throttled so we re-position at most once per frame even on fast
+// mouse moves. Pinned state takes precedence.
+document.addEventListener("mousemove", (e) => {
+    const wrap = e.target.closest(".trace-chart-wrap");
+    if (!wrap) return;
+    if (tracePinnedMarker) return;
+    if (traceHoverFrame) return;  // already queued for this frame
+    traceHoverFrame = requestAnimationFrame(() => {
+        traceHoverFrame = null;
+        updateChartHover(wrap, e.clientX);
+    });
+});
+
+function updateChartHover(wrap, mouseClientX) {
+    const svg = wrap.querySelector(".trace-svg");
+    if (!svg) return;
+    // Map mouse client-x into the SVG's viewBox coordinate space. The
+    // SVG uses preserveAspectRatio="none" so width stretches linearly.
+    const rect = wrap.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const vbW = parseFloat(wrap.dataset.traceW);
+    const padL = parseFloat(wrap.dataset.tracePadL);
+    const padR = parseFloat(wrap.dataset.tracePadR);
+    const n    = parseInt(wrap.dataset.traceN, 10);
+    if (!Number.isFinite(vbW) || n < 2) return;
+
+    const mxView = ((mouseClientX - rect.left) / rect.width) * vbW;
+    const innerW = vbW - padL - padR;
+    const frac   = (mxView - padL) / innerW;
+    const idx    = Math.max(0, Math.min(n - 1, Math.round(frac * (n - 1))));
+
+    const marker = svg.querySelector(`.trace-marker[data-trace-idx="${idx}"]`);
+    if (!marker) return;
+    showTraceTooltip(marker);
+
+    // Snap guide line + dot to this marker's (cx, cy).
+    const guide = svg.querySelector(".trace-guide");
+    const dot   = svg.querySelector(".trace-guide-dot");
+    if (guide && dot) {
+        const cx = marker.getAttribute("cx");
+        const cy = marker.getAttribute("cy");
+        guide.setAttribute("x1", cx);
+        guide.setAttribute("x2", cx);
+        guide.setAttribute("visibility", "visible");
+        dot.setAttribute("cx", cx);
+        dot.setAttribute("cy", cy);
+        dot.setAttribute("visibility", "visible");
+    }
+}
+
+function hideTraceGuide() {
+    document.querySelectorAll(".trace-guide, .trace-guide-dot").forEach((el) => {
+        el.setAttribute("visibility", "hidden");
+    });
+}
 document.addEventListener("click", (e) => {
     const marker = e.target.closest(".trace-marker");
     if (marker) {
@@ -2259,6 +2376,7 @@ document.addEventListener("click", (e) => {
     if (tracePinnedMarker && !e.target.closest(".trace-tooltip")) {
         tracePinnedMarker = null;
         hideTraceTooltip();
+        hideTraceGuide();
     }
 });
 

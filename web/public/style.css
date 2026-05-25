@@ -1367,8 +1367,39 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .boxscore {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 18px;
     padding-bottom: 32px;
+}
+
+/* Team toggle inside the box-score pane — sits below the line score
+   and above the batting/pitching tables. Segmented control, same
+   visual language as the outer game-mode toggle but smaller. */
+.bs-team-toggle {
+    display: inline-flex;
+    align-self: flex-start;
+    gap: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 3px;
+}
+.bs-team-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 6px 16px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: calc(var(--radius) - 4px);
+    cursor: pointer;
+    transition: color 80ms ease, background 80ms ease;
+}
+.bs-team-toggle button:hover { color: var(--text); }
+.bs-team-toggle button.active {
+    background: var(--accent-action);
+    color: white;
 }
 
 /* Line score: tight grid, big numbers, R/H/E pulled out with a
@@ -2499,6 +2530,28 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     opacity: 1;
     outline: none;
 }
+
+/* Chart-area hover overlay — transparent rect on top of the SVG that
+   captures pointer events for the WHOLE chart, not just the small per-
+   PA dots. pointer-events: all (not the default visiblePainted) so
+   that mousemove fires over the transparent fill. cursor:crosshair to
+   signal "this whole surface is interactive." */
+.trace-card .trace-overlay {
+    pointer-events: all;
+    cursor: crosshair;
+}
+
+/* Guide line + follower dot drawn by the chart-hover handler. Both
+   pointer-events: none so they don't block the overlay's hover. */
+.trace-card .trace-guide,
+.trace-card .trace-guide-dot {
+    pointer-events: none;
+}
+
+/* Existing markers stay clickable (for pin-on-click and keyboard
+   tabbing) but their pointer-events default doesn't get in the way
+   of the overlay because they sit on top of it in SVG paint order. */
+.trace-card .trace-marker { cursor: pointer; }
 
 /* Tooltip — absolutely positioned inside trace-chart-wrap. JS computes
    left/top to keep it inside the chart bounds. pointer-events: auto so
