@@ -3032,6 +3032,36 @@ function escapeHTML(s) {
         .replace(/'/g, "&#39;");
 }
 
+// Hot/cold pill for one player. Reads the recency form factors from
+// the matchup response — the per-outcome ratios of last-30d rate vs
+// season rate, regressed by sample. Hit-rate ratio is what fans
+// care about most for batters; for pitchers we flip it (their job
+// is to suppress hits, so high hit-rate factor = pitcher is COLD).
+function renderFormPill(name, form, role) {
+    // Need ≥ 30 daily PAs/BFs to show a form signal at all — below
+    // that the regression toward 1.0 makes the ratio meaningless and
+    // a "hot" pill on a 12-PA sample is just noise.
+    if (!form || form.sample_pa < 30) return "";
+
+    const hitFactor = form.hit_rate_factor;
+    // For batters: high hit-rate factor = hot. For pitchers: high
+    // means batters are hitting them well = COLD pitcher.
+    const isHot  = role === "batter"  ? hitFactor >= 1.10 : hitFactor <= 0.90;
+    const isCold = role === "batter"  ? hitFactor <= 0.90 : hitFactor >= 1.10;
+    if (!isHot && !isCold) return "";
+
+    const lastName = name.split(/\s+/).pop();
+    const emoji = isHot ? "🔥" : "🧊";
+    const label = isHot ? "hot" : "cold";
+    const pct = Math.round((hitFactor - 1) * 100);
+    const sign = pct >= 0 ? "+" : "";
+    const tooltip = role === "batter"
+        ? `${lastName} has been ${label} recently — hit rate ${sign}${pct}% vs his season baseline (last 30 days weighted heavier). The matchup prediction is adjusted for this.`
+        : `${lastName} has been ${label} recently — batters' hit rate against him ${sign}${pct}% vs his season baseline. The matchup prediction is adjusted for this.`;
+    const cls = isHot ? "form-hot" : "form-cold";
+    return `<span class="form-pill ${cls}" title="${tooltip}">${emoji} ${lastName} ${label}</span>`;
+}
+
 function renderMatchupCard(m) {
     const entries = Object.entries(m.predicted)
         .sort((a, b) => b[1] - a[1]);
@@ -3103,6 +3133,13 @@ function renderMatchupCard(m) {
            </span>`
         : "";
 
+    // Form pills — show when a player is meaningfully hot or cold
+    // recently. Hit-rate factor: 1.10+ is hot, 0.90- is cold (10%
+    // deviation from career baseline after sample-size regression).
+    // Suppress when there isn't enough recent data (need ≥ 30 PAs).
+    const batterForm = renderFormPill(m.batter.name, m.form?.batter, "batter");
+    const pitcherForm = renderFormPill(m.pitcher.name, m.form?.pitcher, "pitcher");
+
     return `
       <div class="card matchup-card">
         <div class="subject">
@@ -3110,6 +3147,7 @@ function renderMatchupCard(m) {
           vs
           <a class="player-link" href="#player/${m.pitcher.mlbam}">${m.pitcher.name}</a> (${m.pitcher.throws}HP)
         </div>
+        ${(batterForm || pitcherForm) ? `<div class="form-strip">${batterForm}${pitcherForm}</div>` : ""}
 
         <div class="question">What's about to happen? ${countBadge}</div>
         <div class="outcome-table">${rows}</div>

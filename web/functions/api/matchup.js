@@ -170,21 +170,23 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
 
     // 6) Current-season events from the daily_pa log — append to batter and
     //    pitcher counts so predictions sharpen as the season's sample grows.
-    //    League baseline isn't touched here: leagueRates in Supabase is the
-    //    2020–2024 modern-era window, and one season's daily_pa delta is a
-    //    few percent of that baseline. Worth folding in once calibration
+    //    Pull game_date too so we can compute recency-weighted form
+    //    factors below (a hot/cold signal). League baseline isn't
+    //    touched here: leagueRates in Supabase is the 2020–2024
+    //    modern-era window, and one season's daily_pa delta is a few
+    //    percent of that baseline. Worth folding in once calibration
     //    tracking tells us whether it helps; stays static for v0.1.
     const [batterCurrent, pitcherCurrent] = await Promise.all([
         sb(env, "daily_pa", {
             batter_mlbam: `eq.${batterMlbam}`,
             pitcher_hand: `eq.${throws}`,
-            select: "outcome",
+            select: "outcome,game_date",
             limit: "5000",
         }),
         sb(env, "daily_pa", {
             pitcher_mlbam: `eq.${pitcherMlbam}`,
             batter_hand: `eq.${bats}`,
-            select: "outcome",
+            select: "outcome,game_date",
             limit: "5000",
         }),
     ]);
@@ -193,13 +195,24 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
     addCounts(batterCounts, batterCurrentCounts);
     addCounts(pitcherCounts, pitcherCurrentCounts);
 
+    // 7) Recency form factors — the hot/cold signal. Per-outcome ratios
+    //    of last-30d rate vs season rate (3× weight on the 30-day window,
+    //    1.5× on 30-90d, 1× older). Regressed toward 1.0 by sample size
+    //    so a player with 20 recent PAs doesn't trigger a 50% swing.
+    //    Applied to the count-aware AND all-count predictions below.
+    const batterForm  = recencyFormFactor(batterCurrent);
+    const pitcherForm = recencyFormFactor(pitcherCurrent);
+
     // All-count prediction — what we'd return if no count was passed.
     // Always computed because we use it as a fallback AND we ship it
     // alongside the count-aware prediction in the response so the
     // frontend can show "count-aware: X% K, all-count: Y% K" if it
     // wants. Today it just uses count-aware when present, but the data
-    // is on the wire either way.
-    const predictedAllCount = predict(batterCounts, pitcherCounts, leagueCounts);
+    // is on the wire either way. Form factors applied so hot streaks
+    // / slumps shift the prediction (see recencyFormFactor below).
+    const batterCountsAdj  = applyFormFactor(batterCounts,  batterForm);
+    const pitcherCountsAdj = applyFormFactor(pitcherCounts, pitcherForm);
+    const predictedAllCount = predict(batterCountsAdj, pitcherCountsAdj, leagueCounts);
 
     // Count-aware branch: only kicks in if the caller passed a valid
     // (balls, strikes) AND both players have enough Statcast-era PAs at
@@ -248,9 +261,15 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
                 countState.balls,
                 countState.strikes,
             );
+            // Apply the same form factors to the count-aware path so a
+            // hot batter on 0-2 sees the boost too. Static Statcast
+            // 2020-24 cells are the base; the recency multiplier lifts
+            // outcomes the batter/pitcher has been doing more recently.
+            const batterCountAdj  = applyFormFactor(batterCountCounts,  batterForm);
+            const pitcherCountAdj = applyFormFactor(pitcherCountCounts, pitcherForm);
             predicted = predict(
-                batterCountCounts,
-                pitcherCountCounts,
+                batterCountAdj,
+                pitcherCountAdj,
                 leagueCountCounts,
                 REGRESSION_PA_BY_COUNT,
             );
@@ -285,8 +304,17 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
         predicted_all_count: predictedAllCount,
         count_aware: countAware,
         count: countSample,
-        batter_rates:  rates(batterCounts),
-        pitcher_rates: rates(pitcherCounts),
+        // Per-side recency form summary — what kind of streak each is
+        // on, for the UI to render as a hot/cold pill. Includes the
+        // hit-rate ratio and the K-rate ratio (positive ratio > 1.0
+        // for hit-rate = batter is hot; positive ratio > 1.0 for K-rate
+        // = pitcher is hot / batter is slumping).
+        form: {
+            batter:  summarizeForm(batterForm,  batterCurrent.length),
+            pitcher: summarizeForm(pitcherForm, pitcherCurrent.length),
+        },
+        batter_rates:  rates(batterCountsAdj),
+        pitcher_rates: rates(pitcherCountsAdj),
         league:        rates(leagueCounts),
         // Raw current-season outcome distribution — what the batter and
         // pitcher have ACTUALLY done in the daily_pa window. Strictly
@@ -348,6 +376,113 @@ function rates(counts) {
 }
 
 // ── Odds-ratio prediction (the JS port of src/engine/matchup.predict) ─
+
+// ── Recency / hot-cold form factor ─────────────────────────────────
+
+// Recency tiers (days back from today): "recent" gets a heavy weight
+// boost, "mid" a smaller boost, older is the baseline. The 3×/1.5×/1×
+// schedule is a starting point — tunable as we get calibration data.
+const RECENCY_RECENT_DAYS = 30;
+const RECENCY_MID_DAYS    = 90;
+const RECENCY_WEIGHTS     = { recent: 3, mid: 1.5, base: 1 };
+
+// Sample-size regression for the form factor — small daily_pa samples
+// get pulled toward neutral (factor = 1.0). With 100 PAs of daily data,
+// reliability = 100/(100+50) ≈ 0.67; with 30 PAs, ≈ 0.37; with 500+,
+// nearly 1.0. Keeps a cold week from looking like a 2-month slump.
+const FORM_REGRESSION_PA = 50;
+
+
+// Computes per-outcome form ratios for one player from their daily_pa
+// rows. Returns an object {outcome → ratio}; ratio > 1 means that
+// outcome has been MORE common recently than career, < 1 means LESS.
+// Regressed toward 1.0 by sample size so noise doesn't dominate.
+function recencyFormFactor(rows) {
+    if (!rows || rows.length === 0) return null;
+
+    const today = Date.now();
+    const dayMs = 86400 * 1000;
+    const cutoffRecent = today - RECENCY_RECENT_DAYS * dayMs;
+    const cutoffMid    = today - RECENCY_MID_DAYS    * dayMs;
+
+    let recentN = 0, baseN = 0;
+    const recent = {}, base = {};
+    for (const r of rows) {
+        const ts = Date.parse(r.game_date);
+        if (!Number.isFinite(ts)) continue;
+        const w = ts >= cutoffRecent ? RECENCY_WEIGHTS.recent
+                : ts >= cutoffMid    ? RECENCY_WEIGHTS.mid
+                : RECENCY_WEIGHTS.base;
+        recent[r.outcome] = (recent[r.outcome] || 0) + w;
+        base[r.outcome]   = (base[r.outcome]   || 0) + 1;
+        recentN += w;
+        baseN   += 1;
+    }
+    if (recentN === 0 || baseN === 0) return null;
+
+    // Reliability = how much we trust the recency signal vs neutral.
+    // Smoothly approaches 1 as sample grows.
+    const reliability = Math.min(1, baseN / (baseN + FORM_REGRESSION_PA));
+
+    const factor = {};
+    for (const o of OUTCOMES) {
+        const recentRate = (recent[o] || 0) / recentN;
+        const baseRate   = (base[o]   || 0) / baseN;
+        const rawRatio   = baseRate > 0 ? recentRate / baseRate : 1;
+        // Pull toward neutral (1.0) by 1 - reliability. Tiny samples
+        // basically don't shift the prediction; large samples shift
+        // most of the way.
+        factor[o] = 1 + (rawRatio - 1) * reliability;
+    }
+    return factor;
+}
+
+
+// Multiplies counts by the form-factor ratio per outcome, then
+// renormalizes so the total stays the same (so the existing
+// regression-to-league math still uses the right N).
+function applyFormFactor(counts, factor) {
+    if (!factor) return { ...counts };
+    let origTotal = 0, newTotal = 0;
+    const scaled = {};
+    for (const o of OUTCOMES) {
+        const c = counts[o] || 0;
+        origTotal += c;
+        scaled[o] = c * (factor[o] || 1);
+        newTotal += scaled[o];
+    }
+    if (origTotal <= 0 || newTotal <= 0) return { ...counts };
+    const k = origTotal / newTotal;
+    const out = {};
+    for (const o of OUTCOMES) out[o] = scaled[o] * k;
+    return out;
+}
+
+
+// Compact summary for the response so the UI can show "Form: 🔥" /
+// "Form: 🧊" pills. Computes a hit-rate ratio (1B+2B+3B+HR) and a
+// K-rate ratio (K). Includes a sample-size hint so the UI can decide
+// whether to display the signal at all.
+function summarizeForm(factor, sampleN) {
+    if (!factor) return null;
+    const hits = ["1B", "2B", "3B", "HR"];
+    let hitRatio = 0;
+    let count = 0;
+    for (const h of hits) {
+        if (factor[h] != null) { hitRatio += factor[h]; count += 1; }
+    }
+    if (count > 0) hitRatio /= count;
+    return {
+        sample_pa: sampleN,
+        hit_rate_factor: round3(hitRatio || 1),
+        k_rate_factor:   round3(factor.K || 1),
+        bb_rate_factor:  round3(factor.BB || 1),
+        hr_rate_factor:  round3(factor.HR || 1),
+    };
+}
+
+function round3(x) { return Math.round(x * 1000) / 1000; }
+
 
 function predict(batterC, pitcherC, leagueC, regressionPa = REGRESSION_PA) {
     const leagueRates = rates(leagueC);
