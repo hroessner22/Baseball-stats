@@ -4,9 +4,16 @@
 // across the four engines:
 //
 //  * players table        — name + MLBAM/retrosheet identity
-//  * batter_rates table   — historical 2020–2024 outcome rates by hand-faced
+//  * batter_rates table   — Retrosheet 2020–2024 outcome rates by hand-faced
 //  * pitcher_rates table  — same shape but for pitchers
-//  * daily_pa event log   — current-season outcomes per PA
+//  * daily_pa event log   — every PA since the daily cron started writing
+//                           (plus whatever historical seasons the backfill
+//                           workflow has caught up — 2025+ as of 2026-05)
+//
+// "Career" bars combine the Retrosheet rates with every daily_pa row
+// from a year that ISN'T the current season — so once 2025 is backfilled
+// the bars naturally cover 2020 through last year, with 2026 broken out
+// in the "THIS SEASON" callout.
 //
 // Returns null for the batter or pitcher section if the player has no
 // data in that role — a position player gets a `batter` section and
@@ -14,6 +21,8 @@
 // (Ohtani-types) get both populated.
 
 const OUTCOMES = ["K", "BB", "HBP", "1B", "2B", "3B", "HR", "OUT", "OTHER"];
+const RETROSHEET_START_YEAR = 2020;
+const RETROSHEET_END_YEAR   = 2024;
 
 export async function onRequest(context) {
     const env = context.env || {};
@@ -81,6 +90,32 @@ export async function onRequest(context) {
             }),
         ]);
 
+        // Determine "current season" from the latest game_date we have on
+        // file for this player. Fall back to the calendar year when the
+        // player has no daily_pa rows at all. Anything older than this
+        // year gets folded into the career bars; this year is the "THIS
+        // SEASON" callout.
+        const latestDate = [...batterSeason, ...pitcherSeason]
+            .map(r => r.game_date)
+            .filter(Boolean)
+            .reduce((m, d) => (m === null || d > m ? d : m), null);
+        const currentYear = latestDate
+            ? parseInt(latestDate.slice(0, 4), 10)
+            : new Date().getUTCFullYear();
+
+        // Coverage range for the "CAREER · YYYY–YYYY" label. Starts at the
+        // Retrosheet floor and extends to the most recent COMPLETED season
+        // present in the daily_pa log — the current season is in its own
+        // "THIS SEASON" callout, so including it in the career label would
+        // double-count visually. Updates without a deploy as the backfill
+        // workflow catches up (2024 today → 2025 once backfill lands).
+        let coverageEnd = RETROSHEET_END_YEAR;
+        for (const r of [...batterSeason, ...pitcherSeason]) {
+            if (!r.game_date) continue;
+            const y = parseInt(r.game_date.slice(0, 4), 10);
+            if (y !== currentYear && y > coverageEnd) coverageEnd = y;
+        }
+
         return jsonResponse({
             player: {
                 mlbam: player.mlbam,
@@ -90,12 +125,13 @@ export async function onRequest(context) {
                 last:  player.name_last,
             },
             batter:  batterRows.length || batterSeason.length
-                ? buildBatter(batterRows, batterSeason)
+                ? buildBatter(batterRows, batterSeason, currentYear)
                 : null,
             pitcher: pitcherRows.length || pitcherSeason.length
-                ? buildPitcher(pitcherRows, pitcherSeason)
+                ? buildPitcher(pitcherRows, pitcherSeason, currentYear)
                 : null,
-            historical_years: { start: 2020, end: 2024 },
+            historical_years: { start: RETROSHEET_START_YEAR, end: coverageEnd },
+            current_year: currentYear,
         }, 300);
     } catch (e) {
         return jsonError(502, `${e.message || e}`);
@@ -104,7 +140,7 @@ export async function onRequest(context) {
 
 // ── shape builders ──────────────────────────────────────────────────
 
-function buildBatter(rows, seasonRows) {
+function buildBatter(rows, seasonRows, currentYear) {
     // Career: aggregate by (vs_hand, outcome) across all years
     const byHand = { L: zeroOutcomes(), R: zeroOutcomes() };
     let dominantBats = null;
@@ -120,17 +156,30 @@ function buildBatter(rows, seasonRows) {
         dominantBats = Object.entries(batsTally).sort((a, b) => b[1] - a[1])[0][0];
     }
 
+    // Split daily_pa rows into "this season" and prior seasons. Fold the
+    // priors into the career bars so the historical picture extends past
+    // the Retrosheet 2024 cutoff as the backfill catches up; this season
+    // stays in its own callout so its sample (~30 PAs in May) doesn't get
+    // lost in a career sample (thousands of PAs).
+    const { current: seasonNow, prior: seasonPrior } =
+        splitByYear(seasonRows, currentYear);
+    for (const r of seasonPrior) {
+        const hand = r.pitcher_hand;
+        if (!byHand[hand]) continue;
+        byHand[hand][r.outcome] = (byHand[hand][r.outcome] || 0) + 1;
+    }
+
     return {
         bats: dominantBats,
         career: {
             vs_RHP: rateTable(byHand.R),
             vs_LHP: rateTable(byHand.L),
         },
-        season: aggregateSeasonRows(seasonRows, "pitcher_hand"),
+        season: aggregateSeasonRows(seasonNow, "pitcher_hand"),
     };
 }
 
-function buildPitcher(rows, seasonRows) {
+function buildPitcher(rows, seasonRows, currentYear) {
     const byHand = { L: zeroOutcomes(), R: zeroOutcomes() };
     let throws = null;
     const throwsTally = {};
@@ -143,14 +192,37 @@ function buildPitcher(rows, seasonRows) {
         throws = Object.entries(throwsTally).sort((a, b) => b[1] - a[1])[0][0];
     }
 
+    // Same split as the batter side: fold pre-current-year daily_pa rows
+    // into the career bars by batter handedness.
+    const { current: seasonNow, prior: seasonPrior } =
+        splitByYear(seasonRows, currentYear);
+    for (const r of seasonPrior) {
+        const hand = r.batter_hand;
+        if (!byHand[hand]) continue;
+        byHand[hand][r.outcome] = (byHand[hand][r.outcome] || 0) + 1;
+    }
+
     return {
         throws,
         career: {
             vs_RHB: rateTable(byHand.R),
             vs_LHB: rateTable(byHand.L),
         },
-        season: aggregateSeasonRows(seasonRows, "batter_hand"),
+        season: aggregateSeasonRows(seasonNow, "batter_hand"),
     };
+}
+
+// Partition a list of daily_pa rows into ones from `currentYear` and ones
+// from any earlier year, by inspecting the leading "YYYY-" of game_date.
+function splitByYear(rows, currentYear) {
+    const yearStr = String(currentYear);
+    const current = [];
+    const prior   = [];
+    for (const r of rows) {
+        if ((r.game_date || "").slice(0, 4) === yearStr) current.push(r);
+        else prior.push(r);
+    }
+    return { current, prior };
 }
 
 // Build a section like:

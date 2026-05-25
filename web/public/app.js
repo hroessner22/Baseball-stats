@@ -753,8 +753,9 @@ function renderPlayer(d) {
 
         ${(!d.batter && !d.pitcher) ? `
           <div class="player-empty">
-            <p>No data for this player in our 2020–2024 historical window,
-               and they haven't appeared in this season's daily ingest yet.</p>
+            <p>No data for this player in our ${d.historical_years.start}–${d.historical_years.end}
+               historical window, and they haven't appeared in this season's
+               daily ingest yet.</p>
             <p>If they're a recent callup, they'll show up in the matchup
                engine once they've taken some PAs.</p>
           </div>
