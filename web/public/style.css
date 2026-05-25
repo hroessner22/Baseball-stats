@@ -1983,6 +1983,61 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* Projected-WE block — sits between the current WE bar and the
+   evidence line in the WE card. Shows where the WE is headed if the
+   current PA unfolds as the matchup engine predicts, plus the
+   leverage of the PA (gap between current and projected). */
+.projected-we {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border-left: 2px solid var(--accent-action);
+    border-radius: 0 4px 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.projected-we .pw-headline {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+    color: var(--text);
+    font-weight: 500;
+}
+.projected-we .pw-headline strong {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+.projected-we .pw-arrow {
+    font-weight: 800;
+    font-size: 11px;
+}
+.projected-we .pw-arrow.up   { color: var(--accent-win); }
+.projected-we .pw-arrow.down { color: var(--accent-live); }
+.projected-we .pw-arrow.flat { color: var(--text-dim); }
+.projected-we .pw-lev {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+}
+.projected-we .pw-range {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+}
+.projected-we .pw-range strong {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
 .card .situation-line {
     color: var(--text);
     font-size: 13px;
