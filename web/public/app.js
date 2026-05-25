@@ -1266,7 +1266,11 @@ async function refreshGame(id) {
         // less disruptive than showing nothing.
         gameView.innerHTML = renderGame(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
-            hydrateMatchup(g.batter.id, g.pitcher.id, id);
+            // Pass the live count so the matchup engine returns
+            // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
+            // completely different to the model). Frontend re-fetches
+            // whenever (batter, pitcher, balls, strikes) changes.
+            hydrateMatchup(g.batter.id, g.pitcher.id, id, g.balls, g.strikes);
         }
         if (gameViewMode === "gamecast") {
             refreshGamecast(id);
@@ -1746,10 +1750,23 @@ const OUTCOME_LABEL = {
     OTHER: "error / fielder's choice",
 };
 
-async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor) {
+async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor, balls, strikes) {
     try {
+        // Build the request key including count so the cache key knows
+        // about pitch-level state. Without this, the matchup card
+        // wouldn't re-fetch on a count change and the user would see
+        // the prior pitch's prediction frozen on screen.
+        const countQuery = (balls != null && strikes != null)
+            ? `&balls=${balls}&strikes=${strikes}`
+            : "";
+        const key = `${batterMlbam}-${pitcherMlbam}-${balls}-${strikes}`;
+        if (cachedMatchupKey === key && cachedMatchupSlot) {
+            // Same count we last rendered — skip the network call and
+            // keep the cached card up.
+            return;
+        }
         const res = await fetch(
-            `/api/matchup?batter=${batterMlbam}&pitcher=${pitcherMlbam}`
+            `/api/matchup?batter=${batterMlbam}&pitcher=${pitcherMlbam}${countQuery}`
         );
         if (!res.ok) return;
         const m = await res.json();
@@ -1759,7 +1776,7 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor) {
         const html = renderMatchupCard(m);
         slot.innerHTML = html;
         cachedMatchupSlot = html;
-        cachedMatchupKey = `${batterMlbam}-${pitcherMlbam}`;
+        cachedMatchupKey = key;
     } catch (e) {
         // silently absent — the page works without the matchup card
     }
@@ -2274,6 +2291,15 @@ function renderMatchupCard(m) {
         `
         : "";
 
+    // Count-aware badge: when the per-count rates kicked in, surface the
+    // count so the user knows the prediction shifted because of where
+    // the PA actually is, not just "Judge vs Kershaw average."
+    const countBadge = m.count_aware
+        ? `<span class="count-aware-badge" title="Prediction uses ${m.batter.name}'s ${m.count.batter_pa} PAs and ${m.pitcher.name}'s ${m.count.pitcher_bf} BF at this count">
+              ${m.count.balls}-${m.count.strikes} count · Statcast 2020-2024
+           </span>`
+        : "";
+
     return `
       <div class="card matchup-card">
         <div class="subject">
@@ -2282,7 +2308,7 @@ function renderMatchupCard(m) {
           <a class="player-link" href="#player/${m.pitcher.mlbam}">${m.pitcher.name}</a> (${m.pitcher.throws}HP)
         </div>
 
-        <div class="question">What's about to happen?</div>
+        <div class="question">What's about to happen? ${countBadge}</div>
         <div class="outcome-table">${rows}</div>
 
         <div class="evidence">

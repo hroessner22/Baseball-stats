@@ -1,13 +1,33 @@
-// /api/matchup?batter={mlbam}&pitcher={mlbam}
+// /api/matchup?batter={mlbam}&pitcher={mlbam}[&balls=N&strikes=M]
 //
 // The Phase 3.2 endpoint — given two MLBAM player ids, returns a predicted
 // outcome distribution for one plate appearance. Queries Supabase for the
 // pre-aggregated rate tables (batter_rates, pitcher_rates, league_rates +
 // the players id map) and combines them with the odds-ratio method
 // (the JS port of src/engine/matchup.predict).
+//
+// Count-aware mode: if balls/strikes are in the URL (the in-game state),
+// the engine swaps the all-count rate tables for the per-count ones
+// (batter_rates_by_count / pitcher_rates_by_count, see PR #57) and
+// regresses toward the LEAGUE PER-COUNT baseline instead of the
+// all-count baseline. The same odds-ratio combination math is reused —
+// only the input sample changes. This is the user-flagged
+// "expectancy of a hit/out depends very much on the count" pass: Judge
+// on 3-0 vs 0-2 returns completely different distributions now.
+
+import { LEAGUE_RATES_BY_COUNT } from "./_league_rates_by_count.js";
 
 const OUTCOMES = ["K", "BB", "HBP", "1B", "2B", "3B", "HR", "OUT", "OTHER"];
 const REGRESSION_PA = 100;
+// Per-count cells are inherently smaller (~12x split). Same 100-PA
+// regression value as the all-count engine produces sensible shrinkage:
+// a regular at ~150 PAs in a given count cell ends up ~60/40 blended
+// with the league baseline; a sub at ~20 PAs ends up ~83% league.
+const REGRESSION_PA_BY_COUNT = 100;
+// Don't bother with count-aware lookup unless both players have at
+// least this many PAs at the requested count — below this, the noise
+// outweighs the signal we'd add over the all-count engine.
+const MIN_COUNT_SAMPLE = 30;
 
 export async function onRequest(context) {
     const env = context.env || {};
@@ -22,9 +42,26 @@ export async function onRequest(context) {
         return jsonError(400, "batter and pitcher MLBAM ids required");
     }
 
+    // Optional in-game count. When both are present and valid, the
+    // engine tries the per-count rates path first; falls back to the
+    // all-count path silently when sample is thin on either side.
+    const ballsParam   = url.searchParams.get("balls");
+    const strikesParam = url.searchParams.get("strikes");
+    let countState = null;
+    if (ballsParam !== null && strikesParam !== null) {
+        const b = parseInt(ballsParam, 10);
+        const s = parseInt(strikesParam, 10);
+        if (b >= 0 && b <= 3 && s >= 0 && s <= 2) {
+            countState = { balls: b, strikes: s };
+        }
+    }
+
     try {
-        const result = await buildMatchup(env, +batterId, +pitcherId);
-        return jsonResponse(result, 60);
+        const result = await buildMatchup(env, +batterId, +pitcherId, countState);
+        // Tighter cache when the count is in play — the prediction
+        // changes per pitch and the frontend polls every 5s. 60s on the
+        // all-count path stays since that doesn't refresh per pitch.
+        return jsonResponse(result, countState ? 5 : 60);
     } catch (e) {
         return jsonError(502, `${e.message || e}`);
     }
@@ -74,7 +111,7 @@ async function sb(env, table, params) {
 
 // ── Matchup ──────────────────────────────────────────────────────────
 
-async function buildMatchup(env, batterMlbam, pitcherMlbam) {
+async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
     // 1) Map the two MLBAM ids to retrosheet ids (+ names).
     const players = await sb(env, "players", {
         mlbam: `in.(${batterMlbam},${pitcherMlbam})`,
@@ -156,7 +193,70 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
     addCounts(batterCounts, batterCurrentCounts);
     addCounts(pitcherCounts, pitcherCurrentCounts);
 
-    const predicted = predict(batterCounts, pitcherCounts, leagueCounts);
+    // All-count prediction — what we'd return if no count was passed.
+    // Always computed because we use it as a fallback AND we ship it
+    // alongside the count-aware prediction in the response so the
+    // frontend can show "count-aware: X% K, all-count: Y% K" if it
+    // wants. Today it just uses count-aware when present, but the data
+    // is on the wire either way.
+    const predictedAllCount = predict(batterCounts, pitcherCounts, leagueCounts);
+
+    // Count-aware branch: only kicks in if the caller passed a valid
+    // (balls, strikes) AND both players have enough Statcast-era PAs at
+    // that count for the prediction to mean something. Below the
+    // threshold we silently fall back to all-count — the user-facing
+    // signal is `count_aware: true` so the UI can be transparent.
+    let predicted = predictedAllCount;
+    let countAware = false;
+    let countSample = null;
+    if (countState) {
+        const [batterCountRows, pitcherCountRows] = await Promise.all([
+            sb(env, "batter_rates_by_count", {
+                batter_mlbam: `eq.${batterMlbam}`,
+                vs_hand:      `eq.${throws}`,
+                balls:        `eq.${countState.balls}`,
+                strikes:      `eq.${countState.strikes}`,
+                select:       "outcome,n",
+            }),
+            sb(env, "pitcher_rates_by_count", {
+                pitcher_mlbam: `eq.${pitcherMlbam}`,
+                vs_hand:       `eq.${bats}`,
+                balls:         `eq.${countState.balls}`,
+                strikes:       `eq.${countState.strikes}`,
+                select:        "outcome,n",
+            }),
+        ]);
+        const batterCountCounts  = sumByOutcome(batterCountRows);
+        const pitcherCountCounts = sumByOutcome(pitcherCountRows);
+        const bSample = total(batterCountCounts);
+        const pSample = total(pitcherCountCounts);
+        countSample = {
+            batter_pa:   bSample,
+            pitcher_bf:  pSample,
+            balls:       countState.balls,
+            strikes:     countState.strikes,
+        };
+        if (bSample >= MIN_COUNT_SAMPLE && pSample >= MIN_COUNT_SAMPLE) {
+            // League per-count baseline — shipped as a precomputed JS
+            // constant (~48 cells: 4 hand-pairs × 12 counts). Same role
+            // as leagueCounts in the all-count path: the regression
+            // target. Keyed by BOTH hands so platoon effects (R-vs-R
+            // pitchers do well, L-vs-R is the platoon advantage) stay
+            // in the baseline at every count.
+            const leagueCountCounts = leagueByCountFor(
+                bats, throws,
+                countState.balls,
+                countState.strikes,
+            );
+            predicted = predict(
+                batterCountCounts,
+                pitcherCountCounts,
+                leagueCountCounts,
+                REGRESSION_PA_BY_COUNT,
+            );
+            countAware = true;
+        }
+    }
 
     return {
         available: true,
@@ -182,6 +282,9 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
             pitcher_bf_current_season: pitcherCurrent.length,
         },
         predicted,
+        predicted_all_count: predictedAllCount,
+        count_aware: countAware,
+        count: countSample,
         batter_rates:  rates(batterCounts),
         pitcher_rates: rates(pitcherCounts),
         league:        rates(leagueCounts),
@@ -195,6 +298,14 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam) {
             pitcher: { bf: pitcherCurrent.length, outcomes: pitcherCurrentCounts },
         },
     };
+}
+
+// Pull the league per-(bats, throws, balls, strikes) outcome counts
+// from the precomputed LEAGUE_RATES_BY_COUNT constant. Used as the
+// regression target inside predict() when the count-aware branch fires.
+function leagueByCountFor(batterHand, pitcherHand, balls, strikes) {
+    const key = `${batterHand}|${pitcherHand}|${balls}|${strikes}`;
+    return LEAGUE_RATES_BY_COUNT[key] || {};
 }
 
 // Tally outcomes from a daily_pa row list (each row has just {outcome}).
@@ -238,14 +349,14 @@ function rates(counts) {
 
 // ── Odds-ratio prediction (the JS port of src/engine/matchup.predict) ─
 
-function predict(batterC, pitcherC, leagueC) {
+function predict(batterC, pitcherC, leagueC, regressionPa = REGRESSION_PA) {
     const leagueRates = rates(leagueC);
     const regressed = (counts) => {
-        const t = total(counts) + REGRESSION_PA;
+        const t = total(counts) + regressionPa;
         const out = {};
         for (const o of OUTCOMES) {
             out[o] = t > 0
-                ? ((counts[o] || 0) + REGRESSION_PA * leagueRates[o]) / t
+                ? ((counts[o] || 0) + regressionPa * leagueRates[o]) / t
                 : leagueRates[o];
         }
         return out;
