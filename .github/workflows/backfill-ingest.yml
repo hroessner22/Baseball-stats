@@ -1,0 +1,50 @@
+name: Historical backfill
+
+# One-off catch-up ingest for date ranges the daily cron didn't cover.
+# Triggered manually from the Actions tab with a start_date / end_date.
+# Reuses the same secrets as the daily cron and the same idempotent
+# (game_pk, pa_index) constraint, so re-running for an overlapping range
+# is safe and cheap (the duplicate rows just get skipped server-side).
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First date to ingest (YYYY-MM-DD, inclusive)"
+        required: true
+      end_date:
+        description: "Last date to ingest (YYYY-MM-DD, inclusive)"
+        required: true
+      game_delay_ms:
+        description: "Polite delay between per-game MLB Stats API calls"
+        required: false
+        default: "100"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # GitHub Actions caps jobs at 6h. Our worst case (~440 days, ~3,900
+    # final games, ~280k PAs) should finish in well under an hour, so 5h
+    # is plenty of headroom for slow API days.
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runtime deps
+        run: pip install --quiet certifi
+
+      - name: Backfill plate appearances
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python -m src.backfill_history \
+            --start-date "${{ inputs.start_date }}" \
+            --end-date   "${{ inputs.end_date }}" \
+            --game-delay-ms "${{ inputs.game_delay_ms }}"
