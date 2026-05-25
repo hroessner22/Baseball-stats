@@ -1,0 +1,32 @@
+name: Build WPA leaderboard
+
+# Recomputes the wpa_season table from daily_pa each morning after the
+# daily ingest has landed yesterday's games. WPA changes slowly — a
+# nightly refresh is enough resolution for the leaderboard.
+#
+# Runs at 12:00 UTC daily (~8 AM ET), an hour after the morning ingest.
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install --quiet certifi
+
+      - name: Build WPA season table
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m src.build_wpa_season --season 2026
