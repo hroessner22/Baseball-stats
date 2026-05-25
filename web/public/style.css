@@ -125,6 +125,110 @@ main.board {
     padding: 96px 16px;
     line-height: 1.7;
 }
+
+/* Date navigation bar above the Board's tile grid. Spans the full
+   grid width (same trick as .empty: grid-column: 1 / -1). Prev /
+   center label / next + a native date picker for arbitrary jumps. */
+.board-datebar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    padding: 6px 4px;
+    flex-wrap: wrap;
+    position: relative;
+}
+.board-datebar .bd-arrow {
+    color: var(--accent-action);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: background 120ms ease, color 120ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.board-datebar .bd-arrow:hover {
+    background: var(--surface-2);
+    color: var(--text);
+}
+.board-datebar .bd-arrow.disabled {
+    color: var(--text-dim);
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+.board-datebar .bd-arrow-date {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+}
+.board-datebar .bd-arrow:hover .bd-arrow-date { color: var(--text); }
+.board-datebar .bd-center {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
+}
+.board-datebar .bd-today-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    background: var(--accent-action);
+    color: white;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    line-height: 1;
+}
+.board-datebar .bd-today-link {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--accent-action);
+    text-decoration: none;
+    text-transform: uppercase;
+    border-bottom: 1px dotted rgba(59, 130, 246, 0.4);
+}
+.board-datebar .bd-today-link:hover {
+    color: var(--text);
+    border-bottom-color: var(--text);
+}
+.board-datebar .bd-date {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.005em;
+}
+.board-datebar .bd-jump {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 4px 6px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease;
+    color-scheme: dark;
+}
+.board-datebar .bd-jump:hover,
+.board-datebar .bd-jump:focus {
+    border-color: var(--accent-action);
+    color: var(--text);
+    outline: none;
+}
 .empty .sub {
     font-size: 11px;
     font-weight: 600;
