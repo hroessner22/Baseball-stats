@@ -2078,6 +2078,134 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-weight: 700;
 }
 
+/* Chart wrap holds the SVG + the absolutely-positioned tooltip so the
+   tooltip's coordinates can be wrap-relative. */
+.trace-card .trace-chart-wrap {
+    position: relative;
+    width: 100%;
+}
+
+/* Interactive markers — dim until hovered. The biggest-swing marker
+   and the final/current point stay bright so they're discoverable
+   without scrubbing. */
+.trace-card .trace-marker {
+    opacity: 0.35;
+    cursor: pointer;
+    transition: opacity 120ms ease, r 120ms ease;
+}
+.trace-card .trace-marker.biggest {
+    opacity: 1;
+    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.55));
+}
+.trace-card .trace-marker.final {
+    opacity: 1;
+}
+.trace-card .trace-marker:hover,
+.trace-card .trace-marker:focus {
+    opacity: 1;
+    outline: none;
+}
+
+/* Tooltip — absolutely positioned inside trace-chart-wrap. JS computes
+   left/top to keep it inside the chart bounds. */
+.trace-card .trace-tooltip {
+    position: absolute;
+    z-index: 4;
+    min-width: 180px;
+    max-width: 260px;
+    background: var(--bg);
+    border: 1px solid var(--accent-action);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+}
+.trace-card .trace-tooltip[hidden] { display: none !important; }
+.trace-card .tt-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.trace-card .tt-inning {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+}
+.trace-card .tt-score {
+    color: var(--text);
+    font-weight: 700;
+    font-size: 12px;
+}
+.trace-card .tt-we {
+    color: var(--accent-win);
+    font-weight: 800;
+    font-size: 12px;
+}
+.trace-card .tt-swing {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--accent-live);
+    text-transform: uppercase;
+}
+.trace-card .tt-event {
+    font-weight: 700;
+    color: var(--text);
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+.trace-card .tt-players {
+    color: var(--text-dim);
+    font-weight: 500;
+    margin-bottom: 4px;
+    font-size: 10px;
+    letter-spacing: 0.03em;
+}
+.trace-card .tt-desc {
+    color: var(--text);
+    font-weight: 400;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+/* "Biggest swing" call-out below the chart — text version of the
+   highlighted marker, always visible without needing to hover. */
+.trace-card .trace-biggest {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 10px;
+    padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.4;
+}
+.trace-card .trace-biggest strong {
+    color: var(--accent-live);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+.trace-card .trace-biggest .tb-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-live);
+    flex-shrink: 0;
+}
+
 /* ── RECAP CARD ──────────────────────────────────────────────── */
 /* Appears on Final games above the matchup card. LLM-generated narrative
    that explicitly leans on our predicted-vs-actual data — "the model
