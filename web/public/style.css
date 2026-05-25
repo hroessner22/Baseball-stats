@@ -2299,6 +2299,12 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .page-footer .model-accuracy .ma-link:hover {
     color: var(--text);
 }
+.page-footer .model-accuracy .ma-variant {
+    color: var(--text-dim);
+    font-size: 11px;
+    cursor: help;
+    border-bottom: 1px dotted var(--text-dim);
+}
 
 /* ── GAME VIEW ─────────────────────────────────────────────────── */
 
