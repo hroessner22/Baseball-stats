@@ -2123,6 +2123,21 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .projected-we .pw-arrow.up   { color: var(--accent-win); }
 .projected-we .pw-arrow.down { color: var(--accent-live); }
 .projected-we .pw-arrow.flat { color: var(--text-dim); }
+/* Per-pitch count badge on the projected-WE headline — same style as
+   the matchup-card count-aware badge, smaller. Sits next to the WE%
+   so it reads as "this number is keyed to this exact count." */
+.projected-we .pw-count {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--accent-action);
+    background: rgba(59, 130, 246, 0.12);
+    padding: 1px 5px;
+    border-radius: 3px;
+    cursor: help;
+    font-variant-numeric: tabular-nums;
+}
 .projected-we .pw-lev {
     margin-left: auto;
     font-size: 10px;

@@ -189,10 +189,18 @@ export async function onRequest(context) {
     }
 
     // Get the predicted outcome distribution from the matchup engine.
+    // Pass the live count so the matchup engine returns count-aware
+    // rates when sample allows (PR #58 — batter on 3-0 vs 0-2 returns
+    // very different distributions). Since projected WE = sum_o
+    // predicted[o] × post_PA_WE(state, o), the projection becomes
+    // count-aware automatically — same math, count-shifted weights.
     let matchup;
     try {
+        const countQuery = (game.balls != null && game.strikes != null)
+            ? `&balls=${game.balls}&strikes=${game.strikes}`
+            : "";
         const res = await fetch(
-            `${origin}/api/matchup?batter=${game.batter.id}&pitcher=${game.pitcher.id}`
+            `${origin}/api/matchup?batter=${game.batter.id}&pitcher=${game.pitcher.id}${countQuery}`
         );
         if (!res.ok) throw new Error(`matchup HTTP ${res.status}`);
         matchup = await res.json();
@@ -258,6 +266,13 @@ export async function onRequest(context) {
         if (worstHome === null || post_we < worstHome) { worstHome = post_we; worstOutcome = o; }
     }
 
+    // When the matchup engine ran in count-aware mode, the projection
+    // is per-pitch (refreshes every count change) rather than per-PA.
+    // Drop the cache TTL so the frontend's 5s game poll always reaches
+    // a fresh response for the live count.
+    const countAware = matchup.count_aware === true;
+    const cacheSeconds = gameId === "demo" ? 0 : (countAware ? 3 : 10);
+
     return jsonResponse({
         game_pk: gameId === "demo" ? "demo" : parseInt(gameId, 10),
         available: true,
@@ -268,7 +283,13 @@ export async function onRequest(context) {
         worst: worstOutcome ? { outcome: worstOutcome, we: worstHome } : null,
         per_outcome: perOutcome,
         matchup_sample: matchup.sample,
-    }, gameId === "demo" ? 0 : 10);
+        // Surface the count-aware mode so the UI can label the projection
+        // as per-pitch (vs per-PA). When false, the projection still uses
+        // the all-count matchup engine (e.g. between batters, or when
+        // sample is below MIN_COUNT_SAMPLE on either side).
+        count_aware: countAware,
+        count: matchup.count || null,
+    }, cacheSeconds);
 }
 
 function jsonResponse(body, maxAge) {
