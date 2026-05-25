@@ -94,10 +94,15 @@ async function loadFooterAccuracy() {
 }
 
 function variantLabel(v) {
-    if (v === "naive")          return "naive baseline";
-    if (v === "v1_historical")  return "v1 · historical only";
-    if (v === "v2_with_daily")  return "v2 · +daily";
-    if (v === "v3_recency")     return "v3 · +recency";
+    if (v === "naive")                       return "naive baseline";
+    if (v === "v1_historical")               return "v1 · historical only";
+    if (v === "v2_with_daily")               return "v2 · +daily 1×";
+    if (v === "v3_recency")                  return "v3 · +recency factor";
+    if (v === "v4_daily_3x")                 return "v4 · daily 3×";
+    if (v === "v4_daily_5x")                 return "v4 · daily 5×";
+    if (v === "v4_daily_10x")                return "v4 · daily 10×";
+    if (v === "v5_daily_5x_plus_recency")    return "v5 · daily 5× + recency";
+    if (v === "v5_daily_10x_plus_recency")   return "v5 · daily 10× + recency";
     return v || "unknown";
 }
 

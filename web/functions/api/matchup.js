@@ -28,6 +28,14 @@ const REGRESSION_PA_BY_COUNT = 100;
 // least this many PAs at the requested count — below this, the noise
 // outweighs the signal we'd add over the all-count engine.
 const MIN_COUNT_SAMPLE = 30;
+// Each daily_pa row is worth this many career-rate "PAs" when
+// combined with historical. 10× is what calibration (v4_daily_10x)
+// selected as the variant with the lowest Brier across 202k PAs from
+// 2025-03-27 through 2026-05-25 — see src/calibration.py for the
+// sweep. The intuition: the last 14 months of MLB are more predictive
+// of the next PA than the 5 years before that. Without this weight,
+// a regular's 250 daily PAs were drowned by 2,700 career PAs.
+const DAILY_PA_WEIGHT = 10;
 
 export async function onRequest(context) {
     const env = context.env || {};
@@ -192,27 +200,30 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
     ]);
     const batterCurrentCounts = countOutcomes(batterCurrent);
     const pitcherCurrentCounts = countOutcomes(pitcherCurrent);
-    addCounts(batterCounts, batterCurrentCounts);
-    addCounts(pitcherCounts, pitcherCurrentCounts);
+    // DAILY_PA_WEIGHT applied here — each daily row counts as N
+    // career-rate PAs in the combined sample. With 10× and a regular
+    // at ~250 daily / ~2,700 career, the effective split becomes 48/52
+    // (was 8/92 with equal weighting), so current-season form actually
+    // shapes the prediction instead of being smoothed away by 5-year-
+    // old history. See calibration.py / model_metrics for the receipts.
+    addCounts(batterCounts,  batterCurrentCounts,  DAILY_PA_WEIGHT);
+    addCounts(pitcherCounts, pitcherCurrentCounts, DAILY_PA_WEIGHT);
 
-    // 7) Recency form factors — the hot/cold signal. Per-outcome ratios
-    //    of last-30d rate vs season rate (3× weight on the 30-day window,
-    //    1.5× on 30-90d, 1× older). Regressed toward 1.0 by sample size
-    //    so a player with 20 recent PAs doesn't trigger a 50% swing.
-    //    Applied to the count-aware AND all-count predictions below.
+    // 7) Form factors are still computed (per-outcome recent-vs-overall
+    //    ratios) but ONLY for the descriptive UI pill (🔥 hot / 🧊 cold)
+    //    — NOT for the prediction pipeline. Calibration v5_×_plus_recency
+    //    showed adding the form factor to a daily-weighted sample is a
+    //    no-op or slight regression: once daily already dominates the
+    //    combined input, "recent vs overall" has nothing left to extract.
+    //    The pill is a fan-facing label, not engine math.
     const batterForm  = recencyFormFactor(batterCurrent);
     const pitcherForm = recencyFormFactor(pitcherCurrent);
 
     // All-count prediction — what we'd return if no count was passed.
-    // Always computed because we use it as a fallback AND we ship it
-    // alongside the count-aware prediction in the response so the
-    // frontend can show "count-aware: X% K, all-count: Y% K" if it
-    // wants. Today it just uses count-aware when present, but the data
-    // is on the wire either way. Form factors applied so hot streaks
-    // / slumps shift the prediction (see recencyFormFactor below).
-    const batterCountsAdj  = applyFormFactor(batterCounts,  batterForm);
-    const pitcherCountsAdj = applyFormFactor(pitcherCounts, pitcherForm);
-    const predictedAllCount = predict(batterCountsAdj, pitcherCountsAdj, leagueCounts);
+    // Recency is already captured by DAILY_PA_WEIGHT lifting the daily
+    // contribution to ~half the combined sample; no additional form-
+    // factor multiplier (calibration showed it added noise, not signal).
+    const predictedAllCount = predict(batterCounts, pitcherCounts, leagueCounts);
 
     // Count-aware branch: only kicks in if the caller passed a valid
     // (balls, strikes) AND both players have enough Statcast-era PAs at
@@ -261,15 +272,13 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
                 countState.balls,
                 countState.strikes,
             );
-            // Apply the same form factors to the count-aware path so a
-            // hot batter on 0-2 sees the boost too. Static Statcast
-            // 2020-24 cells are the base; the recency multiplier lifts
-            // outcomes the batter/pitcher has been doing more recently.
-            const batterCountAdj  = applyFormFactor(batterCountCounts,  batterForm);
-            const pitcherCountAdj = applyFormFactor(pitcherCountCounts, pitcherForm);
+            // No form-factor multiplier here either — same reasoning as
+            // the all-count branch above. The per-count cells are static
+            // Statcast 2020-24, and applying form on top didn't beat the
+            // daily-weight approach in calibration.
             predicted = predict(
-                batterCountAdj,
-                pitcherCountAdj,
+                batterCountCounts,
+                pitcherCountCounts,
                 leagueCountCounts,
                 REGRESSION_PA_BY_COUNT,
             );
@@ -313,8 +322,8 @@ async function buildMatchup(env, batterMlbam, pitcherMlbam, countState = null) {
             batter:  summarizeForm(batterForm,  batterCurrent.length),
             pitcher: summarizeForm(pitcherForm, pitcherCurrent.length),
         },
-        batter_rates:  rates(batterCountsAdj),
-        pitcher_rates: rates(pitcherCountsAdj),
+        batter_rates:  rates(batterCounts),
+        pitcher_rates: rates(pitcherCounts),
         league:        rates(leagueCounts),
         // Raw current-season outcome distribution — what the batter and
         // pitcher have ACTUALLY done in the daily_pa window. Strictly
@@ -343,9 +352,12 @@ function countOutcomes(rows) {
     return out;
 }
 
-// In-place: a[k] += b[k] for every outcome.
-function addCounts(a, b) {
-    for (const o of Object.keys(b)) a[o] = (a[o] || 0) + b[o];
+// In-place: a[k] += weight * b[k] for every outcome.
+// weight defaults to 1 for backward-compatible behavior; daily_pa
+// contributions pass DAILY_PA_WEIGHT to amplify current-season data
+// against the historical career baseline.
+function addCounts(a, b, weight = 1) {
+    for (const o of Object.keys(b)) a[o] = (a[o] || 0) + (b[o] || 0) * weight;
 }
 
 function name(p) {

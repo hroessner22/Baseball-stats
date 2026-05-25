@@ -47,10 +47,12 @@ export async function onRequest(context) {
         }
         const variants = Array.from(byVariant.values());
 
-        // "Production" = whichever variant is currently serving live —
-        // v3_recency as of PR #68. Fall back through the chain if a
-        // newer/older deploy is in flight.
+        // "Production" = whichever variant is currently serving live.
+        // v4_daily_10x as of the PR that swept variants and picked the
+        // lowest-Brier one across 202k PAs. Falls back through the
+        // chain if a newer/older deploy is in flight.
         const production =
+            byVariant.get("v4_daily_10x") ||
             byVariant.get("v3_recency") ||
             byVariant.get("v2_with_daily") ||
             byVariant.get("v1_historical") ||
