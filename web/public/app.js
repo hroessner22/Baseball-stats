@@ -14,7 +14,11 @@ const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 
 const BOARD_REFRESH_MS = 30_000;
-const GAME_REFRESH_MS = 15_000;
+// Game view polls fast — every PA boundary (out, hit, walk, run scoring,
+// inning change, pitcher change) gets reflected in the WE bar within a
+// couple seconds. The upstream MLB feed is edge-cached 10s, so even 5s
+// polling collapses to ~1 real upstream call per 10s.
+const GAME_REFRESH_MS = 5_000;
 const STANDINGS_REFRESH_MS = 5 * 60_000;
 const LEADERS_REFRESH_MS = 5 * 60_000;
 const MVP_REFRESH_MS = 5 * 60_000;
@@ -1526,11 +1530,19 @@ function cardPane(g) {
             ? `${arrowHalf(g.half)} ${ordinalSuffix(g.inning)} · ${g.outs} out · ${runnersText} · ${g.balls}-${g.strikes}`
             : (g.detail || g.status).toUpperCase();
 
+    // "live updating" indicator — only on Live games, sits next to the
+    // subject line. Tells the user the WE bar is actively re-polling
+    // (every 5s) and the number they're seeing isn't stale.
+    const liveIndicator = g.status === "Live"
+        ? `<span class="we-live"><span class="we-live-dot"></span>LIVE</span>`
+        : "";
+
     return `
       <div class="card-pane">
         <div class="card">
           <div class="subject">
-            ${awayAbbr}–${homeAbbr} · ${g.score.away}-${g.score.home}
+            <span>${awayAbbr}–${homeAbbr} · ${g.score.away}-${g.score.home}</span>
+            ${liveIndicator}
           </div>
           <div class="situation-line">${stateLine}</div>
 

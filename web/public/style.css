@@ -1949,11 +1949,38 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 
 .card .subject {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
     color: var(--text-dim);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
+}
+
+/* "LIVE" pill on the WE card — same visual grammar as the header pill,
+   smaller and inline. Pulsing dot signals "this number is fresh." */
+.card .subject .we-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    background: var(--accent-live);
+    color: #fff;
+    border-radius: 10px;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    line-height: 1;
+}
+.card .subject .we-live-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #fff;
+    animation: pulse 1.5s ease-in-out infinite;
 }
 
 .card .situation-line {
