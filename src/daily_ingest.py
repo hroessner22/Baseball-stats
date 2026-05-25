@@ -269,11 +269,32 @@ def _yesterday_eastern() -> str:
     return (now.date() - dt.timedelta(days=1)).strftime("%Y-%m-%d")
 
 
+def _today_eastern() -> str:
+    # Today's calendar date in ET — used by the in-day cron (live-day-
+    # ingest.yml) that runs every 4 hours during the evening / overnight
+    # so PAs land within ~4 hours of game end instead of waiting for the
+    # next morning. Same UTC-5 simplification as the yesterday helper:
+    # we only care about the calendar day, not the exact hour boundary.
+    now = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=5)
+    return now.date().strftime("%Y-%m-%d")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--date",
-        help="YYYY-MM-DD to ingest. Default: yesterday in Eastern time.",
+        help="YYYY-MM-DD to ingest. Default: yesterday in Eastern time "
+             "(or today, with --today). Takes precedence over --today.",
+    )
+    parser.add_argument(
+        "--today",
+        action="store_true",
+        help="Ingest TODAY's date in ET instead of yesterday's. Used by the "
+             "in-day cron (live-day-ingest.yml) that fires every 4 hours "
+             "during the ET evening/overnight so completed games land within "
+             "~4 hours of game end. Idempotent (UNIQUE game_pk, pa_index), "
+             "so repeated runs over partially-Final slates just add the "
+             "newly-finished games without touching existing rows.",
     )
     parser.add_argument(
         "--dry-run",
@@ -301,7 +322,12 @@ def main() -> int:
         )
         return 2
 
-    date = args.date or _yesterday_eastern()
+    if args.date:
+        date = args.date
+    elif args.today:
+        date = _today_eastern()
+    else:
+        date = _yesterday_eastern()
     # When --print-sql is active stdout is reserved for SQL; route the
     # progress lines through stderr so the SQL file stays clean.
     log_stream = sys.stderr if args.print_sql else sys.stdout

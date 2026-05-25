@@ -1,0 +1,65 @@
+name: In-day PA ingest
+
+# Runs every 15 minutes during the ET evening / overnight window so each
+# game's plate appearances land in daily_pa within ~15 minutes of game end,
+# not the next morning. The morning cron (daily-ingest.yml) stays as a
+# backstop for anything that finishes after the last in-day run.
+#
+# Window picked to bracket "after the earliest possible game end" through
+# "4 hours after the latest possible game end":
+#
+#   earliest game end: ~4 PM ET (12:30 PM start day games)
+#   latest game end:   ~1 AM ET (West Coast 10 PM start + extra innings)
+#   ingest window:     4 PM ET → 5 AM ET  ≈ 13 hours
+#
+# In UTC (the cron clock), with MLB's playing season almost entirely in EDT
+# (mid-March → early November), that's 20:00 UTC → 09:00 UTC. We split into
+# two cron lines because GitHub Actions cron doesn't wrap midnight.
+#
+# Off-window (5 AM ET → 4 PM ET, i.e. when no MLB game has finished in the
+# last 4 hours) the cron stays silent — no wasted runs. The 7 AM ET morning
+# cron in daily-ingest.yml still fires once during this gap as the final
+# yesterday-was-Final sweep.
+#
+# Cost: ~56 runs/day × ~30s each ≈ 28 min/day ≈ 840 GitHub Actions minutes
+# per month. Comfortably inside the free tier (2,000 min/month).
+#
+# Each run is idempotent — the UNIQUE (game_pk, pa_index) constraint plus
+# Prefer: resolution=ignore-duplicates means a game already ingested at
+# 9:00 PM doesn't re-write rows at 9:15 PM; only newly-Final games and
+# newly-Final PAs are added.
+
+on:
+  schedule:
+    - cron: "*/15 20-23 * * *"   # 4:00 PM ET → 7:45 PM ET (EDT)
+    - cron: "*/15 0-9   * * *"   # 8:00 PM ET → 5:45 AM ET (EDT)
+  # Manual trigger for ad-hoc runs (e.g. immediately after deploying a fix).
+  workflow_dispatch: {}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Skip work entirely if the previous in-day run is still going. Avoids
+    # the (unlikely) case where a slow run is overtaken by the next /15 tick
+    # and they race to upsert the same rows.
+    concurrency:
+      group: live-day-ingest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install runtime deps
+        run: pip install --quiet certifi
+
+      - name: Ingest today's Final games
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m src.daily_ingest --today
