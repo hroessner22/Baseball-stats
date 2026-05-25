@@ -1155,6 +1155,10 @@ async function refreshGame(id) {
         if (g.status === "Live" || g.status === "Final") {
             hydrateTrace(id, g.status);
         }
+        // Projected (matchup-blended) WE only makes sense mid-PA.
+        if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
+            hydrateProjectedWE(id);
+        }
     } catch (e) {
         renderEmpty(gameView, "Could not load this game.", `${e.message || e}`);
     }
@@ -1557,6 +1561,8 @@ function cardPane(g) {
             <span>${homeAbbr} ${homePct}%</span>
           </div>
 
+          <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
+
           <div class="evidence">
             From 115 seasons of Retrosheet game logs — how often a team in
             this exact state has won. <a href="#about" class="evidence-link">How it works</a>.
@@ -1591,6 +1597,11 @@ let cachedTraceSlot = "";
 let cachedTracePk = null;
 let cachedTraceStatus = null;
 
+// Projected-WE block — the matchup-engine-blended look-ahead WE for
+// the current PA. Refreshes with the game (every 5s) so the leverage
+// number stays current.
+let cachedProjectedSlot = "";
+
 // ── MATCHUP ENGINE (Phase 3.2) ──────────────────────────────────────
 
 const OUTCOME_LABEL = {
@@ -1622,6 +1633,54 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor) {
     } catch (e) {
         // silently absent — the page works without the matchup card
     }
+}
+
+// Loads the projected (matchup-engine-blended) WE for the current PA.
+// Renders inline in the WE card so the user sees both the current
+// state-based WE AND the expected post-PA WE given who's actually
+// pitching to whom. The gap between the two is the leverage of the PA.
+async function hydrateProjectedWE(gameId) {
+    try {
+        const res = await fetch(`/api/game/${gameId}/we-projected`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (gameId !== String(activeGameId)) return;
+        const slot = document.getElementById("projected-we-slot");
+        if (!slot) return;
+        const html = renderProjectedWE(data);
+        slot.innerHTML = html;
+        cachedProjectedSlot = html;
+    } catch {
+        // silent — slot stays with cached content
+    }
+}
+
+function renderProjectedWE(d) {
+    if (!d.available) return "";
+    const proj   = Math.round((d.projected_we || 0) * 100);
+    const cur    = Math.round((d.current_we   || 0) * 100);
+    const lev    = Math.round((d.leverage     || 0) * 100);
+    const best   = Math.round((d.best?.we     || 0) * 100);
+    const worst  = Math.round((d.worst?.we    || 0) * 100);
+    const arrow  = proj > cur ? "▲" : proj < cur ? "▼" : "→";
+    const arrowCls = proj > cur ? "up" : proj < cur ? "down" : "flat";
+    const bestLabel  = d.best?.outcome  ? `(${OUTCOME_LABEL[d.best.outcome]  || d.best.outcome})`  : "";
+    const worstLabel = d.worst?.outcome ? `(${OUTCOME_LABEL[d.worst.outcome] || d.worst.outcome})` : "";
+
+    return `
+      <div class="projected-we">
+        <div class="pw-headline">
+          <span class="pw-arrow ${arrowCls}">${arrow}</span>
+          Projected after this PA: <strong>${proj}%</strong>
+          <span class="pw-lev">leverage ±${lev} pts</span>
+        </div>
+        <div class="pw-range">
+          home WP could land between
+          <strong>${worst}%</strong> ${worstLabel} and
+          <strong>${best}%</strong> ${bestLabel}
+        </div>
+      </div>
+    `;
 }
 
 // Loads the WE trace — one data point per completed half-inning,
