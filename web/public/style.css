@@ -1096,6 +1096,201 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-style: italic;
 }
 
+/* ── PLAYER TONIGHT ────────────────────────────────────────────────
+   Projection card at the top of the player profile when the player
+   has a game today. Combines matchup info + expected line + recent
+   form + head-to-head + streaks. Green-tinted to signal "forward-
+   looking / live" — same accent as the live game forecast block. */
+.player-tonight {
+    background: rgba(34, 197, 94, 0.05);
+    border: 1px solid rgba(34, 197, 94, 0.2);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.player-tonight .pt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(34, 197, 94, 0.18);
+}
+.player-tonight .pt-when {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-win);
+}
+.player-tonight .pt-tags {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.player-tonight .pt-tag {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text);
+    background: rgba(148, 163, 184, 0.1);
+    padding: 3px 8px;
+    border-radius: 99px;
+}
+.player-tonight .pt-tag-pitcher {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--text);
+}
+.player-tonight .pt-tag-pitcher a {
+    color: var(--text);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--text-dim);
+}
+
+/* Expected line — 5-tile grid mirrors the slash strip's visual
+   language so the projected stats read as parallel to season stats. */
+.player-tonight .pt-expected-head {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.player-tonight .pt-expected-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 8px;
+}
+.player-tonight .pt-stat {
+    text-align: center;
+    padding: 10px 6px;
+    background: var(--bg);
+    border-radius: calc(var(--radius) - 2px);
+}
+.player-tonight .pt-stat-val {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.player-tonight .pt-stat-key {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+.player-tonight .pt-expected-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.player-tonight .pt-expected-meta strong {
+    color: var(--text);
+    font-weight: 700;
+}
+.player-tonight .pt-expected-empty {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+    padding: 8px 0;
+}
+
+/* Recent form — compact rows with the slash line. */
+.player-tonight .pt-recent-head,
+.player-tonight .pt-h2h-head {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.player-tonight .pt-recent {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+}
+.player-tonight .pt-recent-row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 3px 0;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.player-tonight .pt-recent-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.player-tonight .pt-recent-line {
+    color: var(--text);
+}
+.player-tonight .pt-recent-line strong {
+    color: var(--text);
+    font-weight: 700;
+}
+.player-tonight .pt-recent-dim .pt-recent-line {
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+/* Head-to-head — single line + sample note. */
+.player-tonight .pt-h2h {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+}
+.player-tonight .pt-h2h-line {
+    font-size: 13px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 4px;
+}
+.player-tonight .pt-h2h-note {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+/* Streak pills — sit at the bottom, only shown when notable. */
+.player-tonight .pt-streaks {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.player-tonight .pt-streak-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    background: rgba(148, 163, 184, 0.1);
+    padding: 4px 10px;
+    border-radius: 99px;
+}
+.player-tonight .pt-streak-pill.pt-streak-hit {
+    color: var(--accent-live);
+    background: rgba(239, 68, 68, 0.12);
+}
+
 /* ── SLASH STRIP ─────────────────────────────────────────────────
    The headline 5-tile stat strip (AVG/OBP/SLG/OPS/HR) every site
    leads with. Big numbers, small caps label below. */
