@@ -214,6 +214,23 @@ function buildTrace(allPlays, status) {
             postHome - postAway, status,
         );
 
+        // Pitch sequence within this PA — for the tooltip's per-pitch
+        // expansion. Each pitchEvent in the MLB feed has type, velocity,
+        // result description, and the count AFTER it. We keep the shape
+        // tight (one short object per pitch) so the trace response stays
+        // small: ~4-5 pitches per PA × ~75 PAs/game × ~50 bytes/pitch =
+        // ~20KB extra per trace fetch.
+        const pitches = (p.playEvents || [])
+            .filter((e) => e.isPitch)
+            .map((e) => ({
+                num:  e.pitchNumber,
+                type: e.details?.type?.code        || null,  // 'FF','SL','CU',...
+                velo: e.pitchData?.startSpeed      || null,  // mph
+                res:  e.details?.description       || null,  // 'Ball','Foul', etc.
+                b:    e.count?.balls,
+                s:    e.count?.strikes,
+            }));
+
         points.push({
             i: points.length,
             inning, half,
@@ -226,6 +243,7 @@ function buildTrace(allPlays, status) {
             pitcher_id:p.matchup?.pitcher?.id       || null,
             event:       p.result?.event       || p.result?.eventType || null,
             description: p.result?.description || null,
+            pitches:     pitches.length ? pitches : undefined,
             half_flipped: flipped || undefined,
         });
     }
