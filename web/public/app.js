@@ -762,10 +762,19 @@ function showPlayer(mlbam) {
 
 async function refreshPlayer(mlbam) {
     try {
-        const res = await fetch(`/api/player/${mlbam}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        playerView.innerHTML = renderPlayer(data);
+        // Two parallel fetches: the standard player profile + the
+        // "tonight" projection (which independently checks if the
+        // player has a game today). Tonight endpoint returns
+        // available:false when there's no game; the UI handles that
+        // gracefully by skipping the projection card.
+        const [profileRes, tonightRes] = await Promise.all([
+            fetch(`/api/player/${mlbam}`),
+            fetch(`/api/player/${mlbam}/tonight`),
+        ]);
+        if (!profileRes.ok) throw new Error(`HTTP ${profileRes.status}`);
+        const data = await profileRes.json();
+        const tonight = tonightRes.ok ? await tonightRes.json() : null;
+        playerView.innerHTML = renderPlayer(data, tonight);
     } catch (e) {
         renderEmpty(playerView, "Couldn't load player.", `${e.message || e}`);
     }
@@ -775,12 +784,13 @@ async function refreshPlayer(mlbam) {
 // lines + rate stats from the raw counts our APIs return.
 const OUTCOMES_ARRAY = ["K", "BB", "HBP", "1B", "2B", "3B", "HR", "OUT", "OTHER"];
 
-function renderPlayer(d) {
+function renderPlayer(d, tonight) {
     const p = d.player;
     return `
       <a class="back-link" href="#">← BOARD</a>
       <article class="player-doc">
         ${renderHeroHeader(p, d)}
+        ${tonight && tonight.available ? renderTonightCard(p, tonight) : ""}
         ${d.batter  ? renderBatterModule(d.batter,  d.current_year) : ""}
         ${d.pitcher ? renderPitcherModule(d.pitcher, d.current_year) : ""}
         ${(!d.batter && !d.pitcher) ? renderNoDataState(d) : ""}
@@ -823,6 +833,147 @@ function renderHeroHeader(player, d) {
         ${meta.length ? `<div class="ph-meta">${meta.map(m => `<span>${m}</span>`).join("<span class=\"ph-dot\">·</span>")}</div>` : ""}
       </header>
     `;
+}
+
+// "Tonight" projection card — shown at the top of the player profile
+// when the player has a game today. Combines: matchup info + expected
+// line (engine prediction × estimated PAs) + recent form + head-to-
+// head + hit streak. The product completion of today's session — the
+// engine outputs a per-PA prediction, this card turns it into "what
+// you should expect from this player tonight."
+function renderTonightCard(player, t) {
+    const game = t.game || {};
+    const opp = t.opponent || {};
+    const opPit = t.opposing_pitcher;
+    const exp = t.expected_line;
+    const status = game.status || "Preview";
+
+    // Header — varies by game state. Pregame: "TONIGHT vs LAD · 7:05 ET".
+    // Live: "▲ 5TH · vs LAD · 2-1". Final: hide the card (game's already played).
+    if (status === "Final") {
+        // Could show today's result, but the slash strips already cover
+        // recent games via daily_pa. Skip for now.
+        return "";
+    }
+
+    const oppLabel = opp.abbr || opp.name || "opponent";
+    const headerWhen = status === "Live" && game.teams?.away
+        ? `Live · vs ${oppLabel}`
+        : `Tonight · vs ${oppLabel} · ${formatGameTime(game.start_time)}`;
+
+    // Expected line — render only if matchup engine had data. For
+    // pitcher-side TBA or matchup-engine fallback cases, show the
+    // game info but skip the projection block.
+    const expectedBlock = exp ? `
+      <div class="pt-expected">
+        <div class="pt-expected-head">Projected line tonight</div>
+        <div class="pt-expected-grid">
+          <div class="pt-stat"><div class="pt-stat-val">${exp.h.toFixed(1)}</div><div class="pt-stat-key">H</div></div>
+          <div class="pt-stat"><div class="pt-stat-val">${exp.hr.toFixed(2)}</div><div class="pt-stat-key">HR</div></div>
+          <div class="pt-stat"><div class="pt-stat-val">${exp.bb.toFixed(1)}</div><div class="pt-stat-key">BB</div></div>
+          <div class="pt-stat"><div class="pt-stat-val">${exp.k.toFixed(1)}</div><div class="pt-stat-key">K</div></div>
+          <div class="pt-stat"><div class="pt-stat-val">${exp.on_base.toFixed(1)}</div><div class="pt-stat-key">on-base</div></div>
+        </div>
+        <div class="pt-expected-meta">
+          over ~${exp.expected_pas.toFixed(1)} PAs ·
+          projected OBP <strong>${fmtAvg(exp.obp_proj)}</strong> ·
+          SLG <strong>${fmtAvg(exp.slg_proj)}</strong>
+        </div>
+      </div>
+    ` : `
+      <div class="pt-expected-empty">
+        Matchup-engine projection unavailable — opposing pitcher
+        ${opPit?.name ? "(" + opPit.name + ") " : ""}may not be in our
+        sample yet.
+      </div>
+    `;
+
+    // Recent form — 7-day window is the headline; 30-day shown smaller.
+    const rf7  = t.recent_form?.last_7_days;
+    const rf30 = t.recent_form?.last_30_days;
+    const recentBlock = (rf7 && rf7.pa > 0) ? `
+      <div class="pt-recent">
+        <div class="pt-recent-head">Recent form</div>
+        <div class="pt-recent-row">
+          <span class="pt-recent-label">last 7 days</span>
+          <span class="pt-recent-line">
+            <strong>${rf7.h}-for-${rf7.ab}</strong>
+            · ${rf7.avg}/${rf7.obp}/${rf7.slg}
+            · ${rf7.hr} HR · ${rf7.bb} BB · ${rf7.k} K
+          </span>
+        </div>
+        ${(rf30 && rf30.pa > 0) ? `
+          <div class="pt-recent-row pt-recent-dim">
+            <span class="pt-recent-label">last 30 days</span>
+            <span class="pt-recent-line">
+              <strong>${rf30.h}-for-${rf30.ab}</strong>
+              · ${rf30.avg}/${rf30.obp}/${rf30.slg}
+              · ${rf30.hr} HR
+            </span>
+          </div>` : ""}
+      </div>
+    ` : "";
+
+    // Head-to-head vs tonight's starter. Limited (2025+ only — daily_pa
+    // started 2025-03-27), but interesting when sample exists.
+    const h2h = t.head_to_head;
+    const h2hBlock = (h2h && h2h.pa > 0) ? `
+      <div class="pt-h2h">
+        <div class="pt-h2h-head">vs ${opPit?.name || "tonight's starter"}</div>
+        <div class="pt-h2h-line">
+          <strong>${h2h.h}-for-${h2h.ab}</strong>
+          · ${h2h.avg}/${h2h.obp}/${h2h.slg}
+          ${h2h.hr ? `· ${h2h.hr} HR` : ""}
+        </div>
+        ${h2h.sample_note ? `<div class="pt-h2h-note">${h2h.sample_note}</div>` : ""}
+      </div>
+    ` : (opPit ? `
+      <div class="pt-h2h">
+        <div class="pt-h2h-head">vs ${opPit.name}</div>
+        <div class="pt-h2h-note">No PAs vs this pitcher in 2025-26.</div>
+      </div>` : "");
+
+    // Streaks — only show when notable (≥ 3 games).
+    const s = t.streaks || {};
+    const streakBlock = (s.hit_streak >= 3 || s.on_base_streak >= 4) ? `
+      <div class="pt-streaks">
+        ${s.hit_streak >= 3 ? `<span class="pt-streak-pill pt-streak-hit">🔥 ${s.hit_streak}-game hit streak</span>` : ""}
+        ${s.on_base_streak >= 4 ? `<span class="pt-streak-pill">📈 ${s.on_base_streak}-game on-base streak</span>` : ""}
+      </div>` : "";
+
+    // Lineup spot + pitcher chip — sit just below the header.
+    const lineupTag = t.lineup_spot
+        ? `<span class="pt-tag">batting ${ordinalSuffix(t.lineup_spot).toLowerCase()}</span>`
+        : "";
+    const pitcherChip = opPit
+        ? `<span class="pt-tag pt-tag-pitcher">vs <a class="player-link" href="#player/${opPit.id}">${opPit.name}</a>${opPit.throws ? " (" + opPit.throws + "HP)" : ""}</span>`
+        : "";
+
+    return `
+      <section class="player-tonight">
+        <header class="pt-header">
+          <span class="pt-when">${headerWhen}</span>
+          <div class="pt-tags">${lineupTag}${pitcherChip}</div>
+        </header>
+        ${expectedBlock}
+        ${recentBlock}
+        ${h2hBlock}
+        ${streakBlock}
+      </section>
+    `;
+}
+
+function formatGameTime(iso) {
+    if (!iso) return "TBD";
+    try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString("en-US", {
+            hour: "numeric", minute: "2-digit",
+            timeZone: "America/New_York",
+        }) + " ET";
+    } catch {
+        return "TBD";
+    }
 }
 
 // Renders the batter module — three modules stacked:
