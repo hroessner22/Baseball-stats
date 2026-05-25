@@ -104,16 +104,18 @@ export async function onRequest(context) {
             : new Date().getUTCFullYear();
 
         // Coverage range for the "CAREER · YYYY–YYYY" label. Starts at the
-        // Retrosheet floor and extends to the most recent COMPLETED season
-        // present in the daily_pa log — the current season is in its own
-        // "THIS SEASON" callout, so including it in the career label would
-        // double-count visually. Updates without a deploy as the backfill
-        // workflow catches up (2024 today → 2025 once backfill lands).
+        // Retrosheet floor and extends to the most recent year present
+        // anywhere in the data — INCLUDING the current season, because:
+        // career stats traditionally include the season in progress (see
+        // Baseball Reference, FanGraphs, etc.), and recent form is the
+        // single most predictive signal for near-future performance. The
+        // "THIS SEASON" callout above still highlights the current-year
+        // subset on its own for recency emphasis.
         let coverageEnd = RETROSHEET_END_YEAR;
         for (const r of [...batterSeason, ...pitcherSeason]) {
             if (!r.game_date) continue;
             const y = parseInt(r.game_date.slice(0, 4), 10);
-            if (y !== currentYear && y > coverageEnd) coverageEnd = y;
+            if (y > coverageEnd) coverageEnd = y;
         }
 
         return jsonResponse({
@@ -156,18 +158,19 @@ function buildBatter(rows, seasonRows, currentYear) {
         dominantBats = Object.entries(batsTally).sort((a, b) => b[1] - a[1])[0][0];
     }
 
-    // Split daily_pa rows into "this season" and prior seasons. Fold the
-    // priors into the career bars so the historical picture extends past
-    // the Retrosheet 2024 cutoff as the backfill catches up; this season
-    // stays in its own callout so its sample (~30 PAs in May) doesn't get
-    // lost in a career sample (thousands of PAs).
-    const { current: seasonNow, prior: seasonPrior } =
-        splitByYear(seasonRows, currentYear);
-    for (const r of seasonPrior) {
+    // Fold EVERY daily_pa row into the career bars (current season
+    // included). Career = all-time-through-today. The "THIS SEASON"
+    // callout still pulls just the current-year subset for recency
+    // emphasis — that's a separate display, not a partitioning of the
+    // career data. Recent form is the single most predictive signal for
+    // near-future performance, so excluding the current season from
+    // career would actively hurt the picture the bars are giving.
+    for (const r of seasonRows) {
         const hand = r.pitcher_hand;
         if (!byHand[hand]) continue;
         byHand[hand][r.outcome] = (byHand[hand][r.outcome] || 0) + 1;
     }
+    const { current: seasonNow } = splitByYear(seasonRows, currentYear);
 
     return {
         bats: dominantBats,
@@ -192,15 +195,14 @@ function buildPitcher(rows, seasonRows, currentYear) {
         throws = Object.entries(throwsTally).sort((a, b) => b[1] - a[1])[0][0];
     }
 
-    // Same split as the batter side: fold pre-current-year daily_pa rows
-    // into the career bars by batter handedness.
-    const { current: seasonNow, prior: seasonPrior } =
-        splitByYear(seasonRows, currentYear);
-    for (const r of seasonPrior) {
+    // Same as the batter side — career bars include the current season,
+    // "THIS SEASON" callout still highlights the in-progress subset.
+    for (const r of seasonRows) {
         const hand = r.batter_hand;
         if (!byHand[hand]) continue;
         byHand[hand][r.outcome] = (byHand[hand][r.outcome] || 0) + 1;
     }
+    const { current: seasonNow } = splitByYear(seasonRows, currentYear);
 
     return {
         throws,
@@ -214,6 +216,9 @@ function buildPitcher(rows, seasonRows, currentYear) {
 
 // Partition a list of daily_pa rows into ones from `currentYear` and ones
 // from any earlier year, by inspecting the leading "YYYY-" of game_date.
+// We only use the `current` half now (career bars include everything) but
+// the prior bucket is kept on the return for future endpoints that might
+// want a strict career-excluding-current view.
 function splitByYear(rows, currentYear) {
     const yearStr = String(currentYear);
     const current = [];
