@@ -1600,8 +1600,8 @@ function fieldPane(g) {
           ${runnerLabel("third",  88,  326, "end")}
         </svg>
         ${situationStrip(g)}
-        ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`) : ""}
-        ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`) : ""}
+        ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
+        ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
       </div>
     `;
 }
@@ -1621,11 +1621,17 @@ function situationStrip(g) {
     return `<div class="situation"><span class="state-label">${(g.detail || g.status).toUpperCase()}</span></div>`;
 }
 
-function matchupRow(label, name, hand) {
+function matchupRow(label, name, hand, mlbam) {
+    // Wrap the name in a player link when we have an MLBAM id — clicking
+    // the batter / pitcher takes you to their profile page (same target
+    // as the player links inside the recent-PA list).
+    const nameHtml = mlbam
+        ? `<a class="player-link" href="#player/${mlbam}"><strong>${name}</strong></a>`
+        : `<strong>${name}</strong>`;
     return `
       <div class="player-row">
         <span class="label">${label}</span>
-        <strong>${name}</strong>
+        ${nameHtml}
         <span class="hand">${hand}</span>
       </div>
     `;
@@ -1883,13 +1889,15 @@ function renderTraceCard(data) {
 
     // Interactive markers — one circle per data point, hoverable. Bigger
     // for the biggest-swing and for the final/current point. data-point
-    // carries the JSON the tooltip displays.
+    // carries the JSON the tooltip displays. With ~70+ PAs per game, we
+    // shrink the per-PA dots to 1.8 to keep the curve readable; the
+    // biggest swing + the most recent point stay larger.
     const markersSvg = points.map((p, i) => {
         const x = xAt(i);
         const y = yAt(p.we);
         const isBiggest = !!p.biggest_swing;
         const isLast    = i === points.length - 1;
-        const r = isBiggest ? 5 : isLast ? 3.5 : 2.5;
+        const r = isBiggest ? 5 : isLast ? 3.5 : 1.8;
         const fill = isBiggest
             ? "var(--accent-live)"
             : isLast
@@ -1900,13 +1908,17 @@ function renderTraceCard(data) {
             i,
             inning: p.inning,
             half:   p.half,
+            outs:   p.outs ?? 0,
+            bases:  p.bases ?? 0,
             home:   p.home,
             away:   p.away,
             we:     p.we,
             event:  p.event,
             description: p.description,
-            batter:  p.batter,
-            pitcher: p.pitcher,
+            batter:     p.batter,
+            batter_id:  p.batter_id,
+            pitcher:    p.pitcher,
+            pitcher_id: p.pitcher_id,
             we_delta: p.we_delta,
             biggest_swing: isBiggest,
         }).replace(/"/g, "&quot;");
@@ -1942,7 +1954,7 @@ function renderTraceCard(data) {
       <div class="card trace-card">
         <div class="trace-head">
           <span class="trace-label">WE TRACE</span>
-          <span class="trace-meta">${points.length - 1} half-inning${points.length - 1 === 1 ? "" : "s"} · hover the curve to see what happened</span>
+          <span class="trace-meta">${points.length - 1} plate appearance${points.length - 1 === 1 ? "" : "s"} · hover any point</span>
         </div>
         <div class="trace-chart-wrap">
           <svg class="trace-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
@@ -1968,11 +1980,17 @@ function renderTraceCard(data) {
           <span class="trace-axis-end right">${data.status === "Final" ? "final" : "now"}</span>
         </div>
         ${biggestLine}
-        <div class="trace-foot">
-          ${last.we >= 0.5
-            ? `Home at <strong>${Math.round(last.we * 100)}%</strong>${data.status === "Final" ? " (final)" : " right now"}.`
-            : `Home at <strong>${Math.round(last.we * 100)}%</strong> — away favored${data.status === "Final" ? " (final)" : " right now"}.`}
-        </div>
+        ${data.status === "Final"
+            // Final games already show the outcome prominently in the main
+            // card pane above (the "AZ 100%" answer + the final score in
+            // the subject line). Repeating "Home at 100% (final)" under
+            // the chart is just noise — drop it for Final games.
+            ? ""
+            : `<div class="trace-foot">
+                 ${last.we >= 0.5
+                   ? `Home at <strong>${Math.round(last.we * 100)}%</strong> right now.`
+                   : `Home at <strong>${Math.round(last.we * 100)}%</strong> — away favored right now.`}
+               </div>`}
       </div>
     `;
 }
@@ -1986,8 +2004,16 @@ document.addEventListener("mouseover", (e) => {
     if (!marker || tracePinnedMarker) return;
     showTraceTooltip(marker);
 });
+// Mouseout: only hide when the cursor truly leaves the marker AND isn't
+// moving into the tooltip (so the user can hover into the tooltip to
+// click a batter / pitcher link without it vanishing under them).
 document.addEventListener("mouseout", (e) => {
-    if (!e.target.closest(".trace-marker") || tracePinnedMarker) return;
+    if (tracePinnedMarker) return;
+    const leftMarker  = e.target.closest(".trace-marker");
+    const leftTooltip = e.target.closest(".trace-tooltip");
+    if (!leftMarker && !leftTooltip) return;
+    const intoSafe = e.relatedTarget?.closest?.(".trace-marker, .trace-tooltip");
+    if (intoSafe) return;
     hideTraceTooltip();
 });
 document.addEventListener("click", (e) => {
@@ -1996,6 +2022,10 @@ document.addEventListener("click", (e) => {
         e.preventDefault();
         tracePinnedMarker = marker;
         showTraceTooltip(marker);
+        return;
+    }
+    // Click inside the tooltip on a link → follow it; don't unpin.
+    if (tracePinnedMarker && e.target.closest(".trace-tooltip a")) {
         return;
     }
     if (tracePinnedMarker && !e.target.closest(".trace-tooltip")) {
@@ -2018,11 +2048,32 @@ function showTraceTooltip(marker) {
         : `${arrow} ${ordinalSuffix(data.inning).toUpperCase()}`;
     const we = Math.round(data.we * 100);
     const score = `${data.away}-${data.home}`;
-    const delta = data.we_delta != null
+
+    // Delta vs the previous point (or vs pre-game baseline for the first
+    // PA). If we_delta isn't on the payload (e.g. demo path didn't compute
+    // it), suppress the line rather than showing a meaningless 0%.
+    const haveDelta = data.we_delta != null;
+    const delta = haveDelta
         ? `${data.we_delta >= 0 ? "+" : ""}${Math.round(data.we_delta * 100)}%`
         : "";
+    const deltaClass = haveDelta
+        ? (data.we_delta >= 0 ? "tt-delta tt-delta-up" : "tt-delta tt-delta-down")
+        : "";
+
     const swingNote = data.biggest_swing
         ? ` <span class="tt-swing">biggest swing ${delta}</span>`
+        : haveDelta
+            ? ` <span class="${deltaClass}">${delta}</span>`
+            : "";
+
+    // Situation strip: outs dots (●●○ pattern) + bases diamond (small SVG).
+    // Pre-game point has inning 0 and no real situation; skip the strip.
+    const situationLine = data.inning > 0
+        ? `<div class="tt-situation">
+              ${renderOutsDots(data.outs)}
+              ${renderBasesGlyph(data.bases)}
+              <span class="tt-bases-label">${describeBasesShort(data.bases)}</span>
+           </div>`
         : "";
 
     const eventLine = data.event
@@ -2031,8 +2082,21 @@ function showTraceTooltip(marker) {
     const descLine = data.description
         ? `<div class="tt-desc">${escapeHTML(data.description)}</div>`
         : "";
-    const playersLine = (data.batter && data.pitcher)
-        ? `<div class="tt-players">${shortName(data.batter)} vs ${shortName(data.pitcher)}</div>`
+
+    // Batter / pitcher names — clickable when we have IDs, so the user can
+    // jump from "who moved the curve here" to the player profile.
+    const batterHtml = data.batter
+        ? (data.batter_id
+            ? `<a class="tt-link" href="#player/${data.batter_id}">${shortName(data.batter)}</a>`
+            : `<span>${shortName(data.batter)}</span>`)
+        : "";
+    const pitcherHtml = data.pitcher
+        ? (data.pitcher_id
+            ? `<a class="tt-link" href="#player/${data.pitcher_id}">${shortName(data.pitcher)}</a>`
+            : `<span>${shortName(data.pitcher)}</span>`)
+        : "";
+    const playersLine = (batterHtml && pitcherHtml)
+        ? `<div class="tt-players">${batterHtml} vs ${pitcherHtml}</div>`
         : "";
 
     tip.innerHTML = `
@@ -2041,6 +2105,7 @@ function showTraceTooltip(marker) {
         <span class="tt-score">${score}</span>
         <span class="tt-we">${we}%</span>${swingNote}
       </div>
+      ${situationLine}
       ${eventLine}
       ${playersLine}
       ${descLine}
@@ -2327,6 +2392,20 @@ function describeRecentOutcomes(total, outcomes) {
 function liveRead(g, we) {
     const homeAbbr = g.teams.home.abbr;
     const awayAbbr = g.teams.away.abbr;
+
+    // Final-specific copy: no "from here" / "leaning" — the game's over,
+    // either a margin call or a one-score finish. The main card already
+    // shouts the winner; this line just colors the outcome.
+    if (g.status === "Final") {
+        const homeScore = g.score?.home ?? 0;
+        const awayScore = g.score?.away ?? 0;
+        const margin = Math.abs(homeScore - awayScore);
+        if (margin === 0) return "Final.";              // shouldn't happen (ties are rare/impossible in MLB)
+        if (margin >= 5)  return "A blowout.";
+        if (margin <= 1)  return "Decided by one run.";
+        return `Won by ${margin}.`;
+    }
+
     if (Math.abs(we - 0.5) < 0.07) return "A coin flip — every pitch moves the needle.";
     if (we > 0.85) return `${homeAbbr} are heavily favored from here.`;
     if (we > 0.6)  return `${homeAbbr} are leaning into a win.`;
@@ -2359,6 +2438,50 @@ function describeBases(runners) {
     if (occ.length === 3) return "bases loaded";
     if (occ.length === 2 && runners.second && runners.third) return "2nd & 3rd";
     return occ.join(" & ");
+}
+
+// Same as describeBases but takes a 0-7 bitmask (bit 0=1st, 1=2nd, 2=3rd) —
+// the encoding the per-PA WE trace points carry. Short labels for the
+// trace tooltip ("empty" / "loaded" / "1st & 2nd").
+function describeBasesShort(bases) {
+    const occ = [];
+    if (bases & 1) occ.push("1st");
+    if (bases & 2) occ.push("2nd");
+    if (bases & 4) occ.push("3rd");
+    if (occ.length === 0) return "bases empty";
+    if (occ.length === 3) return "bases loaded";
+    if (occ.length === 2 && (bases & 2) && (bases & 4)) return "2nd & 3rd";
+    return occ.join(" & ");
+}
+
+// Three-dot outs glyph: ●●○ for 2 out, ●○○ for 1, ○○○ for 0.
+function renderOutsDots(outs) {
+    const dots = [0, 1, 2].map((i) =>
+        `<span class="tt-outs-dot${i < outs ? " on" : ""}"></span>`
+    ).join("");
+    return `<span class="tt-outs" title="${outs} out">${dots}</span>`;
+}
+
+// Tiny baseball-diamond glyph showing which bases are occupied. SVG so it
+// scales cleanly inside the tooltip; each base is a diamond filled when
+// its bit is set in `bases` (1=1st, 2=2nd, 4=3rd).
+function renderBasesGlyph(bases) {
+    const fillFor = (occ) =>
+        occ ? "var(--accent-action)" : "transparent";
+    const stroke = "currentColor";
+    return `
+      <svg class="tt-bases" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
+        <!-- 2nd base (top) -->
+        <rect x="7" y="1" width="4" height="4" transform="rotate(45 9 3)"
+              fill="${fillFor(bases & 2)}" stroke="${stroke}" stroke-width="0.8"/>
+        <!-- 3rd base (left) -->
+        <rect x="1" y="7" width="4" height="4" transform="rotate(45 3 9)"
+              fill="${fillFor(bases & 4)}" stroke="${stroke}" stroke-width="0.8"/>
+        <!-- 1st base (right) -->
+        <rect x="13" y="7" width="4" height="4" transform="rotate(45 15 9)"
+              fill="${fillFor(bases & 1)}" stroke="${stroke}" stroke-width="0.8"/>
+      </svg>
+    `;
 }
 
 function shortName(fullName) {
