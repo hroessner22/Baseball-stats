@@ -45,24 +45,64 @@ async function loadFooterAccuracy() {
         const res = await fetch("/api/metrics");
         if (!res.ok) return;
         const data = await res.json();
-        const m = data?.metrics;
-        if (!m) return;
+        // .production is the row for the variant currently serving live
+        // (v3_recency as of PR #68). .variants is the comparison set
+        // across naive / v1 / v2 / v3 — surfaced as a tooltip so users
+        // can see "did each layer earn its keep" without needing the
+        // full About page.
+        const prod = data?.production || data?.metrics;
+        if (!prod) return;
         const el = document.getElementById("footer-accuracy");
         if (!el) return;
-        const acc   = Math.round(m.top_pick_accuracy * 100);
-        const brier = Number(m.brier_score).toFixed(2);
-        const n     = Number(m.sample_size).toLocaleString();
+
+        const acc   = Math.round(prod.top_pick_accuracy * 100);
+        const brier = Number(prod.brier_score).toFixed(2);
+        const n     = Number(prod.sample_size).toLocaleString();
+
+        // Build the comparison tooltip. We list every variant we have
+        // a metric for, sorted by Brier (best first). Annotates which
+        // is "live" so the user knows which number is real.
+        const variants = data?.variants || [];
+        const tooltipLines = variants
+            .slice()
+            .sort((a, b) => (a.brier_score ?? 99) - (b.brier_score ?? 99))
+            .map((v) => {
+                const isProd = v.variant === prod.variant;
+                const tag = isProd ? " ← live" : "";
+                const tAcc = Math.round((v.top_pick_accuracy || 0) * 100);
+                const tBri = Number(v.brier_score || 0).toFixed(3);
+                return `${variantLabel(v.variant)}: ${tAcc}% · Brier ${tBri}${tag}`;
+            });
+        const tooltip = tooltipLines.length
+            ? "Model variants ranked by Brier (lower = better):\n\n" +
+              tooltipLines.join("\n") + "\n\n" +
+              "naive = league baseline · v1 = historical · v2 = +daily · v3 = +recency"
+            : "Model accuracy";
+
         el.innerHTML = `
           <span class="ma-dot"></span>
           Model: <strong>${acc}% top-pick</strong>
           · Brier <strong>${brier}</strong>
           · over ${n} PAs
+          <span class="ma-variant" title="${escapeHTMLAttr(tooltip)}">(${variantLabel(prod.variant)})</span>
           <a href="#about" class="ma-link">how</a>
         `;
         el.hidden = false;
     } catch {
         // silent
     }
+}
+
+function variantLabel(v) {
+    if (v === "naive")          return "naive baseline";
+    if (v === "v1_historical")  return "v1 · historical only";
+    if (v === "v2_with_daily")  return "v2 · +daily";
+    if (v === "v3_recency")     return "v3 · +recency";
+    return v || "unknown";
+}
+
+function escapeHTMLAttr(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
 function handleRoute() {
