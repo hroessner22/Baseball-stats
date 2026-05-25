@@ -7,6 +7,17 @@
 
 import { WE_TABLE } from "./_we_table.js";
 
+// The state that just completed before the current mid-half play.
+// Used so the WE lookup returns "WP at start of current half" instead
+// of "WP if current half ended right now" (which is wrong mid-PA).
+function previousHalfState(inning, half) {
+    if (half === "top") {
+        if (inning === 1) return null;
+        return { inning: inning - 1, half: "bottom" };
+    }
+    return { inning, half: "top" };
+}
+
 export async function onRequest(context) {
     const url = new URL(context.request.url);
     const date = url.searchParams.get("date") || todayInEastern();
@@ -130,10 +141,21 @@ function buildTile(g, handBy) {
 
     let winExp = null;
     if (status === "Live" && inning) {
-        // Extra innings collapse to the 9th — a rough proxy until the matchup
-        // engine takes over in Phase 3.2.
-        const ksKey = `${Math.min(inning, 9)}|${half}|${homeScore - awayScore}`;
-        if (WE_TABLE[ksKey] !== undefined) winExp = WE_TABLE[ksKey];
+        // Our WE table is keyed by END-OF-HALF-INNING state. During mid-
+        // half play, the right lookup is the END of the PREVIOUS half —
+        // that's the WP at the start of the current half, the closest
+        // approximation a half-level table can give us. The fully
+        // correct fix needs a per-pitch WE table that incorporates
+        // count / bases / outs; this gets the sign right in the meantime.
+        const prev = previousHalfState(inning, half);
+        if (prev) {
+            const key = `${Math.min(prev.inning, 9)}|${prev.half}|${homeScore - awayScore}`;
+            if (WE_TABLE[key] !== undefined) winExp = WE_TABLE[key];
+        } else {
+            // Top of 1st — pre-game / first PA. Default to a baseline
+            // home-field advantage (MLB historical: ~54%).
+            winExp = 0.54;
+        }
     } else if (status === "Final") {
         winExp = homeScore > awayScore ? 1.0 :
                  homeScore < awayScore ? 0.0 : 0.5;
