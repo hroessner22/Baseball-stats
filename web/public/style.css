@@ -2913,6 +2913,39 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     cursor: help;
 }
 
+/* Form strip on the matchup card — hot/cold pills for batter and/or
+   pitcher when their recent (last 30 days) hit-rate has meaningfully
+   diverged from their season baseline. Sits just below the subject
+   line so it's visually attached to "who's batting / pitching." */
+.matchup-card .form-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0 8px;
+}
+.matchup-card .form-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 99px;
+    cursor: help;
+}
+.matchup-card .form-pill.form-hot {
+    color: var(--accent-live);
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.matchup-card .form-pill.form-cold {
+    color: #60A5FA;
+    background: rgba(59, 130, 246, 0.10);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
 .card .answer {
     display: flex;
     align-items: baseline;
