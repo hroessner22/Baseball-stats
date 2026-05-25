@@ -896,116 +896,316 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
 }
 
-.player-head { margin-bottom: 22px; }
-.player-head h1 {
-    font-size: 28px;
-    font-weight: 800;
-    letter-spacing: -0.01em;
-    color: var(--text);
-    margin-bottom: 6px;
+/* ── HERO HEADER ─────────────────────────────────────────────────
+   Name big, jersey# trailing, meta strip below. Convention every
+   baseball site uses. */
+.player-hero {
+    margin-bottom: 24px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--border);
 }
-.player-meta {
+.ph-name-row {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.ph-name {
+    font-size: 40px;
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    margin: 0;
+}
+.ph-jersey {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+}
+.ph-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
     font-size: 12px;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.04em;
     color: var(--text-dim);
-    text-transform: uppercase;
+}
+.ph-meta .ph-dot {
+    color: var(--text-dim);
+    opacity: 0.5;
+    padding: 0 2px;
 }
 .player-warning {
     color: var(--accent-live);
-    text-transform: none;
-    letter-spacing: 0.02em;
+}
+
+/* ── PLAYER MODULE WRAPPER ──────────────────────────────────────── */
+.player-module {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-bottom: 26px;
+}
+.player-module + .player-module {
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+}
+.pm-pitcher-note {
+    font-size: 11px;
+    color: var(--text-dim);
     font-style: italic;
 }
 
-.player-section {
-    margin-top: 24px;
-    padding-top: 22px;
-    border-top: 1px solid var(--border);
+/* ── SLASH STRIP ─────────────────────────────────────────────────
+   The headline 5-tile stat strip (AVG/OBP/SLG/OPS/HR) every site
+   leads with. Big numbers, small caps label below. */
+.slash-strip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
 }
-.player-section:first-of-type { border-top: none; padding-top: 0; }
-.player-section h2 {
-    font-size: 12px;
+.slash-strip .ss-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+    gap: 12px;
+}
+.slash-strip .ss-label {
+    font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.12em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+}
+.slash-strip .ss-extra {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-weight: 500;
+}
+.slash-strip .ss-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 12px;
+}
+.slash-strip .ss-tile {
+    text-align: center;
+    padding: 10px 6px;
+    background: var(--bg);
+    border-radius: calc(var(--radius) - 2px);
+}
+.slash-strip .ss-tile-counter { background: rgba(34, 197, 94, 0.08); }
+.slash-strip .ss-val {
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+}
+.slash-strip .ss-key {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+.slash-strip .ss-counts {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.slash-strip .ss-counts strong {
+    color: var(--text);
+    font-weight: 700;
+}
+.slash-strip .ss-dot {
+    color: var(--text-dim);
+    opacity: 0.4;
+}
+
+/* ── MATCHUP BAND ────────────────────────────────────────────────
+   The visual centerpiece — vs LHP / vs RHP, current + career. Subtle
+   blue tint distinguishes it from the rest as "the matchup engine
+   angle." Other sites bury platoon under a tab; we promote it here. */
+.matchup-band {
+    background: rgba(59, 130, 246, 0.06);
+    border: 1px solid rgba(59, 130, 246, 0.18);
+    border-radius: var(--radius);
+    padding: 14px 16px 18px;
+}
+.matchup-band .mb-band-title {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
     color: var(--accent-action);
     text-transform: uppercase;
     margin-bottom: 14px;
 }
-
-.player-section-head {
+.matchup-band .mb-section + .mb-section { margin-top: 14px; }
+.matchup-band .mb-section-head {
     font-size: 10px;
     font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.matchup-band .mb-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+@media (min-width: 640px) {
+    .matchup-band .mb-grid { grid-template-columns: 1fr 1fr; }
+}
+.matchup-band .mb-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    padding: 12px 14px;
+}
+.matchup-band .mb-empty .mb-head { color: var(--text-dim); }
+.matchup-band .mb-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+}
+.matchup-band .mb-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+}
+.matchup-band .mb-pa {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+}
+.matchup-band .mb-slash {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    margin-bottom: 8px;
+    font-variant-numeric: tabular-nums;
+}
+.matchup-band .mb-slash-val {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text);
+}
+.matchup-band .mb-slash-sep {
+    color: var(--text-dim);
+    opacity: 0.5;
+    font-size: 16px;
+}
+.matchup-band .mb-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 2px 0;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.matchup-band .mb-row strong {
+    color: var(--text);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── RATE PROFILE ────────────────────────────────────────────────
+   The FanGraphs-style "advanced rates" mini-table. Current vs Career
+   side-by-side. */
+.rate-profile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+}
+.rate-profile .rp-head {
+    font-size: 11px;
+    font-weight: 800;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
     margin-bottom: 10px;
 }
+.rate-profile .rp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.rate-profile .rp-table thead th {
+    text-align: right;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    padding: 4px 8px 6px;
+    border-bottom: 1px solid var(--border);
+}
+.rate-profile .rp-table tbody th {
+    text-align: left;
+    color: var(--text);
+    padding: 7px 8px;
+    font-weight: 500;
+    font-size: 12px;
+}
+.rate-profile .rp-table tbody td {
+    text-align: right;
+    padding: 7px 8px;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+.rate-profile .rp-table tbody tr + tr th,
+.rate-profile .rp-table tbody tr + tr td {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
 
-.player-season {
+/* ── OUTCOME BREAKDOWN ──────────────────────────────────────────
+   The existing bar-chart view, kept smaller and below the new
+   hierarchy. */
+.outcome-breakdown {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 14px 16px;
-    margin-bottom: 18px;
 }
-.season-line {
-    font-size: 14px;
-    line-height: 1.6;
-    color: var(--text);
-    margin-bottom: 12px;
-}
-.season-line strong {
-    color: var(--accent-win);
-    font-variant-numeric: tabular-nums;
-}
-.season-splits {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-.season-split {
-    display: grid;
-    grid-template-columns: 60px 56px minmax(0, 1fr);
-    gap: 10px;
-    align-items: baseline;
-    font-size: 12px;
-}
-.season-split .ss-label {
-    color: var(--text-dim);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-}
-.season-split .ss-pa {
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-}
-.season-split .ss-line {
-    color: var(--text);
-}
-.season-split .ss-line strong {
-    color: var(--accent-action);
-    font-variant-numeric: tabular-nums;
-}
-
-.player-career { display: flex; flex-direction: column; gap: 10px; }
-.career-head {
-    font-size: 10px;
-    font-weight: 700;
+.outcome-breakdown .ob-head {
+    font-size: 11px;
+    font-weight: 800;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
+    margin-bottom: 10px;
 }
-.career-grid {
+.outcome-breakdown .ob-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: 1fr;
+    gap: 12px;
 }
 @media (min-width: 720px) {
-    .career-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .outcome-breakdown .ob-grid { grid-template-columns: 1fr 1fr; }
+}
+.career-split-empty {
+    opacity: 0.55;
 }
 
 .career-split {
