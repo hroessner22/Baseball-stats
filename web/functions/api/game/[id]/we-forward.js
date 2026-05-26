@@ -48,9 +48,13 @@ const LATE_INNING_FROM    = 7;    // 7th+ flips to bullpen if game is close
 const CLOSE_GAME_MARGIN   = 3;    // within ±3 runs counts as "save situation"
 
 const MAX_SIMULATION_PAS = 60;    // per-run safety: extras eventually terminate
-const N_SIMULATIONS      = 25;    // Monte Carlo path count — balances accuracy
-                                  // vs Worker compute budget. Each path samples
-                                  // outcomes from the matchup distribution.
+// Monte Carlo path count. At p=0.5 the binomial SE = sqrt(0.25/N), so:
+//   N=25  → SE ≈ 10pp (drastic pitch-to-pitch jitter)
+//   N=100 → SE ≈ 5pp
+//   N=200 → SE ≈ 3.5pp  ← chosen — small swings still real, big swings honest
+// Worker compute budget: 200 paths × ~25 PAs × constant-time per step.
+// Fast in JS (~50ms total). Worth the stability.
+const N_SIMULATIONS      = 200;
 
 
 export async function onRequest(context) {
@@ -155,11 +159,25 @@ export async function onRequest(context) {
 
     // Run N Monte Carlo paths through the rest of the game, each
     // sampling outcomes from the matchup distribution. Forecast WE is
-    // the share of paths that resolve to a home win. Single representative
-    // path (the one whose path-end WE is the median) drives the display
-    // sequence so the UI has something coherent to render.
+    // the share of paths that resolve to a home win.
+    //
+    // RNG is seeded deterministically from the game state — same state
+    // (same count, bases, score, batter, pitcher) ALWAYS produces the
+    // same 200-path simulation, so the forecast number doesn't bounce
+    // 10pp on page refresh when nothing's actually changed in the game.
+    // Each individual path gets a unique seed (base + path index) so
+    // we still get 200 distinct samples, just reproducible ones.
+    const baseSeed = stateSeed(
+        currentState,
+        game.batter.id,
+        game.pitcher.id,
+        game.balls ?? 0,
+        game.strikes ?? 0,
+    );
+
     const paths = [];
     for (let i = 0; i < N_SIMULATIONS; i++) {
+        const rng = makeRng(baseSeed + i * 2654435761);  // golden-ratio offset
         paths.push(simulateForward({
             state:           currentState,
             lineupBatting:   battingLineup,
@@ -167,6 +185,7 @@ export async function onRequest(context) {
             batterIdx:       startBatterIdx,
             pitcherSequence,
             matchupCache,
+            rng,
         }));
     }
     const wins = paths.filter((p) => p.finalWE >= 0.5).length;
@@ -343,6 +362,7 @@ async function precomputeMatchups(origin, batting, pitching, sequence) {
 function simulateForward({
     state, lineupBatting, lineupPitching,
     batterIdx, pitcherSequence, matchupCache,
+    rng = Math.random,
 }) {
     const sequence = [];
     let curState = { ...state };
@@ -374,10 +394,12 @@ function simulateForward({
 
         let outcome;
         if (dist) {
-            // Sample from the matchup distribution. With N=25 paths the
-            // sampled-outcomes average converges close to the true
-            // expectation while still being cheap.
-            outcome = sampleOutcome(dist);
+            // Sample from the matchup distribution. With N=200 paths and
+            // a deterministic per-path seed (set in the caller), the
+            // sampled average converges to within ~3.5pp of the true
+            // expectation and the displayed forecast doesn't bounce
+            // pitch-to-pitch when nothing meaningful has changed.
+            outcome = sampleOutcome(dist, rng);
         } else {
             // No matchup distribution — sample from a league-flavored
             // baseline so the simulation makes forward progress instead
@@ -386,7 +408,7 @@ function simulateForward({
             outcome = sampleOutcome({
                 K: 0.23, BB: 0.09, HBP: 0.01, "1B": 0.13, "2B": 0.04,
                 "3B": 0.005, HR: 0.03, OUT: 0.45, OTHER: 0.03,
-            });
+            }, rng);
         }
 
         const post = postPAState(curState, outcome);
@@ -494,15 +516,49 @@ function advancePitcher(sequence, idx, newInning, oldInning) {
 
 // Sample an outcome from a probability distribution. Uses cumulative
 // probability + a uniform random draw — standard categorical sampler.
-function sampleOutcome(distribution) {
+// Takes an injectable rng (a 0..1 float function) so the caller can
+// seed deterministically; defaults to Math.random for any unseeded
+// callers that might appear later.
+function sampleOutcome(distribution, rng = Math.random) {
     const total = OUTCOMES.reduce((s, o) => s + (distribution[o] ?? 0), 0);
     if (total <= 0) return "OUT";
-    let r = Math.random() * total;
+    let r = rng() * total;
     for (const o of OUTCOMES) {
         r -= (distribution[o] ?? 0);
         if (r <= 0) return o;
     }
     return OUTCOMES[OUTCOMES.length - 1];
+}
+
+// xorshift32 — small deterministic PRNG. Same seed = same sequence.
+// Plenty random for Monte Carlo over our state space, way smaller
+// state than Math.random's underlying RNG, and reproducible. Used
+// to keep the forecast number stable across calls when the underlying
+// game state hasn't changed.
+function makeRng(seed) {
+    let s = (seed | 0) || 0x9e3779b9;  // avoid zero seed (would lock at 0)
+    return () => {
+        s ^= s << 13;
+        s ^= s >>> 17;
+        s ^= s << 5;
+        return ((s >>> 0) / 4294967296);  // 0..1
+    };
+}
+
+// Hash the relevant game state into a single int seed. Same state
+// (same count, same bases, same score, same batter/pitcher) →
+// same seed → same set of Monte Carlo paths → same forecast number.
+// State changes (pitch, PA resolution, pitching change) flip the
+// seed so the forecast moves on REAL signal, not on RNG noise.
+function stateSeed(state, batterId, pitcherId, balls, strikes) {
+    const str = `${state.inning}|${state.half}|${state.outs}|${state.bases}|`
+              + `${state.home_lead}|${state.batting_team}|${batterId}|`
+              + `${pitcherId}|${balls}|${strikes}`;
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) {
+        h = ((h << 5) + h + str.charCodeAt(i)) | 0;  // djb2
+    }
+    return h;
 }
 
 
