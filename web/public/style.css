@@ -13,9 +13,13 @@
     --surface-2:   #1E2942;
     --border:      #26304A;
 
-    /* Text */
+    /* Text — primary is bright for readability; dim is for secondary
+       labels/metadata only. Dim is set bright enough (Slate-300) that
+       it passes AA contrast on the dark bg — anything secondary that
+       readers need to actually parse still passes muster. */
     --text:        #F5F7FA;
-    --text-dim:    #94A3B8;
+    --text-dim:    #CBD5E1;
+    --text-faint:  #94A3B8;  /* For decorative-only labels (timestamps, etc.) */
 
     /* Accents — each does ONE job */
     --accent-live: #EF4444;   /* LIVE badges, urgent, losses */
@@ -2475,6 +2479,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
     font-weight: 500;
     letter-spacing: 0.02em;
+    font-size: 12px;
 }
 .page-footer .model-accuracy strong {
     color: var(--accent-win);
@@ -2754,24 +2759,25 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     border-radius: var(--radius);
 }
 .player-row .label {
-    color: var(--text-dim);
-    font-size: 10px;
+    color: var(--text);
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    flex: 0 0 64px;
+    flex: 0 0 72px;
 }
 .player-row strong {
     color: var(--text);
     font-weight: 600;
     flex: 1;
+    font-size: 14px;
 }
 .player-row .hand {
     color: var(--accent-action);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.1em;
-    padding: 3px 7px;
+    letter-spacing: 0.08em;
+    padding: 3px 8px;
     background: rgba(59, 130, 246, 0.15);
     border-radius: 4px;
 }
@@ -2811,18 +2817,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 2px 7px;
+    padding: 3px 9px;
     background: var(--accent-live);
     color: #fff;
     border-radius: 10px;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.18em;
     line-height: 1;
 }
 .card .subject .we-live-dot {
-    width: 5px;
-    height: 5px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: #fff;
     animation: pulse 1.5s ease-in-out infinite;
@@ -3297,8 +3303,8 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .card .evidence {
     color: var(--text-dim);
-    font-size: 11px;
-    line-height: 1.5;
+    font-size: 12px;
+    line-height: 1.55;
     border-top: 1px solid var(--border);
     padding-top: 12px;
 }

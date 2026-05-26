@@ -2215,13 +2215,25 @@ function paOutcomeClass(eventType) {
 
 function situationStrip(g) {
     if (g.status === "Live" && g.inning) {
+        // Spell out the half (Top / Bottom) so the ▲/▼ symbol isn't
+        // the only signal, and label bases as "runner on Xth" instead
+        // of "1st" (ambiguous with "first inning"). Outs use "OUT" vs
+        // "OUTS" agreement. Count carries an explicit "count" suffix.
+        const halfWord = g.half === "top" ? "Top" : "Bottom";
+        const bases    = (g.runners?.first ? 1 : 0)
+                       | (g.runners?.second ? 2 : 0)
+                       | (g.runners?.third ? 4 : 0);
+        const basesLabel = bases > 0 ? describeBasesShort(bases) : "bases empty";
+        const outsLabel  = g.outs === 1 ? "1 out" : `${g.outs} outs`;
         return `
-          <div class="situation">
-            <span class="inning">${arrowHalf(g.half)} ${ordinalSuffix(g.inning)}</span>
+          <div class="situation" title="Top of inning (▲) means away team batting; Bottom (▼) means home team batting">
+            <span class="inning">${arrowHalf(g.half)} ${halfWord} ${ordinalSuffix(g.inning).toLowerCase()}</span>
             <span class="dot">·</span>
-            <span class="outs">${g.outs} OUT</span>
+            <span class="outs">${outsLabel}</span>
             <span class="dot">·</span>
-            <span class="count">${g.balls}-${g.strikes}</span>
+            <span class="bases">${basesLabel}</span>
+            <span class="dot">·</span>
+            <span class="count" title="${g.balls} ball${g.balls === 1 ? "" : "s"}, ${g.strikes} strike${g.strikes === 1 ? "" : "s"}">${g.balls}-${g.strikes} count</span>
           </div>
         `;
     }
@@ -2547,7 +2559,7 @@ function renderPitchingTable(side, d) {
               <th class="bs-name">Pitcher</th>
               <th>IP</th><th>H</th><th>R</th><th>ER</th>
               <th>BB</th><th>K</th><th>HR</th>
-              <th class="bs-pitches" title="Pitches – Strikes">PI-ST</th>
+              <th class="bs-pitches" title="Pitches thrown – Strikes (out of total)">P/S</th>
               <th class="bs-season">ERA</th>
             </tr>
           </thead>
@@ -2686,10 +2698,10 @@ function renderForecastWE(d, game) {
         <div class="fwe-headline">
           <span class="fwe-arrow-pre ${arrowCls}">${arrow}</span>
           End-of-game forecast: <strong>${favored} ${favPct}%</strong>
-          <span class="fwe-tag" title="Bullpen-aware Monte Carlo: simulates the rest of the game using the actual lineup and the predicted reliever sequence">FORECAST</span>
+          <span class="fwe-tag" title="Runs ${d.n_simulations || 25} simulations of the rest of the game using each team's actual lineup, current pitcher, and the manager's likely bullpen sequence. The percentage = share of simulations the team won.">SIMULATED ⓘ</span>
         </div>
         ${chain ? `<div class="fwe-chain"><span class="fwe-chain-label">Likely pitchers:</span>${chain}</div>` : ""}
-        <div class="fwe-meta">${homeAbbr} ${homePct}% · ${awayAbbr} ${awayPct}% — averaged over ${d.n_simulations || 25} simulated finishes</div>
+        <div class="fwe-meta">${homeAbbr} ${homePct}% · ${awayAbbr} ${awayPct}% — averaged over ${d.n_simulations || 25} simulated games</div>
       </div>
     `;
 }
@@ -3326,8 +3338,8 @@ function renderMatchupCard(m) {
     // count so the user knows the prediction shifted because of where
     // the PA actually is, not just "Judge vs Kershaw average."
     const countBadge = m.count_aware
-        ? `<span class="count-aware-badge" title="Prediction uses ${m.batter.name}'s ${m.count.batter_pa} PAs and ${m.pitcher.name}'s ${m.count.pitcher_bf} BF at this count">
-              ${m.count.balls}-${m.count.strikes} count · Statcast 2020-2024
+        ? `<span class="count-aware-badge" title="Prediction shifts because of the current ${m.count.balls}-${m.count.strikes} count. ${m.batter.name} has ${m.count.batter_pa} PAs and ${m.pitcher.name} has ${m.count.pitcher_bf} BF at this exact count in our Statcast 2020-2024 sample.">
+              ${m.count.balls} balls · ${m.count.strikes} strikes ⓘ
            </span>`
         : "";
 
@@ -3347,7 +3359,7 @@ function renderMatchupCard(m) {
         </div>
         ${(batterForm || pitcherForm) ? `<div class="form-strip">${batterForm}${pitcherForm}</div>` : ""}
 
-        <div class="question">What's about to happen? ${countBadge}</div>
+        <div class="question">How is this plate appearance likely to end? ${countBadge}</div>
         <div class="outcome-table">${rows}</div>
 
         <div class="evidence">
