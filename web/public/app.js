@@ -2299,6 +2299,8 @@ function cardPane(g) {
           </div>
           ${g.status === "Live" ? `<div class="why-line">${whyFavored(g, we, winning)}</div>` : ""}
 
+          ${(g.status !== "Final" && g.team_adjustment) ? renderTeamStrength(g) : ""}
+
           <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
           <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
 
@@ -3529,6 +3531,88 @@ function whyFavored(g, we, favoredAbbr) {
     }
 
     return parts.join(" · ") + ".";
+}
+
+// Team-strength comparison card — surfaces the team-form data that
+// drives the headline WE adjustment. Without this, users see the WE
+// number shifted off baseline but can't see WHY (other than the brief
+// "AZ 11-4 L10" mention in the why-line). The card shows both teams
+// side-by-side with their season W-L, Pythagorean (luck-adjusted),
+// L10, and streak — plus the resulting pregame WE differential.
+function renderTeamStrength(g) {
+    const ta = g.team_adjustment;
+    if (!ta || !ta.home || !ta.away) return "";
+
+    const homeAbbr = g.teams.home.abbr;
+    const awayAbbr = g.teams.away.abbr;
+    const h = ta.home;
+    const a = ta.away;
+
+    // Show only when adjustment is non-trivial (>= 1pp). Below that
+    // it's just noise and adds clutter.
+    const deltaPp = Math.round(Math.abs(ta.delta_from_baseline) * 100);
+    if (deltaPp < 1) return "";
+
+    const favoredAbbr = ta.delta_from_baseline > 0 ? homeAbbr : awayAbbr;
+    const favorWord = deltaPp >= 5 ? "favored" : "slight edge";
+
+    const streakClass = (code) => {
+        if (!code) return "";
+        if (code.startsWith("W")) return "ts-streak-win";
+        if (code.startsWith("L")) return "ts-streak-loss";
+        return "";
+    };
+
+    const renderSide = (abbr, s) => {
+        const l10 = s.l10 || {};
+        const l30 = s.l30 || {};
+        return `
+          <div class="ts-side">
+            <div class="ts-side-head">
+              <span class="ts-abbr">${abbr}</span>
+              <span class="ts-record">${s.season_w}-${s.season_l}</span>
+              ${s.streak ? `<span class="ts-streak ${streakClass(s.streak)}">${s.streak}</span>` : ""}
+            </div>
+            <div class="ts-rows">
+              <div class="ts-row">
+                <span class="ts-key">SEASON</span>
+                <span class="ts-val">${fmtAvg(s.season_pct)}</span>
+              </div>
+              <div class="ts-row">
+                <span class="ts-key" title="Pythagorean: RS²/(RS²+RA²) — luck-adjusted true talent">PYTH</span>
+                <span class="ts-val">${fmtAvg(s.pyth_pct)}</span>
+              </div>
+              ${l30.pct != null ? `
+                <div class="ts-row">
+                  <span class="ts-key">L30</span>
+                  <span class="ts-val">${l30.w}-${l30.l} <span class="ts-pct">(${fmtAvg(l30.pct)})</span></span>
+                </div>` : ""}
+              ${l10.pct != null ? `
+                <div class="ts-row">
+                  <span class="ts-key">L10</span>
+                  <span class="ts-val">${l10.w}-${l10.l} <span class="ts-pct">(${fmtAvg(l10.pct)})</span></span>
+                </div>` : ""}
+              <div class="ts-row ts-row-bold">
+                <span class="ts-key">COMBINED</span>
+                <span class="ts-val">${fmtAvg(s.combined_pct)}</span>
+              </div>
+            </div>
+          </div>
+        `;
+    };
+
+    return `
+      <div class="team-strength">
+        <div class="ts-head">
+          <span class="ts-label">Team form</span>
+          <span class="ts-summary">${favoredAbbr} ${favorWord} — shifts WE ${deltaPp}pp from "average teams" baseline</span>
+        </div>
+        <div class="ts-grid">
+          ${renderSide(awayAbbr, a)}
+          ${renderSide(homeAbbr, h)}
+        </div>
+      </div>
+    `;
 }
 
 function liveRead(g, we) {
