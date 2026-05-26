@@ -8,6 +8,7 @@
 import { WE_TABLE } from "../games/_we_table.js";
 import { WE_TABLE_V2 } from "../games/_we_table_v2.js";
 import { DEMO_GAME } from "./_demo.js";
+import { fetchTeamStrength, teamStrengthAdjustment } from "../_team_strength.js";
 
 const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
@@ -81,7 +82,22 @@ export async function onRequest(context) {
     }
 
     const data = await upstream.json();
-    return new Response(JSON.stringify(buildGame(data)), {
+    // Compute team-strength adjustment in parallel with shaping the
+    // game payload. Adjustment is added to every state-based WE
+    // lookup so the headline (and the projected/forecast endpoints
+    // that derive from it) reflect that not all teams are equally
+    // capable. Empty/missing strength data falls back to no shift.
+    const homeId = data?.gameData?.teams?.home?.id;
+    const awayId = data?.gameData?.teams?.away?.id;
+    const season = data?.gameData?.game?.season ||
+                   new Date().getUTCFullYear();
+    const [homeStr, awayStr] = await Promise.all([
+        fetchTeamStrength(homeId, season),
+        fetchTeamStrength(awayId, season),
+    ]);
+    const teamAdj = teamStrengthAdjustment(homeStr, awayStr);
+
+    return new Response(JSON.stringify(buildGame(data, teamAdj)), {
         headers: {
             "content-type": "application/json",
             "cache-control": "public, max-age=10",
@@ -97,7 +113,7 @@ function jsonError(status, message) {
     });
 }
 
-function buildGame(d) {
+function buildGame(d, teamAdj) {
     const gameData = d.gameData || {};
     const liveData = d.liveData || {};
     const linescore = liveData.linescore || {};
@@ -135,6 +151,8 @@ function buildGame(d) {
     } : null;
 
     let winExp = null;
+    let stateWE = null;        // state-only (no team adjustment); kept
+                               //   alongside so the UI can show both
     if (status === "Live" && inning && half) {
         // PA-state lookup via the v2 table (15M-PA aggregation that
         // includes outs and bases). With this, "bottom 9th, bases
@@ -144,13 +162,23 @@ function buildGame(d) {
             (offense.first  ? 1 : 0) |
             (offense.second ? 2 : 0) |
             (offense.third  ? 4 : 0);
-        winExp = lookupWE(inning, half, outs, basesMask, homeScore - awayScore);
-        if (winExp === null && inning === 1 && half === "top") {
-            winExp = 0.54;
+        stateWE = lookupWE(inning, half, outs, basesMask, homeScore - awayScore);
+        if (stateWE === null && inning === 1 && half === "top") {
+            stateWE = 0.54;
+        }
+        // Apply team-strength adjustment: same delta (pregame_we - 0.54)
+        // added to every state lookup in this game. Clipped to [0.01, 0.99]
+        // so a team-quality megablob can't push WE outside the legal range.
+        if (stateWE !== null && teamAdj?.delta_from_baseline != null) {
+            winExp = Math.max(0.01, Math.min(0.99,
+                stateWE + teamAdj.delta_from_baseline));
+        } else {
+            winExp = stateWE;
         }
     } else if (status === "Final") {
         winExp = homeScore > awayScore ? 1.0 :
                  homeScore < awayScore ? 0.0 : 0.5;
+        stateWE = winExp;
     }
 
     // This-inning play-by-play strip — every completed PA in the
@@ -190,10 +218,37 @@ function buildGame(d) {
         inning, half, outs, balls, strikes,
         runners,
         batter, pitcher,
+        // win_expectancy = state-based + team-strength adjustment.
+        // state_we is the raw "average teams" empirical lookup, kept
+        // alongside so the UI can show "AZ 53% (+3pp from team form)".
         win_expectancy: winExp,
+        state_we: stateWE,
+        team_adjustment: teamAdj ? {
+            pregame_we:           teamAdj.pregame_we,
+            delta_from_baseline:  teamAdj.delta_from_baseline,
+            home: teamAdj.home ? compactTeamStrength(teamAdj.home) : null,
+            away: teamAdj.away ? compactTeamStrength(teamAdj.away) : null,
+        } : null,
         venue: gameData.venue?.name || null,
         start_time: gameData.datetime?.dateTime || null,
         this_inning: thisInningPlays,
+    };
+}
+
+// Trim a team-strength object down to what the UI actually renders —
+// drops a few derivation-only fields to keep the API response tight.
+function compactTeamStrength(s) {
+    return {
+        season_w:        s.season_w,
+        season_l:        s.season_l,
+        season_pct:      s.season_pct,
+        pyth_pct:        s.pyth_pct,
+        run_differential:s.run_differential,
+        l10:             s.l10,
+        l15:             s.l15,
+        l30:             s.l30,
+        streak:          s.streak,
+        combined_pct:    s.combined_pct,
     };
 }
 

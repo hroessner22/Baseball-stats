@@ -232,6 +232,15 @@ export async function onRequest(context) {
         batting_team: game.half === "bottom" ? "home" : "away",
     };
 
+    // Team-strength adjustment carried over from /api/game/{id} so
+    // the projected WE shifts by the same delta as the headline WE.
+    // Without this, the projected number would silently drift back
+    // toward the "average teams" baseline even when the headline says
+    // "AZ +3pp from team form."
+    const teamDelta = game.team_adjustment?.delta_from_baseline || 0;
+    const applyDelta = (we) =>
+        we === null ? null : Math.max(0.01, Math.min(0.99, we + teamDelta));
+
     // For each outcome, compute the post-PA state and its WE. Walk-off
     // and game-end states get their WE from the terminal flag (1.0 or
     // 0.0) rather than the lookup table — those states don't exist in
@@ -245,9 +254,12 @@ export async function onRequest(context) {
         const p = matchup.predicted?.[o] ?? 0;
         if (p === 0) continue;
         const post = postPAState(currentState, o);
+        // Terminal (game-ending) outcomes don't get the team adjustment
+        // because the game is over — there's no "what's home's chance
+        // from here" to shift, just 1.0 / 0.0 for the final result.
         const we = post.terminal !== undefined
             ? post.terminal
-            : lookupWE(post.inning, post.half, post.outs, post.bases, post.home_lead);
+            : applyDelta(lookupWE(post.inning, post.half, post.outs, post.bases, post.home_lead));
         if (we === null) continue;
         perOutcome[o] = { probability: p, post_we: we };
         projected += p * we;
