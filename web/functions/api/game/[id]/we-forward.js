@@ -170,7 +170,19 @@ export async function onRequest(context) {
         }));
     }
     const wins = paths.filter((p) => p.finalWE >= 0.5).length;
-    const forecastWE = wins / N_SIMULATIONS;
+    const rawForecastWE = wins / N_SIMULATIONS;
+
+    // Team-strength shift carried from /api/game/{id}. Player-level
+    // recency (PR #70) is already captured per-PA inside the simulation
+    // via the matchup engine, but TEAM-level effects (bullpen depth,
+    // manager, clutch, whatever the strength differential captures
+    // beyond individual stats) aren't. Apply as a post-hoc shift —
+    // the simulation samples enough paths that the win rate is a
+    // reasonable estimate, and the team-strength delta is a constant
+    // that bumps the final number by the same amount it bumped the
+    // headline state WE.
+    const teamDelta = game.team_adjustment?.delta_from_baseline || 0;
+    const forecastWE = Math.max(0.01, Math.min(0.99, rawForecastWE + teamDelta));
 
     // Median path for display — the one with WE closest to the average
     // is the "typical" simulated future to show in the UI.
@@ -182,6 +194,8 @@ export async function onRequest(context) {
         available:         true,
         current_we:        game.win_expectancy ?? null,
         forecast_we:       forecastWE,
+        forecast_we_raw:   rawForecastWE,
+        team_delta:        teamDelta,
         n_simulations:     N_SIMULATIONS,
         pitcher_sequence:  median.pitcherSummary,
         sequence:          median.sequence,

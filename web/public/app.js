@@ -3507,6 +3507,27 @@ function whyFavored(g, we, favoredAbbr) {
     else if (outs === 2 && (bases & 4)) parts.push(`2 outs (runner on 3rd needs the hit)`);
     else if (fullCount && bases !== 0) parts.push(`full count`);
 
+    // Team form mention when the team-strength adjustment is meaningful
+    // (≥ 2pp shift either direction). Tells the user the WE moved off
+    // baseline because of recent record / Pythagorean, not just state.
+    const tDelta = g.team_adjustment?.delta_from_baseline || 0;
+    if (Math.abs(tDelta) >= 0.02) {
+        const homeForm = g.team_adjustment?.home;
+        const awayForm = g.team_adjustment?.away;
+        const homeHot = homeForm?.l10?.pct >= 0.6 || (homeForm?.streak && homeForm.streak.startsWith("W"));
+        const awayHot = awayForm?.l10?.pct >= 0.6 || (awayForm?.streak && awayForm.streak.startsWith("W"));
+        const hotTeam = tDelta > 0
+            ? (homeHot ? homeAbbr : null)
+            : (awayHot ? awayAbbr : null);
+        if (hotTeam) {
+            const form = tDelta > 0 ? homeForm : awayForm;
+            const desc = form.l10
+                ? `${form.l10.w}-${form.l10.l} L10`
+                : (form.streak || "rolling");
+            parts.push(`${hotTeam} ${desc}`);
+        }
+    }
+
     return parts.join(" · ") + ".";
 }
 
