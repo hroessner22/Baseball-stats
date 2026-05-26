@@ -107,6 +107,15 @@ lefty/righty, by count, by era — and never gets lost.
 
 **Size:** Medium–Large.
 
+### Engine work — see `08-MODEL-IMPROVEMENT-PLAN.md`
+
+The per-pitch WE chunk below was completed on 2026-05-25 (PRs #57-70).
+Forward-looking engine improvements (game-level calibration, parameter
+tuning, two-team forecast, park/weather, manager tendencies, etc.) now
+live in their own document: [`08-MODEL-IMPROVEMENT-PLAN.md`](08-MODEL-IMPROVEMENT-PLAN.md).
+Phase 1 of that plan — game-level calibration — is the prerequisite
+for honest tuning of everything else.
+
 ### Next planned chunk: real per-pitch Win Expectancy
 
 The current WE engine is keyed only by `(inning, half, run_diff)`. Two visible
