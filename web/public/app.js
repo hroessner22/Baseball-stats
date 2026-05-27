@@ -12,6 +12,7 @@ const mvpView = document.getElementById("mvp-view");
 const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
+const marketsView = document.getElementById("markets-view");
 
 const BOARD_REFRESH_MS = 30_000;
 // Game view polls fast — every PA boundary (out, hit, walk, run scoring,
@@ -23,6 +24,9 @@ const STANDINGS_REFRESH_MS = 5 * 60_000;
 const LEADERS_REFRESH_MS = 5 * 60_000;
 const MVP_REFRESH_MS = 5 * 60_000;
 const HOT_REFRESH_MS = 15_000;
+// Markets dashboard polls every 20s — sportsbook lines move on that
+// order, and the upstream /api/markets is edge-cached for 30s anyway.
+const MARKETS_REFRESH_MS = 20_000;
 
 let boardTimer = null;
 let gameTimer = null;
@@ -30,6 +34,7 @@ let standingsTimer = null;
 let leadersTimer = null;
 let mvpTimer = null;
 let hotTimer = null;
+let marketsDashboardTimer = null;
 let activeGameId = null;
 
 window.addEventListener("hashchange", handleRoute);
@@ -133,6 +138,11 @@ function handleRoute() {
     if (hash === "#mvp") {
         showMVP();
         setActiveNav("mvp");
+        return;
+    }
+    if (hash === "#markets") {
+        showMarketsDashboard();
+        setActiveNav("markets");
         return;
     }
     if (hash === "#about") {
@@ -283,6 +293,7 @@ function hideAllViews() {
     aboutView.hidden = true;
     hotView.hidden = true;
     playerView.hidden = true;
+    marketsView.hidden = true;
 }
 
 // Centralized timer-clear so each show* doesn't have to know about every
@@ -294,6 +305,8 @@ function clearAllTimers() {
     if (leadersTimer)   { clearInterval(leadersTimer);   leadersTimer = null; }
     if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
+    if (marketsDashboardTimer) { clearInterval(marketsDashboardTimer); marketsDashboardTimer = null; }
+    stopMarketsPoll();
 }
 
 // Currently-displayed Board date. Empty string = today (the API default).
@@ -528,6 +541,23 @@ function playerHeadshotSpot(mlbam, size = 60) {
     if (!mlbam) return null;
     return `https://midfield.mlbstatic.com/v1/people/${mlbam}/spots/${size}`;
 }
+// Tiny inline circular avatar used in tables / rows / strips. One
+// helper for the whole site so swap-outs (CDN change, fallback URL,
+// etc.) happen in one place.
+function inlineAvatar(mlbam, opts = {}) {
+    const size  = opts.size  || 24;
+    const cdnSize = opts.cdnSize || 60;
+    const cls   = opts.class || "ph-avatar";
+    const label = opts.alt   || "";
+    if (!mlbam) {
+        return `<span class="${cls} ${cls}-empty" aria-hidden="true" style="width:${size}px;height:${size}px;"></span>`;
+    }
+    return `<img class="${cls}" src="${playerHeadshotSpot(mlbam, cdnSize)}" alt="${escapeHTMLAttr(label)}" loading="lazy" width="${size}" height="${size}" onerror="this.style.opacity='0';"/>`;
+}
+function bsPhoto(mlbam) {
+    return inlineAvatar(mlbam, { size: 24, cdnSize: 60, class: "bs-photo" });
+}
+
 function playerHeadshotLarge(mlbam, width = 240) {
     if (!mlbam) return null;
     return `https://img.mlbstatic.com/mlb-photos/image/upload/`
@@ -553,6 +583,12 @@ function showGameView(id) {
     hideAllViews();
     gameView.hidden = false;
     renderEmpty(gameView, "Loading game…", "");
+    // Drop any per-game caches from the previous game — the pill, the
+    // markets pane, and the boxscore must all re-fetch for the new pk.
+    cachedMarketConsensusSlot = "";
+    cachedMarketConsensusPk = null;
+    cachedMarketsHTML = "";
+    cachedMarketsPk = null;
     refreshGame(id);
     gameTimer = setInterval(() => refreshGame(id), GAME_REFRESH_MS);
 }
@@ -750,6 +786,81 @@ function showMVP() {
     refreshMVP();
     mvpTimer = setInterval(refreshMVP, MVP_REFRESH_MS);
 }
+
+// ── MARKETS DASHBOARD ───────────────────────────────────────────────
+//
+// Every public prediction-market quote for today's MLB slate, in one
+// scrollable surface. Reaches /api/markets which fans out to
+// Polymarket / Kalshi / Manifold / (Odds API when keyed). Grouped by
+// question type so users see "all the moneylines, all the totals, all
+// the player props" in one place. Polls every 20s so the page feels
+// like the lines are moving in real time.
+//
+// Cross-source consensus is computed per group on the server side via
+// groupByQuestion → row-level outcomes carry per-source probabilities
+// the renderer can compare side-by-side.
+
+function showMarketsDashboard() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    marketsView.hidden = false;
+    renderEmpty(marketsView, "Pulling every public MLB market…", "");
+    refreshMarketsDashboard();
+    marketsDashboardTimer = setInterval(refreshMarketsDashboard, MARKETS_REFRESH_MS);
+}
+
+async function refreshMarketsDashboard() {
+    try {
+        const res = await fetch(`/api/markets`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (marketsView.hidden) return;  // user navigated away mid-flight
+        marketsView.innerHTML = renderMarketsDashboard(data);
+    } catch (e) {
+        // First load only — if we already painted, keep showing it.
+        if (!marketsView.querySelector(".markets-dashboard")) {
+            renderEmpty(marketsView, "Couldn't load markets.", `${e.message || e}`);
+        }
+    }
+}
+
+function renderMarketsDashboard(d) {
+    const totalLine = `${d.total} live quote${d.total === 1 ? "" : "s"} across ${d.sources.length} source${d.sources.length === 1 ? "" : "s"}`;
+    const sourceChips = d.sources.map((s) =>
+        `<span class="md-source-chip md-source-chip-${s}">${s} · ${d.counts_by_source[s]}</span>`
+    ).join("");
+
+    return `
+      <div class="markets-dashboard">
+        <header class="md-header">
+          <h2 class="md-title">Today's MLB markets</h2>
+          <div class="md-sub">${totalLine}</div>
+          <div class="md-sources">${sourceChips}</div>
+          <div class="md-meta">
+            Auto-refreshes every 20s · Pulled ${formatRelativeTime(d.fetched_at)}
+          </div>
+        </header>
+
+        ${renderMarketsSection("Moneyline (who wins)",     d.markets.moneyline)}
+        ${renderMarketsSection("Spread (run line)",         d.markets.spread)}
+        ${renderMarketsSection("Total runs (over/under)",   d.markets.total)}
+        ${renderMarketsSection("Player props",              d.markets.player_prop)}
+        ${renderMarketsSection("Team props",                d.markets.team_prop)}
+        ${renderMarketsSection("Series outcomes",           d.markets.series)}
+        ${renderMarketsSection("Futures (season-long)",     d.markets.future)}
+        ${renderMarketsSection("Other questions",           d.markets.other)}
+
+        <footer class="md-footnote">
+          Quotes pulled live from Polymarket (gamma API), Kalshi (events
+          API), Manifold (binary markets)${d.sources.includes("odds_api") ? ", and The Odds API" : ""}.
+          For per-game side-by-side comparison vs our model, open a game
+          and pick the Markets tab.
+        </footer>
+      </div>
+    `;
+}
+
 
 // ── ABOUT VIEW ──────────────────────────────────────────────────────
 
@@ -980,7 +1091,10 @@ function renderTonightCard(player, t) {
         ? `<span class="pt-tag">batting ${ordinalSuffix(t.lineup_spot).toLowerCase()}</span>`
         : "";
     const pitcherChip = opPit
-        ? `<span class="pt-tag pt-tag-pitcher">vs <a class="player-link" href="#player/${opPit.id}">${opPit.name}</a>${opPit.throws ? " (" + opPit.throws + "HP)" : ""}</span>`
+        ? `<span class="pt-tag pt-tag-pitcher">
+             ${inlineAvatar(opPit.id, { size: 24, cdnSize: 60, class: "pt-tag-photo", alt: opPit.name })}
+             <span class="pt-tag-text">vs <a class="player-link" href="#player/${opPit.id}">${opPit.name}</a>${opPit.throws ? " (" + opPit.throws + "HP)" : ""}</span>
+           </span>`
         : "";
 
     return `
@@ -1716,9 +1830,13 @@ function renderWpaBand(batter, pitcher, season) {
         const rows = data.leaders.map((l) => {
             const wpaStr = (l.wpa >= 0 ? "+" : "") + l.wpa.toFixed(2);
             const cls = l.wpa >= 0 ? "wpa-pos" : "wpa-neg";
+            const photo = l.player_mlbam
+                ? `<img class="wpa-photo" src="${playerHeadshotSpot(l.player_mlbam, 60)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/>`
+                : `<span class="wpa-photo wpa-photo-empty" aria-hidden="true"></span>`;
             return `
               <li class="wpa-row">
                 <span class="wpa-rank">${l.rank}</span>
+                ${photo}
                 <a class="wpa-name player-link" href="#player/${l.player_mlbam}">${shortName(l.name)}</a>
                 <span class="wpa-pa">${l.pa_count} PA</span>
                 <span class="wpa-val ${cls}">${wpaStr}</span>
@@ -1768,11 +1886,16 @@ function renderCandidate(c) {
         <span class="cand-stat-label">${s.label}</span>
       </div>
     `).join("");
+    const photo = inlineAvatar(c.person_id, { size: 28, cdnSize: 60, class: "cand-photo", alt: c.name });
+    const nameNode = c.person_id
+        ? `<a class="cand-name player-link" href="#player/${c.person_id}">${shortName(c.name)}</a>`
+        : `<span class="cand-name">${shortName(c.name)}</span>`;
     return `
       <li class="cand-row" data-rank="${c.rank}">
         <div class="cand-id">
           <span class="cand-rank">${c.rank}</span>
-          <span class="cand-name">${shortName(c.name)}</span>
+          ${photo}
+          ${nameNode}
           ${team}
         </div>
         <div class="cand-stats">${statCells}</div>
@@ -1813,6 +1936,22 @@ async function refreshGame(id) {
         if (gameViewMode === "boxscore") {
             hydrateBoxscore(id, g.status);
         }
+        if (gameViewMode === "markets") {
+            hydrateMarkets(id);
+            // Reasserts the timer in case it was cleared by a game
+            // switch — startMarketsPoll clears any prior timer first.
+            startMarketsPoll(id);
+        } else {
+            stopMarketsPoll();
+            // Even when not on the Markets tab, fill the consensus pill
+            // on the Live View card so users see market vs us at a glance.
+            // Game-switch invalidates the cache. Edge cache means most
+            // refreshes are essentially free.
+            if (gameViewMode === "live"
+                && (cachedMarketConsensusPk !== id || g.status === "Live")) {
+                hydrateMarketConsensusPill(id);
+            }
+        }
         if (g.status === "Final") {
             hydrateRecap(id);
         }
@@ -1840,7 +1979,7 @@ async function refreshGame(id) {
 // actual), Box Score (line score + batting/pitching tables — the
 // textbook page from any newspaper). Module-level state so the toggle
 // survives the every-5s re-render.
-let gameViewMode = "live"; // "live" | "gamecast" | "boxscore"
+let gameViewMode = "live"; // "live" | "gamecast" | "boxscore" | "markets"
 let cachedGamecastHTML = "";
 let cachedBoxscoreHTML = "";
 let cachedBoxscorePk = null;
@@ -1848,6 +1987,17 @@ let cachedBoxscoreStatus = null;
 // Raw JSON kept around so the team toggle can re-render a slice of
 // the existing data without re-hitting the API on every flip.
 let cachedBoxscoreData = null;
+// Markets pane: rapid-update poll (20s) handles its own loop independent
+// of the game's 5s tick, so the timer doesn't leak across game switches.
+let cachedMarketsHTML = "";
+let cachedMarketsPk = null;
+let marketsPollTimer = null;
+// Per-game consensus pill: shown on the Live View card next to our WE
+// so the user can see the market vs. us at a glance even without
+// switching to the Markets tab. Updated every game-refresh tick (5s,
+// but the upstream is edge-cached at 20s so most refreshes are cheap).
+let cachedMarketConsensusSlot = "";
+let cachedMarketConsensusPk = null;
 
 function renderGame(g) {
     const mode = gameViewMode;
@@ -1858,11 +2008,14 @@ function renderGame(g) {
         <button class="${mode === 'live'     ? 'active' : ''}" data-mode="live">Live View</button>
         <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
         <button class="${mode === 'boxscore' ? 'active' : ''}" data-mode="boxscore">Box Score</button>
+        <button class="${mode === 'markets'  ? 'active' : ''}" data-mode="markets">Markets</button>
       </div>
       ${mode === 'gamecast'
         ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
         : mode === 'boxscore'
         ? `<div id="boxscore-pane" class="boxscore-pane">${cachedBoxscoreHTML || boxscoreLoadingShell()}</div>`
+        : mode === 'markets'
+        ? `<div id="markets-pane" class="markets-pane">${cachedMarketsHTML || marketsLoadingShell()}</div>`
         : `<div class="game-pane">
              ${fieldPane(g)}
              ${cardPane(g)}
@@ -1875,6 +2028,9 @@ function gamecastLoadingShell() {
 }
 function boxscoreLoadingShell() {
     return `<div class="boxscore-loading">Loading box score…</div>`;
+}
+function marketsLoadingShell() {
+    return `<div class="markets-loading">Pulling live lines from Polymarket, Kalshi, Manifold…</div>`;
 }
 
 // Event delegation — innerHTML rerenders kill direct handlers, so wire
@@ -1962,9 +2118,11 @@ function renderPABlock(play, prediction) {
         <header class="pa-head">
           <span class="pa-inning">${inn}</span>
           <span class="pa-matchup">
+            <a class="pa-avatar-link" href="#player/${play.batter.id}" aria-label="${escapeHTMLAttr(play.batter.name)}">${inlineAvatar(play.batter.id, { size: 32, cdnSize: 60, class: "pa-avatar", alt: play.batter.name })}</a>
             <a class="player-link" href="#player/${play.batter.id}"><strong>${shortName(play.batter.name)}</strong></a>
             <span class="dim">(${play.batter.hand}HB)</span>
             <span class="dim"> vs </span>
+            <a class="pa-avatar-link" href="#player/${play.pitcher.id}" aria-label="${escapeHTMLAttr(play.pitcher.name)}">${inlineAvatar(play.pitcher.id, { size: 32, cdnSize: 60, class: "pa-avatar", alt: play.pitcher.name })}</a>
             <a class="player-link" href="#player/${play.pitcher.id}"><strong>${shortName(play.pitcher.name)}</strong></a>
             <span class="dim">(${play.pitcher.hand}HP)</span>
           </span>
@@ -2183,12 +2341,14 @@ function renderThisInning(g) {
         // for walks, etc.).
         const outcomeCls = paOutcomeClass(p.eventType);
         const outcomeLabel = shortEventLabel(p.event || p.eventType || "—");
+        const avatar = inlineAvatar(p.batter_id, { size: 22, cdnSize: 60, class: "ti-photo", alt: p.batter });
         const batterLink = p.batter_id
             ? `<a class="player-link" href="#player/${p.batter_id}">${shortName(p.batter)}</a>`
             : shortName(p.batter || "—");
         return `
           <div class="ti-row">
             <span class="ti-outcome ${outcomeCls}">${outcomeLabel}</span>
+            ${avatar}
             <span class="ti-batter">${batterLink}</span>
             <span class="ti-desc">${escapeHTML(p.description || "")}</span>
           </div>
@@ -2197,6 +2357,7 @@ function renderThisInning(g) {
     const currentRow = g.batter
         ? `<div class="ti-row ti-now">
               <span class="ti-outcome ti-now-chip">NOW</span>
+              ${inlineAvatar(g.batter.id, { size: 22, cdnSize: 60, class: "ti-photo", alt: g.batter.name })}
               <span class="ti-batter">${shortName(g.batter.name)}</span>
               <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
            </div>`
@@ -2356,6 +2517,7 @@ function cardPane(g) {
 
           <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
           <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
+          <div id="market-consensus-slot">${cachedMarketConsensusSlot}</div>
 
           <div class="evidence">
             From 115 seasons of Retrosheet game logs — how often a team in
@@ -2525,10 +2687,15 @@ function renderBattingTable(side, d) {
       <tr>
         <td class="bs-order">${b.order ?? ""}</td>
         <td class="bs-name">
-          ${b.mlbam
-            ? `<a class="player-link" href="#player/${b.mlbam}">${b.box_name}</a>`
-            : b.box_name}
-          <span class="bs-pos">${b.position}</span>
+          <span class="bs-name-wrap">
+            ${bsPhoto(b.mlbam)}
+            <span class="bs-name-text">
+              ${b.mlbam
+                ? `<a class="player-link" href="#player/${b.mlbam}">${b.box_name}</a>`
+                : b.box_name}
+              <span class="bs-pos">${b.position}</span>
+            </span>
+          </span>
         </td>
         <td>${b.AB}</td>
         <td>${b.R}</td>
@@ -2575,10 +2742,15 @@ function renderPitchingTable(side, d) {
     const rows  = lines.map((p) => `
       <tr>
         <td class="bs-name">
-          ${p.mlbam
-            ? `<a class="player-link" href="#player/${p.mlbam}">${p.box_name}</a>`
-            : p.box_name}
-          ${p.decision ? `<span class="bs-decision">${p.decision}</span>` : ""}
+          <span class="bs-name-wrap">
+            ${bsPhoto(p.mlbam)}
+            <span class="bs-name-text">
+              ${p.mlbam
+                ? `<a class="player-link" href="#player/${p.mlbam}">${p.box_name}</a>`
+                : p.box_name}
+              ${p.decision ? `<span class="bs-decision">${p.decision}</span>` : ""}
+            </span>
+          </span>
         </td>
         <td>${p.IP}</td>
         <td>${p.H}</td>
@@ -2618,6 +2790,297 @@ function renderPitchingTable(side, d) {
       </div>
     `;
 }
+
+// ── MARKETS ─────────────────────────────────────────────────────────
+//
+// Fetches /api/game/{id}/markets — every public prediction-market line
+// for this game (Polymarket, Kalshi, Manifold, plus The Odds API when
+// configured) — and renders them grouped by question type, with our
+// model's WE shown next to the cross-source consensus so users can see
+// where we agree or diverge.
+//
+// Lines move fast, so the markets pane runs its own 20s poll timer
+// independent of the outer 5s game refresh. The timer is owned by the
+// game-mode toggle handler: switching away cancels it; switching in
+// starts it; switching games clears+restarts it.
+
+async function hydrateMarkets(gameId) {
+    try {
+        const res = await fetch(`/api/game/${gameId}/markets`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (String(gameId) !== String(activeGameId)) return;
+        // Also update the cached consensus pill — even when viewers
+        // are on the Markets tab, the Live View card behind it should
+        // reflect the same numbers when they tab back.
+        cachedMarketConsensusSlot = renderMarketConsensusPill(data);
+        cachedMarketConsensusPk = gameId;
+        const pillSlot = document.getElementById("market-consensus-slot");
+        if (pillSlot) pillSlot.innerHTML = cachedMarketConsensusSlot;
+        const pane = document.getElementById("markets-pane");
+        if (!pane) return;
+        const html = renderMarkets(data);
+        pane.innerHTML = html;
+        cachedMarketsHTML = html;
+        cachedMarketsPk = gameId;
+    } catch (e) {
+        const pane = document.getElementById("markets-pane");
+        if (pane && !cachedMarketsHTML) {
+            pane.innerHTML = `<div class="empty">Couldn't load markets: ${e.message || e}</div>`;
+        }
+        // Otherwise keep showing what we have — a single failed poll
+        // shouldn't blank the pane.
+    }
+}
+
+// Lightweight version of hydrateMarkets used by the Live View card to
+// fill the consensus pill without rendering the full markets pane.
+// Same endpoint — the Cloudflare edge cache (20s) means this is a
+// shared response with the Markets tab when both are open.
+async function hydrateMarketConsensusPill(gameId) {
+    try {
+        const res = await fetch(`/api/game/${gameId}/markets`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (String(gameId) !== String(activeGameId)) return;
+        cachedMarketConsensusSlot = renderMarketConsensusPill(data);
+        cachedMarketConsensusPk = gameId;
+        const slot = document.getElementById("market-consensus-slot");
+        if (slot) slot.innerHTML = cachedMarketConsensusSlot;
+    } catch { /* keep cached pill; silent fail */ }
+}
+
+// Compact pill rendered between the WE bar and our evidence line.
+// Shows the market's consensus probability for the home team next to
+// ours, plus a one-word verdict on the edge. Hidden entirely when no
+// moneyline market exists yet (most non-primetime games).
+function renderMarketConsensusPill(data) {
+    if (!data || !data.available || !data.market_count) return "";
+    const cons = data.consensus?.home_win;
+    const ours = data.our_we_home;
+    if (cons == null || ours == null) return "";
+    const home = data.teams?.home?.abbr || "HOME";
+    const edge = ours - cons;
+    const dir  = Math.abs(edge) < 0.02 ? "match"
+               : edge > 0 ? "we_higher" : "market_higher";
+    const verdict = dir === "match"
+        ? `model and market agree`
+        : dir === "we_higher"
+            ? `we're +${(edge * 100).toFixed(1)}pp on ${home}`
+            : `market's +${(-edge * 100).toFixed(1)}pp on ${home}`;
+    const cls = `mc-pill mc-pill-${dir}`;
+    return `
+      <div class="${cls}">
+        <div class="mc-pill-head">
+          <span class="mc-pill-label">Market consensus</span>
+          <a class="mc-pill-link" href="#" data-mc-open-markets="1">Open all lines →</a>
+        </div>
+        <div class="mc-pill-row">
+          <div class="mc-pill-num"><div class="mc-pill-num-val">${fmtPct(ours)}</div><div class="mc-pill-num-key">our model</div></div>
+          <div class="mc-pill-vs">vs</div>
+          <div class="mc-pill-num"><div class="mc-pill-num-val">${fmtPct(cons)}</div><div class="mc-pill-num-key">market (${data.sources_present.length} src)</div></div>
+        </div>
+        <div class="mc-pill-verdict">${verdict}</div>
+      </div>
+    `;
+}
+
+// Click-to-jump from the pill into the Markets tab.
+document.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-mc-open-markets]");
+    if (!link) return;
+    e.preventDefault();
+    if (gameViewMode !== "markets") {
+        gameViewMode = "markets";
+        if (activeGameId) refreshGame(activeGameId);
+    }
+});
+
+function startMarketsPoll(gameId) {
+    stopMarketsPoll();
+    // 20s cadence — matches the endpoint's cache-control max-age, so
+    // each poll hits the edge cache exactly when it expires.
+    marketsPollTimer = setInterval(() => {
+        if (gameViewMode !== "markets" || String(gameId) !== String(activeGameId)) {
+            stopMarketsPoll();
+            return;
+        }
+        hydrateMarkets(gameId);
+    }, 20000);
+}
+function stopMarketsPoll() {
+    if (marketsPollTimer) {
+        clearInterval(marketsPollTimer);
+        marketsPollTimer = null;
+    }
+}
+
+function renderMarkets(d) {
+    if (!d.available) {
+        return `<div class="empty">${d.reason || "No markets available for this game."}</div>`;
+    }
+    if (!d.market_count) {
+        return `
+          <div class="markets-empty">
+            <div class="markets-empty-title">No public markets quoted on this game yet.</div>
+            <div class="markets-empty-sub">
+              We watch Polymarket, Kalshi, Manifold${d.sources_present?.length ? "" : " (plus The Odds API when configured)"}.
+              Most weekday games get lines closer to first pitch.
+            </div>
+          </div>
+        `;
+    }
+
+    const ourWe   = d.our_we_home;
+    const consHome = d.consensus?.home_win;
+    const consAway = d.consensus?.away_win;
+    const edge    = d.consensus?.edge_home;
+
+    return `
+      <div class="markets">
+        ${renderMarketsHeader(d, ourWe, consHome, consAway, edge)}
+        ${renderMarketsSection("Moneyline (who wins)",    d.markets.moneyline)}
+        ${renderMarketsSection("Spread (run line)",       d.markets.spread)}
+        ${renderMarketsSection("Total runs (over/under)", d.markets.total)}
+        ${renderMarketsSection("Player props",            d.markets.player_prop)}
+        ${renderMarketsSection("Team props",              d.markets.team_prop)}
+        ${renderMarketsSection("Series outcomes",         d.markets.series)}
+        ${renderMarketsSection("Futures (season-long)",   d.markets.future)}
+        ${renderMarketsSection("Other questions",         d.markets.other)}
+        <div class="markets-footnote">
+          Updates every 20s.
+          ${d.market_count} live quote${d.market_count === 1 ? "" : "s"}
+          across ${d.sources_present.length} source${d.sources_present.length === 1 ? "" : "s"}
+          (${d.sources_present.join(", ")}).
+          Pulled ${formatRelativeTime(d.fetched_at)}.
+        </div>
+      </div>
+    `;
+}
+
+function renderMarketsHeader(d, ourWe, consHome, consAway, edge) {
+    const home = d.teams.home.abbr;
+    const away = d.teams.away.abbr;
+    const oursPct = ourWe != null ? fmtPct(ourWe) : "—";
+    const consPct = consHome != null ? fmtPct(consHome) : "—";
+    const edgeTxt = edge != null
+        ? `${edge > 0 ? "+" : ""}${(edge * 100).toFixed(1)}pp`
+        : "—";
+    const edgeClass = edge == null
+        ? "edge-flat"
+        : Math.abs(edge) < 0.02
+            ? "edge-flat"
+            : edge > 0 ? "edge-us-higher" : "edge-market-higher";
+    const edgeLabel = edge == null
+        ? "No moneyline quoted yet"
+        : Math.abs(edge) < 0.02
+            ? "We agree with the market"
+            : edge > 0
+                ? `We have ${home} ${edgeTxt} higher than the market`
+                : `Market has ${home} ${(-edge * 100).toFixed(1)}pp higher than us`;
+    return `
+      <div class="markets-header">
+        <div class="markets-headline">
+          <div class="markets-side">
+            <div class="markets-side-label">Our model — ${home} win</div>
+            <div class="markets-side-num">${oursPct}</div>
+          </div>
+          <div class="markets-vs">vs</div>
+          <div class="markets-side">
+            <div class="markets-side-label">Market consensus — ${home} win</div>
+            <div class="markets-side-num">${consPct}</div>
+          </div>
+        </div>
+        <div class="markets-edge ${edgeClass}">${edgeLabel}</div>
+        <div class="markets-subhead">
+          ${consAway != null ? `${away} win consensus: ${fmtPct(consAway)}` : ""}
+        </div>
+      </div>
+    `;
+}
+
+function renderMarketsSection(title, rows) {
+    if (!rows || !rows.length) return "";
+    return `
+      <section class="markets-section">
+        <h3 class="markets-section-title">${title}</h3>
+        <div class="markets-rows">
+          ${rows.map(renderMarketRow).join("")}
+        </div>
+      </section>
+    `;
+}
+
+function renderMarketRow(market) {
+    const src = market.source || "?";
+    const status = market.status || "open";
+    const statusBadge = status !== "open"
+        ? `<span class="market-status market-status-${status}">${status}</span>`
+        : "";
+    const liquidity = market.liquidity_usd != null
+        ? ` · $${formatCompactNumber(market.liquidity_usd)} liq`
+        : "";
+    const volume = market.volume_usd != null
+        ? ` · $${formatCompactNumber(market.volume_usd)} vol`
+        : "";
+    // Outcomes: sort by probability desc so the favored side is first.
+    const outcomes = (market.outcomes || [])
+        .slice()
+        .sort((a, b) => (b.probability || 0) - (a.probability || 0));
+    return `
+      <article class="market-row" data-source="${src}">
+        <header class="market-row-head">
+          <span class="market-source market-source-${src}">${src}</span>
+          ${statusBadge}
+          <a class="market-title" href="${market.url || "#"}" target="_blank" rel="noopener">
+            ${escapeHTML(market.title || "Untitled market")}
+          </a>
+        </header>
+        <div class="market-outcomes">
+          ${outcomes.map(renderMarketOutcome).join("")}
+        </div>
+        <div class="market-meta">${src}${liquidity}${volume}</div>
+      </article>
+    `;
+}
+
+function renderMarketOutcome(outcome) {
+    const prob = outcome.probability;
+    const pct  = prob != null ? fmtPct(prob) : "—";
+    const bar  = prob != null ? Math.round(prob * 100) : 0;
+    return `
+      <div class="market-outcome">
+        <div class="mo-name">${escapeHTML(outcome.name || "")}</div>
+        <div class="mo-bar"><div class="mo-bar-fill" style="width:${bar}%"></div></div>
+        <div class="mo-pct">${pct}</div>
+      </div>
+    `;
+}
+
+function fmtPct(p) {
+    if (p == null) return "—";
+    return `${(p * 100).toFixed(1)}%`;
+}
+
+function formatCompactNumber(n) {
+    if (n == null) return "—";
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+    if (n >= 1_000)     return (n / 1_000).toFixed(1) + "k";
+    return String(Math.round(n));
+}
+
+function formatRelativeTime(iso) {
+    if (!iso) return "";
+    const t = new Date(iso).getTime();
+    if (!Number.isFinite(t)) return "";
+    const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+    return `${Math.round(secs / 3600)}h ago`;
+}
+
+// (escapeHTML already defined below; reuse it for market titles.)
+
 
 // ── MATCHUP ENGINE (Phase 3.2) ──────────────────────────────────────
 
@@ -3145,15 +3608,17 @@ function showTraceTooltip(marker) {
 
     // Batter / pitcher names — clickable when we have IDs, so the user can
     // jump from "who moved the curve here" to the player profile.
+    // Tiny avatars next to the names so the player is recognizable
+    // without reading.
     const batterHtml = data.batter
         ? (data.batter_id
-            ? `<a class="tt-link" href="#player/${data.batter_id}">${shortName(data.batter)}</a>`
-            : `<span>${shortName(data.batter)}</span>`)
+            ? `<a class="tt-link tt-link-with-photo" href="#player/${data.batter_id}">${inlineAvatar(data.batter_id, { size: 18, cdnSize: 60, class: "tt-photo", alt: data.batter })}${shortName(data.batter)}</a>`
+            : `<span class="tt-link-with-photo">${inlineAvatar(null, { size: 18, class: "tt-photo" })}${shortName(data.batter)}</span>`)
         : "";
     const pitcherHtml = data.pitcher
         ? (data.pitcher_id
-            ? `<a class="tt-link" href="#player/${data.pitcher_id}">${shortName(data.pitcher)}</a>`
-            : `<span>${shortName(data.pitcher)}</span>`)
+            ? `<a class="tt-link tt-link-with-photo" href="#player/${data.pitcher_id}">${inlineAvatar(data.pitcher_id, { size: 18, cdnSize: 60, class: "tt-photo", alt: data.pitcher })}${shortName(data.pitcher)}</a>`
+            : `<span class="tt-link-with-photo">${inlineAvatar(null, { size: 18, class: "tt-photo" })}${shortName(data.pitcher)}</span>`)
         : "";
     const playersLine = (batterHtml && pitcherHtml)
         ? `<div class="tt-players">${batterHtml} vs ${pitcherHtml}</div>`
