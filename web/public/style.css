@@ -1037,11 +1037,53 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 /* ── HERO HEADER ─────────────────────────────────────────────────
    Name big, jersey# trailing, meta strip below. Convention every
-   baseball site uses. */
+   baseball site uses. Now with the player's headshot to the left —
+   same MLB CDN every other baseball site uses. */
 .player-hero {
     margin-bottom: 24px;
     padding-bottom: 18px;
     border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+.ph-headshot {
+    flex: 0 0 96px;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    position: relative;
+}
+.ph-headshot img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.ph-headshot-initials {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 36px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 80ms ease;
+}
+.ph-headshot.ph-headshot-fallback .ph-headshot-initials {
+    opacity: 1;
+}
+.ph-body {
+    flex: 1;
+    min-width: 0;
 }
 .ph-name-row {
     display: flex;
@@ -2766,6 +2808,31 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     text-transform: uppercase;
     flex: 0 0 72px;
 }
+/* Small circular avatar in the AT BAT / PITCHING rows — links to
+   the player profile. MLB CDN spot photos are 7KB, lazy-loaded,
+   gracefully fade to a neutral circle if the image fails. */
+.player-row .pr-avatar {
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.player-row .pr-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.player-row .pr-avatar-empty {
+    /* nothing inside; just a neutral circle */
+}
 .player-row strong {
     color: var(--text);
     font-weight: 600;
@@ -3235,6 +3302,38 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
    pitcher when their recent (last 30 days) hit-rate has meaningfully
    diverged from their season baseline. Sits just below the subject
    line so it's visually attached to "who's batting / pitching." */
+/* Matchup-card subject row — small circular avatars next to each
+   player name, with player-link click-through. Same MLB CDN spot
+   photos as the at-bat / pitching rows on the field pane. */
+.matchup-card .subject {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.matchup-card .mc-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    display: inline-flex;
+    flex-shrink: 0;
+    text-decoration: none;
+}
+.matchup-card .mc-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.matchup-card .mc-vs {
+    color: var(--text-dim);
+    font-weight: 600;
+    margin: 0 4px;
+}
+
 .matchup-card .form-strip {
     display: flex;
     flex-wrap: wrap;
