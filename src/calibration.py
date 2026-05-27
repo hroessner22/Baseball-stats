@@ -305,10 +305,39 @@ def main() -> int:
     top1:   dict[str, int] = defaultdict(int)
     top3:   dict[str, int] = defaultdict(int)
     brier:  dict[str, float] = defaultdict(float)
+    # Per-variant per-PA Brier squared-error contributions so we can
+    # compute standard error of the Brier score (variance / N).
+    # Standard error tells us whether a delta between variants is
+    # statistically meaningful or within sample noise.
+    brier_sq: dict[str, float] = defaultdict(float)  # sum of per-PA Brier^2
     skipped_no_map = 0
     skipped_no_data = 0
     earliest_date = None
     latest_date   = None
+
+    # Per-bucket reliability tracking (10 buckets of predicted prob × outcome).
+    # Index: variant → outcome → bucket_idx → (n, sum_predicted, sum_actual)
+    # Used to render reliability diagrams ("when we say 30% K, do K rates
+    # actually come in at 30% in that bucket?").
+    reliability: dict = {v: {o: [[0, 0.0, 0.0] for _ in range(10)] for o in OUTCOMES}
+                         for v in variants}
+
+    def _accumulate(v_name: str, predicted: dict, actual: str):
+        """Score one variant on one PA and update all aggregates."""
+        t1, t3, br = score_predictions(predicted, actual)
+        sample[v_name]    += 1
+        top1[v_name]      += t1
+        top3[v_name]      += t3
+        brier[v_name]     += br
+        brier_sq[v_name]  += br * br
+        # Update reliability buckets for each outcome's predicted prob.
+        for o in OUTCOMES:
+            p = predicted.get(o, 0)
+            b = min(9, int(p * 10))  # bucket 0..9
+            cell = reliability[v_name][o][b]
+            cell[0] += 1
+            cell[1] += p
+            cell[2] += (1 if actual == o else 0)
 
     for pa in pas:
         gd = pa.get("game_date")
@@ -335,11 +364,7 @@ def main() -> int:
         }
 
         # === naive ===
-        t1, t3, br = score_predictions(league_rates_pred, actual)
-        sample["naive"] += 1
-        top1["naive"]   += t1
-        top3["naive"]   += t3
-        brier["naive"]  += br
+        _accumulate("naive", league_rates_pred, actual)
 
         # The next three variants need player-specific historical data.
         retro_b = mlbam_to_retro.get(pa["batter_mlbam"])
@@ -356,11 +381,7 @@ def main() -> int:
 
         # === v1_historical ===
         predicted_v1 = predict(b_counts_hist, p_counts_hist, l_counts)
-        t1, t3, br = score_predictions(predicted_v1, actual)
-        sample["v1_historical"] += 1
-        top1["v1_historical"]   += t1
-        top3["v1_historical"]   += t3
-        brier["v1_historical"]  += br
+        _accumulate("v1_historical", predicted_v1, actual)
 
         # === v2_with_daily — historical + daily_pa current-season counts ===
         b_daily = batter_daily_counts.get((pa["batter_mlbam"], throws), {})
@@ -371,11 +392,7 @@ def main() -> int:
             b_counts_v2[o] = b_counts_v2.get(o, 0) + b_daily.get(o, 0)
             p_counts_v2[o] = p_counts_v2.get(o, 0) + p_daily.get(o, 0)
         predicted_v2 = predict(b_counts_v2, p_counts_v2, l_counts)
-        t1, t3, br = score_predictions(predicted_v2, actual)
-        sample["v2_with_daily"] += 1
-        top1["v2_with_daily"]   += t1
-        top3["v2_with_daily"]   += t3
-        brier["v2_with_daily"]  += br
+        _accumulate("v2_with_daily", predicted_v2, actual)
 
         # === v3_recency — v2 + recency form factor ===
         b_form = recency_form_factor(batter_daily.get((pa["batter_mlbam"], throws), []), today)
@@ -383,18 +400,10 @@ def main() -> int:
         b_counts_v3 = apply_form_factor(b_counts_v2, b_form)
         p_counts_v3 = apply_form_factor(p_counts_v2, p_form)
         predicted_v3 = predict(b_counts_v3, p_counts_v3, l_counts)
-        t1, t3, br = score_predictions(predicted_v3, actual)
-        sample["v3_recency"] += 1
-        top1["v3_recency"]   += t1
-        top3["v3_recency"]   += t3
-        brier["v3_recency"]  += br
+        _accumulate("v3_recency", predicted_v3, actual)
 
         # === v4_daily_{3,5,10}x — same composition as v2 but daily_pa
-        # counts get multiplied by N before being added to career, so
-        # current-season data dominates the prediction more. Higher N =
-        # more responsive to recent form, less reliance on 2020-24
-        # historical baseline. Pure additive amplification; no recency
-        # window weighting on top.
+        # counts get multiplied by N before being added to career.
         for daily_weight in [3, 5, 10]:
             v_name = f"v4_daily_{daily_weight}x"
             b_counts_v4 = dict(b_counts_hist)
@@ -403,16 +412,9 @@ def main() -> int:
                 b_counts_v4[o] = b_counts_v4.get(o, 0) + b_daily.get(o, 0) * daily_weight
                 p_counts_v4[o] = p_counts_v4.get(o, 0) + p_daily.get(o, 0) * daily_weight
             predicted_v4 = predict(b_counts_v4, p_counts_v4, l_counts)
-            t1, t3, br = score_predictions(predicted_v4, actual)
-            sample[v_name] += 1
-            top1[v_name]   += t1
-            top3[v_name]   += t3
-            brier[v_name]  += br
+            _accumulate(v_name, predicted_v4, actual)
 
-        # === v5_daily_{5,10}x_plus_recency — v4 + recency form factor.
-        # The form factor operates on the now-heavier daily sample, so
-        # within-season hot/cold streaks actually shift predictions
-        # instead of being washed out by 3-year-old career data.
+        # === v5_daily_{5,10}x_plus_recency — v4 + recency form factor. ===
         for daily_weight in [5, 10]:
             v_name = f"v5_daily_{daily_weight}x_plus_recency"
             b_counts_v5 = dict(b_counts_hist)
@@ -423,38 +425,61 @@ def main() -> int:
             b_counts_v5 = apply_form_factor(b_counts_v5, b_form)
             p_counts_v5 = apply_form_factor(p_counts_v5, p_form)
             predicted_v5 = predict(b_counts_v5, p_counts_v5, l_counts)
-            t1, t3, br = score_predictions(predicted_v5, actual)
-            sample[v_name] += 1
-            top1[v_name]   += t1
-            top3[v_name]   += t3
-            brier[v_name]  += br
+            _accumulate(v_name, predicted_v5, actual)
 
     # ── output + insert ─────────────────────────────────────────────
     print("", file=sys.stderr)
     print(f"Skipped: {skipped_no_map} no_map · {skipped_no_data} no_data", file=sys.stderr)
     print("", file=sys.stderr)
-    header = f"  {'variant':<16}{'sample':>10}{'top-1':>10}{'top-3':>10}{'brier':>10}"
+    header = f"  {'variant':<28}{'sample':>10}{'top-1':>10}{'top-3':>10}{'brier':>10}{'±SE':>10}"
     print(header, file=sys.stderr)
     print("  " + "-" * (len(header) - 2), file=sys.stderr)
     rows_to_insert = []
     for v in variants:
         n = sample[v]
         if n == 0:
-            print(f"  {v:<16}{'(no PAs)':>10}", file=sys.stderr)
+            print(f"  {v:<28}{'(no PAs)':>10}", file=sys.stderr)
             continue
         t1_pct = top1[v] / n * 100
         t3_pct = top3[v] / n * 100
         br_avg = brier[v] / n
-        print(f"  {v:<16}{n:>10}{t1_pct:>9.2f}%{t3_pct:>9.2f}%{br_avg:>10.5f}",
+        # Standard error: SE = sqrt(var(per-PA brier) / N).
+        # var = E[X²] − E[X]², with E[X²] = brier_sq[v]/n, E[X] = br_avg.
+        # Tells us whether deltas between variants are statistically real.
+        # With N=200K, SE is typically ~0.001-0.002 so even 0.005 deltas
+        # are highly significant.
+        var = max(0.0, brier_sq[v] / n - br_avg ** 2)
+        se = (var / n) ** 0.5
+        print(f"  {v:<28}{n:>10}{t1_pct:>9.2f}%{t3_pct:>9.2f}%{br_avg:>10.5f}{se:>10.5f}",
               file=sys.stderr)
+
+        # Compact reliability diagram per variant — JSON array of per-
+        # outcome buckets. Used by /About to render calibration curves.
+        rel = {}
+        for o in OUTCOMES:
+            buckets = reliability[v][o]
+            rel[o] = [
+                {
+                    "lo": round(i / 10, 1),
+                    "hi": round((i + 1) / 10, 1),
+                    "n":  int(c[0]),
+                    "pred_avg":  round(c[1] / c[0], 4) if c[0] > 0 else None,
+                    "actual_rate": round(c[2] / c[0], 4) if c[0] > 0 else None,
+                }
+                for i, c in enumerate(buckets)
+            ]
+
         rows_to_insert.append({
             "variant":           v,
             "sample_size":       n,
             "top_pick_accuracy": round(top1[v] / n, 4),
             "top3_accuracy":     round(top3[v] / n, 4),
             "brier_score":       round(br_avg, 5),
+            "brier_stderr":      round(se, 6),
             "pa_start_date":     earliest_date,
             "pa_end_date":       latest_date,
+            "evaluation_window": "full",
+            "reliability_json":  json.dumps(rel),
             "note":              f"variant={v} · skipped {skipped_no_map} no_map "
                                  f"+ {skipped_no_data} no_data",
         })
