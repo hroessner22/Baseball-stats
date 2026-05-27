@@ -517,6 +517,23 @@ function lastName(fullName) {
     return parts.length < 2 ? fullName : parts[parts.length - 1];
 }
 
+// MLB headshot URL helpers. Two CDN endpoints work:
+//   - midfield.mlbstatic.com/spots/N  → team-colored circular spot, ~7KB
+//                                       PNG, perfect for inline avatars
+//   - img.mlbstatic.com cloudinary    → larger crisp jpeg, used for hero
+//
+// Both serve cleanly when the MLBAM id is unknown / null — they return
+// a generic silhouette. Cached at the edge by Cloudflare automatically.
+function playerHeadshotSpot(mlbam, size = 60) {
+    if (!mlbam) return null;
+    return `https://midfield.mlbstatic.com/v1/people/${mlbam}/spots/${size}`;
+}
+function playerHeadshotLarge(mlbam, width = 240) {
+    if (!mlbam) return null;
+    return `https://img.mlbstatic.com/mlb-photos/image/upload/`
+         + `w_${width},q_auto:best/v1/people/${mlbam}/headshot/67/current`;
+}
+
 // ── (the standalone Featured Game card was retired in favor of expanded
 // tiles for every game, sorted by leverage. The picker function `leverage`
 // lives up top and now drives sort order. The bigger field SVG and players
@@ -824,13 +841,30 @@ function renderHeroHeader(player, d) {
         sizeLine,
         player.retrosheet ? "" : "modern callup",
     ].filter(Boolean);
+    // Headshot from MLB's CDN. Falls back to a generic silhouette
+    // automatically when MLBAM is unknown — same URL pattern serves
+    // both cases. onerror swaps to a placeholder div if even the
+    // generic 404s (rare but possible for very old / dropped players).
+    const headshotUrl = playerHeadshotLarge(player.mlbam, 240);
+    const headshot = headshotUrl
+        ? `<div class="ph-headshot">
+              <img src="${headshotUrl}" alt="${player.name}"
+                   loading="eager"
+                   onerror="this.style.display='none'; this.parentElement.classList.add('ph-headshot-fallback');"/>
+              <div class="ph-headshot-initials" aria-hidden="true">${player.first?.[0] || ""}${player.last?.[0] || ""}</div>
+           </div>`
+        : "";
+
     return `
       <header class="player-hero">
-        <div class="ph-name-row">
-          <h1 class="ph-name">${player.name}</h1>
-          ${jersey ? `<span class="ph-jersey">${jersey}</span>` : ""}
+        ${headshot}
+        <div class="ph-body">
+          <div class="ph-name-row">
+            <h1 class="ph-name">${player.name}</h1>
+            ${jersey ? `<span class="ph-jersey">${jersey}</span>` : ""}
+          </div>
+          ${meta.length ? `<div class="ph-meta">${meta.map(m => `<span>${m}</span>`).join("<span class=\"ph-dot\">·</span>")}</div>` : ""}
         </div>
-        ${meta.length ? `<div class="ph-meta">${meta.map(m => `<span>${m}</span>`).join("<span class=\"ph-dot\">·</span>")}</div>` : ""}
       </header>
     `;
 }
@@ -2247,9 +2281,16 @@ function matchupRow(label, name, hand, mlbam) {
     const nameHtml = mlbam
         ? `<a class="player-link" href="#player/${mlbam}"><strong>${name}</strong></a>`
         : `<strong>${name}</strong>`;
+    const headshot = mlbam
+        ? `<a href="#player/${mlbam}" class="pr-avatar" aria-label="${name} profile">
+              <img src="${playerHeadshotSpot(mlbam, 60)}" alt=""
+                   loading="lazy" onerror="this.style.opacity='0';"/>
+           </a>`
+        : `<span class="pr-avatar pr-avatar-empty" aria-hidden="true"></span>`;
     return `
       <div class="player-row">
         <span class="label">${label}</span>
+        ${headshot}
         ${nameHtml}
         <span class="hand">${hand}</span>
       </div>
@@ -3353,8 +3394,10 @@ function renderMatchupCard(m) {
     return `
       <div class="card matchup-card">
         <div class="subject">
+          <a class="mc-avatar" href="#player/${m.batter.mlbam}" aria-label="${m.batter.name}"><img src="${playerHeadshotSpot(m.batter.mlbam, 90)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/></a>
           <a class="player-link" href="#player/${m.batter.mlbam}">${m.batter.name}</a> (${m.batter.bats}HB)
-          vs
+          <span class="mc-vs">vs</span>
+          <a class="mc-avatar" href="#player/${m.pitcher.mlbam}" aria-label="${m.pitcher.name}"><img src="${playerHeadshotSpot(m.pitcher.mlbam, 90)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/></a>
           <a class="player-link" href="#player/${m.pitcher.mlbam}">${m.pitcher.name}</a> (${m.pitcher.throws}HP)
         </div>
         ${(batterForm || pitcherForm) ? `<div class="form-strip">${batterForm}${pitcherForm}</div>` : ""}
