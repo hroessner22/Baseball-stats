@@ -22,7 +22,7 @@ import {
     teamTricode,
 } from "../../_markets.js";
 
-const CACHE_SECONDS = 20;
+const CACHE_SECONDS = 10;   // rapid updates per user feedback
 
 
 export async function onRequest(context) {

@@ -20,7 +20,7 @@ import {
     groupByQuestion,
 } from "./_markets.js";
 
-const CACHE_SECONDS = 30;
+const CACHE_SECONDS = 10;   // rapid updates per user feedback
 const GAME_DAY_TYPES   = new Set(["moneyline", "spread", "total", "team_prop", "player_prop"]);
 const GAME_DAY_EXCLUDE = new Set(["future", "series"]);
 const GAME_DAY_WINDOW_MS = 48 * 3600 * 1000;
@@ -101,10 +101,12 @@ function dedupeByGameKey(markets) {
     const out = [];
     for (const m of markets) {
         if (NON_DEDUPED.has(m.question_type)) { out.push(m); continue; }
-        // Game key = sorted team pair, so order swaps don't make dupes.
         const tri = [m.home_tricode, m.away_tricode].filter(Boolean).sort().join("v");
         if (!tri) { out.push(m); continue; }
-        const key = `${tri}|${m.question_type}|${m.source}`;
+        // Handicap in the key so spread / total ladders preserve each
+        // line as its own row.
+        const hKey = m.handicap != null ? `:${m.handicap}` : "";
+        const key = `${tri}|${m.question_type}|${m.source}${hKey}`;
         const prev = byKey.get(key);
         if (!prev) { byKey.set(key, m); continue; }
         const dNew = m.start_time

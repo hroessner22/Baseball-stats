@@ -27,7 +27,7 @@ const MVP_REFRESH_MS = 5 * 60_000;
 const HOT_REFRESH_MS = 15_000;
 // Markets dashboard polls every 20s — sportsbook lines move on that
 // order, and the upstream /api/markets is edge-cached for 30s anyway.
-const MARKETS_REFRESH_MS = 20_000;
+const MARKETS_REFRESH_MS = 10_000;  // dashboard poll; per-game pane uses its own 8s timer
 
 let boardTimer = null;
 let gameTimer = null;
@@ -3460,15 +3460,17 @@ document.addEventListener("click", (e) => {
 
 function startMarketsPoll(gameId) {
     stopMarketsPoll();
-    // 20s cadence — matches the endpoint's cache-control max-age, so
-    // each poll hits the edge cache exactly when it expires.
+    // 8s poll — user wants rapid updates like Polymarket / sportsbook
+    // websites. The endpoint edge-caches 20s so most of these polls
+    // are warm, but ones that hit a fresh cache window see new prices
+    // within 8s of Bovada/Polymarket publishing them.
     marketsPollTimer = setInterval(() => {
         if (gameViewMode !== "markets" || String(gameId) !== String(activeGameId)) {
             stopMarketsPoll();
             return;
         }
         hydrateMarkets(gameId);
-    }, 20000);
+    }, 8000);
 }
 function stopMarketsPoll() {
     if (marketsPollTimer) {
@@ -3576,10 +3578,17 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge) {
 
 function renderMarketsSection(title, rows) {
     if (!rows || !rows.length) return "";
-    // renderMarketRow returns "" for unpriced moneyline/spread/total
-    // rows — filter those out before deciding whether to render the
-    // section header at all.
-    const rendered = rows.map(renderMarketRow).filter((s) => s.length > 0);
+    // Order: main lines first (Bovada main spread = ±1.5 / main total
+    // = line with balanced juice), then alternates by ascending |handicap|.
+    const sorted = rows.slice().sort((a, b) => {
+        const am = a?.is_main_line ? 1 : 0;
+        const bm = b?.is_main_line ? 1 : 0;
+        if (am !== bm) return bm - am;
+        const ah = a?.handicap != null ? Math.abs(a.handicap) : Infinity;
+        const bh = b?.handicap != null ? Math.abs(b.handicap) : Infinity;
+        return ah - bh;
+    });
+    const rendered = sorted.map(renderMarketRow).filter((s) => s.length > 0);
     if (!rendered.length) return "";
     return `
       <section class="markets-section">

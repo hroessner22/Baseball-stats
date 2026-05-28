@@ -4301,6 +4301,12 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 0 32px;
     flex: 1;
     min-height: 0;
+    /* Without min-width:0 a flex item with grid content can shrink to
+       its min-content width and the grid then can't fan out to fill the
+       row. This was why the Markets tab showed one column on a wide
+       desktop. */
+    min-width: 0;
+    width: 100%;
 }
 .markets-loading,
 .markets-pane .empty,
@@ -4409,8 +4415,12 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .markets-rows {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    /* auto-fit collapses empty tracks; min 240px lets up to 5 columns
+       fit on a desktop. Smaller cards work better now that Bovada
+       alternate handicaps are split into separate 2-outcome rows. */
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 12px;
+    width: 100%;
 }
 
 /* ROW — one prediction-market quote, regardless of source. Source
