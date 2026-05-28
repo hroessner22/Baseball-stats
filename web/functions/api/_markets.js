@@ -858,33 +858,41 @@ export async function listAllMlbMarkets(env) {
 
 
 // Markets that apply to one specific game — matched by team tricode
-// (either pair direction) plus, for game-specific markets only, a
-// start-time window.
+// (either pair direction) AND time-bound to tonight.
 //
-// Game-specific markets (moneyline, spread, total) MUST have a
-// start_time within 48 hours of this game. Otherwise we'd surface
-// stale Polymarket events from earlier in the series.
+// HARD EXCLUSIONS for the per-game endpoint:
+//   - future:  season-long futures (WS odds, MVP, etc.) belong on the
+//              team page, not the game tracker.
+//   - series:  series-outcome bets (sweep, take series) are season
+//              context, not this-game-tonight.
 //
-// Futures / season-long props (World Series odds, season wins,
-// MVP, etc.) ALWAYS apply to a team that's playing tonight. They
-// have arbitrary startDate (often the event-creation date), so we
-// skip the date check for those question types and match purely on
-// team involvement.
+// What gets included:
+//   - moneyline / spread / total / team_prop : 48h start-time window
+//   - player_prop : 48h start-time window too (a Polymarket
+//                   "MVP" market with January start_time is filtered
+//                   out; an Odds-API "Bregman over 1.5 hits tonight"
+//                   with start_time = tonight's first pitch is kept)
 //
-// Player props match by player name in the UI layer (per matchup-card
-// hydration), not here — this just bundles them with the team feed.
+// Per-game endpoint = lines relevant to THIS game's first pitch.
+// Everything else lives on the team page.
+const PER_GAME_TYPES   = new Set(["moneyline", "spread", "total", "team_prop", "player_prop"]);
+const PER_GAME_EXCLUDE = new Set(["future", "series"]);
+const PER_GAME_WINDOW_MS = 48 * 3600 * 1000;
+
 export function filterMarketsForGame(markets, home, away, gameStartTime) {
     const homeTri = teamTricode(home);
     const awayTri = teamTricode(away);
     if (!homeTri && !awayTri) return [];
 
     const startMs = gameStartTime ? new Date(gameStartTime).getTime() : null;
-    const TWO_DAYS = 48 * 3600 * 1000;
-
-    const TIME_BOUND_TYPES = new Set(["moneyline", "spread", "total", "team_prop"]);
 
     const matches = [];
     for (const m of markets) {
+        // Hard-exclude futures and series — those belong on team page.
+        if (PER_GAME_EXCLUDE.has(m.question_type)) continue;
+        // Only the allow-listed game-day types proceed.
+        if (!PER_GAME_TYPES.has(m.question_type)) continue;
+
         const mHome = m.home_tricode;
         const mAway = m.away_tricode;
         const both = mHome && mAway;
@@ -895,13 +903,12 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
                (mAway && (mAway === homeTri || mAway === awayTri)));
         if (!teamsMatch) continue;
 
-        // Game-day markets are time-bound. Futures and player props
-        // aren't — a season-long "Will the Braves win the World
-        // Series?" applies tonight whether it was created in Feb or May.
-        if (TIME_BOUND_TYPES.has(m.question_type)
-            && startMs && m.start_time) {
+        // Time-bound to tonight's first pitch. Markets with no
+        // start_time fall through to the team filter only, which is
+        // fine for player props from sources that don't expose times.
+        if (startMs && m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - startMs);
-            if (dt > TWO_DAYS) continue;
+            if (dt > PER_GAME_WINDOW_MS) continue;
         }
         matches.push(m);
     }
