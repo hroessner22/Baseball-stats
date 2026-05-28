@@ -3931,9 +3931,19 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe) {
 
 function renderMarketsSection(title, rows) {
     if (!rows || !rows.length) return "";
-    // Order: main lines first (Bovada main spread = ±1.5 / main total
-    // = line with balanced juice), then alternates by ascending |handicap|.
-    const sorted = rows.slice().sort((a, b) => {
+    // Partition priced (any outcome has probability) vs unpriced. If
+    // priced exists, render only those — Kalshi-no-quote rows are
+    // noise once Bovada lines are flowing. If NO priced exists, render
+    // up to ONE unpriced row so the user sees that we tried (and from
+    // which source) rather than a blank section.
+    const priced = rows.filter((m) =>
+        (m.outcomes || []).some((o) => o.probability != null)
+    );
+    const unpriced = rows.filter((m) =>
+        !(m.outcomes || []).some((o) => o.probability != null)
+    );
+    let list = priced.length ? priced : unpriced.slice(0, 1);
+    list = list.slice().sort((a, b) => {
         const am = a?.is_main_line ? 1 : 0;
         const bm = b?.is_main_line ? 1 : 0;
         if (am !== bm) return bm - am;
@@ -3941,7 +3951,7 @@ function renderMarketsSection(title, rows) {
         const bh = b?.handicap != null ? Math.abs(b.handicap) : Infinity;
         return ah - bh;
     });
-    const rendered = sorted.map(renderMarketRow).filter((s) => s.length > 0);
+    const rendered = list.map(renderMarketRow).filter((s) => s.length > 0);
     if (!rendered.length) return "";
     return `
       <section class="markets-section">
@@ -3969,14 +3979,12 @@ function renderMarketRow(market) {
         ? `<span class="market-status market-status-${status}">${status}</span>`
         : "";
 
-    // Hide market entirely if no outcome has a price — empty Kalshi
-    // moneyline rows ("BOS —, ATL —") are noise on the game tab.
-    const hasAnyPrice = (market.outcomes || []).some((o) => o.probability != null);
-    if (!hasAnyPrice && (market.question_type === "moneyline"
-        || market.question_type === "spread"
-        || market.question_type === "total")) {
-        return "";
-    }
+    // Old behavior: hide markets with no priced outcome entirely.
+    // New: keep them — the renderMarketsSection below partitions priced
+    // vs unpriced and only shows unpriced when nothing else exists for
+    // that question type. That way the user always sees "TOR vs BAL
+    // winner — kalshi market open, no quote yet" rather than a blank
+    // section when Bovada is missing.
 
     const liquidity = market.liquidity_usd != null
         ? ` · $${formatCompactNumber(market.liquidity_usd)} liq`
