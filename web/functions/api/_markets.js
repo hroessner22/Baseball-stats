@@ -856,6 +856,9 @@ export async function listAllMlbMarkets(env) {
         listManifoldMlbMarkets(),
         listOddsApiMlbMarkets(env || {}),
         listBovadaMlbMarkets(),
+        listPinnacleMlbMarkets(),
+        listSmarketsMlbMarkets(),
+        listSxBetMlbMarkets(),
     ]);
     const out = [];
     for (const r of results) {
@@ -1203,6 +1206,440 @@ function dedupeByQuestionAndSource(markets, anchorMs) {
         }
     }
     for (const m of byKey.values()) out.push(m);
+    return out;
+}
+
+
+// ── Pinnacle adapter (no-auth guest API) ──────────────────────────
+//
+// Pinnacle's website calls a public guest endpoint at
+//   https://guest.api.arcadia.pinnacle.com/0.1/
+// using an X-API-Key header that's baked into their public site bundle
+// — same header any browser visiting pinnacle.com sends. League id 246
+// is MLB. Returns real American odds via /matchups + /markets/related/
+// straight. 30s edge cache.
+
+const PINNACLE_BASE    = "https://guest.api.arcadia.pinnacle.com/0.1";
+const PINNACLE_API_KEY = "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R";   // bundled in their public site
+const PINNACLE_MLB_LEAGUE = 246;
+
+async function listPinnacleMlbMarkets() {
+    let matchups;
+    try {
+        const url = `${PINNACLE_BASE}/leagues/${PINNACLE_MLB_LEAGUE}/matchups?withSpecials=false`;
+        matchups = await fetchJson(url, {
+            cacheTtl: 30,
+            headers: { "X-API-Key": PINNACLE_API_KEY },
+        });
+    } catch {
+        return [];
+    }
+    if (!Array.isArray(matchups)) return [];
+
+    // For each top-level (parent==null) matchup, hit the straight
+    // markets endpoint to get moneyline / total / spread prices.
+    const eligible = matchups.filter((m) => !m.parent && m.participants?.length >= 2);
+    const results = await Promise.allSettled(
+        eligible.map(async (ev) => {
+            const id = ev.id;
+            const straight = await fetchJson(
+                `${PINNACLE_BASE}/matchups/${id}/markets/related/straight`,
+                {
+                    cacheTtl: 30,
+                    headers: { "X-API-Key": PINNACLE_API_KEY },
+                },
+            ).catch(() => null);
+            return { ev, straight };
+        }),
+    );
+
+    const out = [];
+    for (const r of results) {
+        if (r.status !== "fulfilled" || !r.value) continue;
+        const { ev, straight } = r.value;
+        if (!Array.isArray(straight)) continue;
+        const parts = ev.participants;
+        const home = parts.find((p) => (p.alignment || "").toLowerCase() === "home") || parts[1];
+        const away = parts.find((p) => (p.alignment || "").toLowerCase() === "away") || parts[0];
+        const homeTri = teamTricode(home?.name);
+        const awayTri = teamTricode(away?.name);
+        const titleBase = `${away?.name} @ ${home?.name}`;
+        const startIso = ev.startTime || null;
+        const eventUrl = `https://www.pinnacle.com/en/baseball/mlb/${(home?.name || "").toLowerCase().replace(/\s+/g, "-")}-vs-${(away?.name || "").toLowerCase().replace(/\s+/g, "-")}/${ev.id}`;
+
+        for (const mkt of straight) {
+            if (mkt.period !== 0) continue;  // 0 = full game
+            if (mkt.isAlternate) continue;     // main lines only for now
+            const type = mkt.type;             // moneyline / spread / total
+            const prices = mkt.prices || [];
+
+            let qType = "other";
+            let outcomes = [];
+            if (type === "moneyline") {
+                qType = "moneyline";
+                outcomes = prices.map((p) => {
+                    const am = p.price;
+                    const decimal = americanToDecimal(am);
+                    return {
+                        id: `pinnacle:${ev.id}:${type}:${p.designation}`,
+                        name: p.designation === "home" ? home?.name : away?.name,
+                        american: pinnacleAmericanStr(am),
+                        price: decimal,
+                        probability: decimal && decimal > 1 ? 1 / decimal : undefined,
+                    };
+                });
+            } else if (type === "total") {
+                qType = "total";
+                outcomes = prices.map((p) => {
+                    const am = p.price;
+                    const decimal = americanToDecimal(am);
+                    return {
+                        id: `pinnacle:${ev.id}:${type}:${p.designation}:${p.points}`,
+                        name: `${p.designation} ${p.points}`,
+                        american: pinnacleAmericanStr(am),
+                        price: decimal,
+                        point: p.points,
+                        probability: decimal && decimal > 1 ? 1 / decimal : undefined,
+                    };
+                });
+            } else if (type === "spread") {
+                qType = "spread";
+                outcomes = prices.map((p) => {
+                    const am = p.price;
+                    const decimal = americanToDecimal(am);
+                    const sideName = p.designation === "home" ? home?.name : away?.name;
+                    return {
+                        id: `pinnacle:${ev.id}:${type}:${p.designation}:${p.points}`,
+                        name: `${sideName} ${p.points > 0 ? "+" : ""}${p.points}`,
+                        american: pinnacleAmericanStr(am),
+                        price: decimal,
+                        point: p.points,
+                        probability: decimal && decimal > 1 ? 1 / decimal : undefined,
+                    };
+                });
+            } else {
+                continue;
+            }
+
+            // De-vig two-outcome markets.
+            if (outcomes.length === 2
+                && outcomes[0].probability != null
+                && outcomes[1].probability != null) {
+                const sum = outcomes[0].probability + outcomes[1].probability;
+                if (sum > 0) {
+                    for (const o of outcomes) {
+                        o.probability_devig = o.probability / sum;
+                    }
+                }
+            }
+
+            if (!outcomes.length) continue;
+
+            out.push(flat({
+                id: `pinnacle:${ev.id}:${type}`,
+                source: "pinnacle",
+                title: `${titleBase} · ${type}`,
+                description: "",
+                url: eventUrl,
+                outcomes,
+                question_type: qType,
+                status: "open",
+                start_time: startIso,
+                close_time: mkt.cutoffAt || null,
+                home_tricode: homeTri,
+                away_tricode: awayTri,
+                home_team: home?.name || null,
+                away_team: away?.name || null,
+                liquidity_usd: undefined,
+                volume_usd:    undefined,
+                raw_market_id: `${ev.id}:${type}`,
+                source_event_id: String(ev.id),
+                source_event_title: titleBase,
+                book_count: 1,
+                books_present: ["pinnacle"],
+                is_main_line: true,
+            }));
+        }
+    }
+    return out;
+}
+
+function pinnacleAmericanStr(price) {
+    if (price == null) return null;
+    const n = Number(price);
+    if (!Number.isFinite(n)) return null;
+    return n > 0 ? `+${n}` : `${n}`;
+}
+
+function americanToDecimal(american) {
+    if (american == null) return null;
+    const n = Number(american);
+    if (!Number.isFinite(n) || n === 0) return null;
+    return n > 0 ? (n / 100) + 1 : (100 / Math.abs(n)) + 1;
+}
+
+
+// ── Smarkets adapter (UK exchange, no auth) ───────────────────────
+//
+// Smarkets is a UK peer-to-peer betting exchange. Their public API at
+// api.smarkets.com/v3 exposes events / markets / contracts /
+// last_executed_prices with no auth. Prices are 0-100 (last executed
+// in cents) → divide by 100 to get implied probability. type=
+// baseball_match catches MLB games.
+
+const SMARKETS_BASE = "https://api.smarkets.com/v3";
+
+async function listSmarketsMlbMarkets() {
+    let events;
+    try {
+        const url = `${SMARKETS_BASE}/events/?type=baseball_match&state=upcoming&limit=50`;
+        const data = await fetchJson(url, { cacheTtl: 30 });
+        events = Array.isArray(data?.events) ? data.events : [];
+    } catch {
+        return [];
+    }
+    if (!events.length) return [];
+
+    // For each event, fetch the markets, then the "Match winner"
+    // market's contracts + last_executed_prices.
+    const results = await Promise.allSettled(events.map(async (ev) => {
+        const evId = ev.id;
+        const mktsRes = await fetchJson(
+            `${SMARKETS_BASE}/events/${evId}/markets/`,
+            { cacheTtl: 30 },
+        ).catch(() => null);
+        const markets = mktsRes?.markets || [];
+        const winner = markets.find((m) => /winner|match/i.test(m.name || ""));
+        if (!winner) return null;
+        const [contracts, prices] = await Promise.allSettled([
+            fetchJson(`${SMARKETS_BASE}/markets/${winner.id}/contracts/`,                { cacheTtl: 20 }),
+            fetchJson(`${SMARKETS_BASE}/markets/${winner.id}/last_executed_prices/`,    { cacheTtl: 10 }),
+        ]);
+        return {
+            ev, winner,
+            contracts: contracts.status === "fulfilled" ? contracts.value?.contracts : null,
+            prices:    prices.status === "fulfilled" ? prices.value?.last_executed_prices?.[winner.id] : null,
+        };
+    }));
+
+    const out = [];
+    for (const r of results) {
+        if (r.status !== "fulfilled" || !r.value) continue;
+        const { ev, winner, contracts, prices } = r.value;
+        if (!Array.isArray(contracts) || !contracts.length) continue;
+        // Smarkets event name is "Astros at Rangers" — home is the
+        // second team. We map contract_type ("HOME" / "AWAY") so the
+        // mapping is unambiguous regardless of name order.
+        const { home, away } = parseSmarketsEventName(ev.name);
+        const homeTri = teamTricode(home);
+        const awayTri = teamTricode(away);
+        const startIso = ev.start_datetime || null;
+        const url = `https://smarkets.com${ev.full_slug || ""}`;
+
+        const outcomes = contracts.map((c) => {
+            const side = (c.contract_type?.name || "").toUpperCase();   // HOME / AWAY
+            const last = (prices || []).find((p) => p.contract_id === c.id);
+            const lastPx = last?.last_executed_price != null
+                ? Number(last.last_executed_price) : null;
+            const probability = lastPx != null ? lastPx / 100 : undefined;
+            return {
+                id: `smarkets:${winner.id}:${c.id}`,
+                name: side === "HOME" ? (home || c.name) : (away || c.name),
+                probability,
+                american: probabilityToAmerican(probability),
+                price: probability ? 1 / probability : undefined,
+                side,
+            };
+        });
+
+        if (outcomes.length === 2
+            && outcomes[0].probability != null
+            && outcomes[1].probability != null) {
+            const sum = outcomes[0].probability + outcomes[1].probability;
+            if (sum > 0) {
+                for (const o of outcomes) o.probability_devig = o.probability / sum;
+            }
+        }
+        if (!outcomes.length) continue;
+
+        const titleBase = `${away} @ ${home}`;
+        out.push(flat({
+            id: `smarkets:${ev.id}`,
+            source: "smarkets",
+            title: `${titleBase} · Match winner`,
+            description: "",
+            url,
+            outcomes,
+            question_type: "moneyline",
+            status: "open",
+            start_time: startIso,
+            close_time: null,
+            home_tricode: homeTri,
+            away_tricode: awayTri,
+            home_team: home || null,
+            away_team: away || null,
+            liquidity_usd: undefined,
+            volume_usd: undefined,
+            raw_market_id: String(winner.id),
+            source_event_id: String(ev.id),
+            source_event_title: titleBase,
+            book_count: 1,
+            books_present: ["smarkets"],
+        }));
+    }
+    return out;
+}
+
+function parseSmarketsEventName(name) {
+    if (!name) return { home: null, away: null };
+    // Smarkets uses "Team A at Team B" (US away/home convention).
+    const m = name.match(/^(.+?)\s+(?:at|@|vs\.?)\s+(.+)$/i);
+    if (m) return { away: m[1].trim(), home: m[2].trim() };
+    return { home: null, away: null };
+}
+
+// Convert an implied probability to an American odds string. The
+// inverse of americanToDecimal. Used so Smarkets's 54.5 cent price
+// renders as something like "-120" alongside Bovada's American odds
+// in the UI.
+function probabilityToAmerican(p) {
+    if (p == null || !Number.isFinite(p) || p <= 0 || p >= 1) return null;
+    if (p >= 0.5) {
+        const n = Math.round(-(p * 100) / (1 - p));
+        return `${n}`;
+    }
+    const n = Math.round((100 * (1 - p)) / p);
+    return `+${n}`;
+}
+
+
+// ── Sx Bet adapter (blockchain prediction market) ─────────────────
+//
+// Sx Bet is a Polygon-side prediction market with a public REST API
+// at api.sx.bet. Sport 3 = Baseball, league 171 = MLB, market type
+// 226 = moneyline (12 default). The active markets endpoint returns
+// percentageOdds as a 1e20-scaled fixed-point number on the maker's
+// resting order (best available price).
+//
+// We fetch active markets + the best order book entry per market to
+// compute the implied probability for outcomeOne (away/team1) and
+// outcomeTwo (home/team2).
+
+const SX_BET_BASE = "https://api.sx.bet";
+
+async function listSxBetMlbMarkets() {
+    let markets;
+    try {
+        const url = `${SX_BET_BASE}/markets/active?sportIds=3&leagueId=171&type=226`;
+        const data = await fetchJson(url, { cacheTtl: 20 });
+        markets = data?.data?.markets || [];
+    } catch {
+        return [];
+    }
+    if (!markets.length) return [];
+
+    // Best price per market = the midpoint of the top of the order
+    // book. Sx Bet's /orders endpoint returns resting orders. For
+    // simplicity we fetch all orders for our market hashes once and
+    // group client-side.
+    const hashes = markets.map((m) => m.marketHash);
+    let orders = [];
+    try {
+        const ordersData = await fetchJson(
+            `${SX_BET_BASE}/orders?marketHashes=${hashes.join(",")}`,
+            { cacheTtl: 10 },
+        );
+        orders = ordersData?.data || [];
+    } catch { /* no orders → unpriced market still surfaces */ }
+
+    const bestByHash = new Map();   // hash → { outcomeOneProb, outcomeTwoProb }
+    for (const o of orders) {
+        // percentageOdds is the probability the MAKER is laying on the
+        // outcome they're betting. If isMakerBettingOutcomeOne, this
+        // is outcomeOne's implied prob from their side (offer).
+        const prob = Number(o.percentageOdds) / 1e20;
+        if (!Number.isFinite(prob) || prob <= 0 || prob >= 1) continue;
+        const slot = bestByHash.get(o.marketHash) || {};
+        if (o.isMakerBettingOutcomeOne) {
+            if (slot.outcomeOneProb == null || prob > slot.outcomeOneProb) {
+                slot.outcomeOneProb = prob;
+            }
+        } else {
+            if (slot.outcomeTwoProb == null || prob > slot.outcomeTwoProb) {
+                slot.outcomeTwoProb = prob;
+            }
+        }
+        bestByHash.set(o.marketHash, slot);
+    }
+
+    const out = [];
+    for (const m of markets) {
+        const startIso = m.gameTime ? new Date(m.gameTime * 1000).toISOString() : null;
+        // Sx Bet's outcomeOneName / outcomeTwoName ordering: typically
+        // outcomeOne = team listed first in the matchup (often the
+        // home team but it varies). We use teamTricode + leave it to
+        // the UI to map by name match.
+        const team1 = m.outcomeOneName;
+        const team2 = m.outcomeTwoName;
+        const t1Tri = teamTricode(team1);
+        const t2Tri = teamTricode(team2);
+        const best = bestByHash.get(m.marketHash) || {};
+        const probOne = best.outcomeOneProb;
+        const probTwo = best.outcomeTwoProb;
+
+        const outcomes = [
+            {
+                id: `sxbet:${m.marketHash}:one`,
+                name: team1,
+                probability: probOne,
+                american: probabilityToAmerican(probOne),
+                price: probOne ? 1 / probOne : undefined,
+            },
+            {
+                id: `sxbet:${m.marketHash}:two`,
+                name: team2,
+                probability: probTwo,
+                american: probabilityToAmerican(probTwo),
+                price: probTwo ? 1 / probTwo : undefined,
+            },
+        ];
+
+        if (probOne != null && probTwo != null) {
+            const sum = probOne + probTwo;
+            if (sum > 0) {
+                outcomes[0].probability_devig = probOne / sum;
+                outcomes[1].probability_devig = probTwo / sum;
+            }
+        }
+
+        // Sx Bet's ordering convention: t2 (outcomeTwo) is HOME in
+        // their American sports config based on observed data — but
+        // tricode_pair matching in the UI handles both orderings, so
+        // we just expose both tricodes.
+        out.push(flat({
+            id: `sxbet:${m.marketHash}`,
+            source: "sxbet",
+            title: `${team1} vs ${team2} · Moneyline`,
+            description: "",
+            url: `https://sx.bet/markets/${m.marketHash}`,
+            outcomes,
+            question_type: "moneyline",
+            status: "open",
+            start_time: startIso,
+            close_time: null,
+            home_tricode: t2Tri,
+            away_tricode: t1Tri,
+            home_team: team2,
+            away_team: team1,
+            liquidity_usd: undefined,
+            volume_usd: undefined,
+            raw_market_id: m.marketHash,
+            source_event_id: m.sportXeventId,
+            source_event_title: `${team1} vs ${team2}`,
+            book_count: 1,
+            books_present: ["sxbet"],
+        }));
+    }
     return out;
 }
 
