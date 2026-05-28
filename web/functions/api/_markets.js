@@ -885,8 +885,11 @@ export async function listAllMlbMarkets(env) {
 async function listBovadaMlbMarkets() {
     let leagueData;
     try {
-        const leagueUrl = `${BOVADA_BASE}/baseball/mlb?marketFilterId=def&preMatchOnly=true&lang=en`;
-        // 30s for the league listing (game catalog rarely changes within an hour).
+        // No `preMatchOnly=true` — that filter drops every in-progress
+        // game from the league listing, which is exactly when users
+        // care about live moneyline / total / spread odds. Unfiltered
+        // returns BOTH pre-match and live events.
+        const leagueUrl = `${BOVADA_BASE}/baseball/mlb?lang=en`;
         leagueData = await fetchJson(leagueUrl, { cacheTtl: 30 });
     } catch {
         return [];
