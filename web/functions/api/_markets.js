@@ -184,7 +184,9 @@ async function listPolymarketMlbMarkets() {
               + `?tag_slug=baseball&active=true&closed=false&limit=200`;
     let events;
     try {
-        events = await fetchJson(url, { cacheTtl: 30 });
+        // 10s edge cache — Polymarket's gamma API returns near-live
+        // prices and the user explicitly asked for rapid updates.
+        events = await fetchJson(url, { cacheTtl: 10 });
     } catch {
         return [];
     }
@@ -837,6 +839,10 @@ function flat(o) {
         // 6 books" rather than 6 duplicate rows.
         book_count:    o.book_count != null ? Number(o.book_count) : null,
         books_present: Array.isArray(o.books_present) ? o.books_present : null,
+        // Spread / total handicap line. Helps the UI label cards
+        // ("Spread ±1.5") and highlight the main line vs alternates.
+        handicap:      o.handicap != null ? Number(o.handicap) : null,
+        is_main_line:  !!o.is_main_line,
     };
 }
 
@@ -880,7 +886,8 @@ async function listBovadaMlbMarkets() {
     let leagueData;
     try {
         const leagueUrl = `${BOVADA_BASE}/baseball/mlb?marketFilterId=def&preMatchOnly=true&lang=en`;
-        leagueData = await fetchJson(leagueUrl, { cacheTtl: 300 });
+        // 30s for the league listing (game catalog rarely changes within an hour).
+        leagueData = await fetchJson(leagueUrl, { cacheTtl: 30 });
     } catch {
         return [];
     }
@@ -895,7 +902,9 @@ async function listBovadaMlbMarkets() {
             const link = (ev.link || "").replace(/^\//, "");
             if (!link) return Promise.resolve(null);
             const url = `${BOVADA_BASE}/${link}?lang=en`;
-            return fetchJson(url, { cacheTtl: 300 })
+            // 15s per-event cache — odds tick on Bovada throughout the
+            // day; this keeps the page feeling live without DOS'ing them.
+            return fetchJson(url, { cacheTtl: 15 })
                 .then((d) => (Array.isArray(d) ? d[0] : d)?.events?.[0] || null)
                 .catch(() => null);
         })
@@ -919,27 +928,103 @@ function parseBovadaEvent(ev) {
     const eventTitle = ev.description || `${away?.name} @ ${home?.name}`;
     const slug = (ev.link || "").replace(/^\//, "");
     const eventUrl = slug ? `https://www.bovada.lv/${slug}` : "https://www.bovada.lv/baseball/mlb";
+    const ctx = { homeTri, awayTri, home, away, startIso, eventTitle, eventUrl };
 
     const out = [];
     for (const g of ev.displayGroups || []) {
         for (const m of g.markets || []) {
-            const market = bovadaMarketToFlat(m, g, ev, {
-                homeTri, awayTri, home, away,
-                startIso, eventTitle, eventUrl,
-            });
-            if (market) out.push(market);
+            // Spread / Total markets sometimes pack many handicap lines
+            // into ONE Bovada market with N outcomes mixing them all
+            // together. Split into one synthetic market per unique
+            // handicap pair so the UI renders compact 2-outcome cards
+            // (the Cubs-Pirates spread had 12 outcomes in one card —
+            // user complaint).
+            const split = splitBovadaMultiHandicap(m, g);
+            for (const sub of split) {
+                const market = bovadaMarketToFlat(sub.market, g, ev, ctx, sub.handicap, sub.isMain);
+                if (market) out.push(market);
+            }
         }
     }
     return out;
 }
 
-function bovadaMarketToFlat(m, group, ev, ctx) {
+// Take one Bovada market and, if it's a spread/total with multiple
+// handicaps, return one synthetic market per handicap pair. Otherwise
+// return the original wrapped in a single-entry array. Tags the
+// most-juice-balanced handicap as the "main line" so the UI can
+// surface it prominently.
+function splitBovadaMultiHandicap(m, group) {
+    const groupDesc = group.description || "";
+    if (groupDesc !== "Game Lines" && groupDesc !== "Alternate Lines") {
+        return [{ market: m, handicap: null, isMain: false }];
+    }
+    const descBlob = `${m.descriptionKey || ""} ${m.description || ""}`.toLowerCase();
+    const isSpread = /runline|run line|spread|asian/.test(descBlob);
+    const isTotal  = /total|over\/under/.test(descBlob);
+    if (!isSpread && !isTotal) {
+        return [{ market: m, handicap: null, isMain: false }];
+    }
+
+    // Group outcomes by absolute handicap value (spread) or by handicap
+    // value (total — Over/Under share the same number).
+    const byKey = new Map();
+    for (const o of m.outcomes || []) {
+        const h = o.price?.handicap != null ? Number(o.price.handicap) : null;
+        if (h == null) continue;
+        const key = isSpread ? Math.abs(h).toFixed(1) : h.toFixed(1);
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(o);
+    }
+    if (!byKey.size) {
+        return [{ market: m, handicap: null, isMain: false }];
+    }
+
+    // "Main line": the handicap with the smallest absolute price
+    // spread across its two sides — i.e. the most-balanced juice.
+    let mainKey = null;
+    let mainSpread = Infinity;
+    for (const [key, outs] of byKey) {
+        if (outs.length < 2) continue;
+        const a = Math.abs(Number(outs[0].price?.american) || 0);
+        const b = Math.abs(Number(outs[1].price?.american) || 0);
+        const spread = Math.abs(a - b);
+        if (spread < mainSpread) {
+            mainSpread = spread;
+            mainKey = key;
+        }
+    }
+    // For MLB spreads, also prefer ±1.5 specifically (the conventional
+    // "run line") when it exists, since traders converge on that.
+    if (isSpread && byKey.has("1.5")) mainKey = "1.5";
+
+    const out = [];
+    for (const [key, outs] of byKey) {
+        // Synthetic per-handicap market: shares the parent metadata
+        // but only the outcomes for THIS handicap, and a sub-id so
+        // dedupe doesn't collapse them.
+        const sub = {
+            ...m,
+            id: `${m.id}:h${key}`,
+            outcomes: outs,
+            description: isSpread
+                ? `${m.description || "Spread"} ±${key}`
+                : `${m.description || "Total"} ${key}`,
+        };
+        out.push({
+            market: sub,
+            handicap: Number(key),
+            isMain: key === mainKey,
+        });
+    }
+    return out;
+}
+
+function bovadaMarketToFlat(m, group, ev, ctx, handicapHint, isMainLine) {
     const desc = m.description || "";
     const descKey = m.descriptionKey || "";
     const groupDesc = group.description || "";
 
-    // Question type by group + descriptionKey.
-    // Game Lines / Alternate Lines: descriptionKey distinguishes ML/spread/total.
     let qType = "other";
     if (groupDesc === "Game Lines" || groupDesc === "Alternate Lines") {
         if (/head to head|moneyline/i.test(descKey + " " + desc)) qType = "moneyline";
@@ -956,14 +1041,12 @@ function bovadaMarketToFlat(m, group, ev, ctx) {
         const p = o.price || {};
         const american = p.american;
         const decimal  = Number(p.decimal) || null;
-        // American → implied probability (raw, includes vig)
         let probability = null;
         if (decimal && decimal > 1) {
             probability = 1 / decimal;
         }
         const handicap = p.handicap != null ? Number(p.handicap) : null;
         const sideName = o.description || o.type || "";
-        // For totals (Over/Under) the handicap is the line, attach it to the name.
         const display = handicap != null && /over|under/i.test(sideName)
             ? `${sideName} ${handicap}`
             : (handicap != null && qType === "spread"
@@ -972,17 +1055,16 @@ function bovadaMarketToFlat(m, group, ev, ctx) {
         return {
             id: `bovada:${m.id}:${o.id}`,
             name: display,
-            probability: probability,           // raw vig-inclusive prob from decimal
+            probability: probability,
             price: decimal,
-            american: american,                 // e.g. "+130" or "-150"
+            american: american,
             point: handicap,
             book_count: 1,
             book_lines: [{ book: "Bovada", american, price: decimal, probability }],
         };
     });
 
-    // De-vig: for two-outcome markets, normalize so probabilities sum to 1
-    // (subtracts the bookmaker's hold). Pure for consensus comparison.
+    // De-vig for clean model-comparison probability.
     if (outcomes.length === 2
         && outcomes[0].probability != null
         && outcomes[1].probability != null) {
@@ -1021,6 +1103,10 @@ function bovadaMarketToFlat(m, group, ev, ctx) {
         source_event_title: titleBase,
         book_count: 1,
         books_present: ["bovada"],
+        // New fields so UI can highlight the main line and group
+        // alternates separately.
+        handicap: handicapHint != null ? handicapHint : null,
+        is_main_line: !!isMainLine,
     });
 }
 
@@ -1088,11 +1174,15 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
 // distinct already.
 function dedupeByQuestionAndSource(markets, anchorMs) {
     const NON_DEDUPED = new Set(["player_prop", "team_prop"]);
-    const byKey = new Map();   // `${question}|${source}` → best market
+    const byKey = new Map();   // `${question}|${source}|${handicap}` → best market
     const out = [];
     for (const m of markets) {
         if (NON_DEDUPED.has(m.question_type)) { out.push(m); continue; }
-        const key = `${m.question_type}|${m.source}`;
+        // Handicap goes in the key so different spread/total lines stay
+        // as distinct markets (Cubs -1, Cubs -1.5, etc.). Moneylines
+        // have no handicap so they still collapse properly.
+        const hKey = m.handicap != null ? `:${m.handicap}` : "";
+        const key = `${m.question_type}|${m.source}${hKey}`;
         const prev = byKey.get(key);
         if (!prev) { byKey.set(key, m); continue; }
         // Pick the closer-to-anchor of the two by start_time. Ties (no
