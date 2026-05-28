@@ -68,10 +68,7 @@ export async function onRequest(context) {
     try {
         const [marketsRes, savantRes] = await Promise.allSettled([
             listAllMlbMarkets(env),
-            // Pass game so the Savant fallback chain (pregame baseline →
-            // state-based table) has the inputs when MLB hasn't populated
-            // the winProbability endpoint yet.
-            fetchSavantWe(gameId, game),
+            fetchSavantWe(gameId),
         ]);
         if (marketsRes.status === "fulfilled") {
             allMarkets = marketsRes.value;
@@ -157,52 +154,31 @@ function jsonResponse(body, maxAge) {
     });
 }
 
-// Baseball Savant displays MLB's official winProbability on its game
-// pages. The endpoint returns one entry per at-bat with
-// homeTeamWinProbability + awayTeamWinProbability as percent numbers
-// (0-100). We read the last entry (current state) and convert to a
-// 0-1 float to match our home_win/away_win convention.
+// Baseball Savant displays the live home/away win probability on every
+// game page. The number lives at
+//   https://baseballsavant.mlb.com/gf?game_pk={id}
+//   scoreboard.currentPlay.homeTeamWinProbability  (0-100 percent)
+// — which is the exact source their gamefeed UI reads from. We pull
+// from there, divide by 100, and return as a 0-1 float.
 //
-// FALLBACKS so every game ALWAYS has a Savant-style number:
-//   1. winProbability endpoint (best — MLB official, what Savant shows)
-//   2. game.team_adjustment.pregame_we (pregame estimate from team
-//      strength + Pythagorean — defensible "Savant baseline" before
-//      first pitch when MLB has no plays to compute from)
-//   3. game.win_expectancy (our state-based table value — same kind of
-//      historical lookup Savant uses, just from Retrosheet)
-//
-// Returns the resolved number plus the source so the UI can label it.
-async function fetchSavantWe(gameId, gameDetail) {
-    // 1. Try MLB's official winProbability endpoint.
+// We do NOT fabricate a value when Savant doesn't have one. User was
+// explicit: 'Dont make up the number'. If the gf endpoint has no
+// currentPlay WE we return null and the UI shows '—' with a note
+// that Savant hasn't published yet.
+async function fetchSavantWe(gameId) {
     try {
-        const url = `https://statsapi.mlb.com/api/v1/game/${gameId}/winProbability`;
+        const url = `https://baseballsavant.mlb.com/gf?game_pk=${gameId}`;
         const res = await fetch(url, {
-            headers: { "User-Agent": "DIAMOND:CONTEXT/0.1" },
-            cf: { cacheTtl: 30, cacheEverything: true },
+            headers: { "User-Agent": "Mozilla/5.0" },  // savant rejects unknown agents
+            cf: { cacheTtl: 15, cacheEverything: true },
         });
-        if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length) {
-                const last = data[data.length - 1];
-                const homePct = Number(last?.homeTeamWinProbability);
-                if (Number.isFinite(homePct)) {
-                    return { value: homePct / 100, source: "mlb_official" };
-                }
-            }
+        if (!res.ok) return { value: null, source: null };
+        const data = await res.json();
+        const homePct = Number(data?.scoreboard?.currentPlay?.homeTeamWinProbability);
+        if (Number.isFinite(homePct)) {
+            return { value: homePct / 100, source: "savant_gf" };
         }
-    } catch { /* fall through to baselines */ }
-
-    // 2. Pregame baseline from team strength (Pythagorean + season).
-    const pregame = Number(gameDetail?.team_adjustment?.pregame_we);
-    if (Number.isFinite(pregame) && (gameDetail?.status === "Preview" || gameDetail?.status === "Scheduled")) {
-        return { value: pregame, source: "pregame_baseline" };
-    }
-
-    // 3. State-based fallback (our model's pre-adjustment value).
-    const stateWe = Number(gameDetail?.win_expectancy);
-    if (Number.isFinite(stateWe)) {
-        return { value: stateWe, source: "state_table" };
-    }
+    } catch { /* no value */ }
     return { value: null, source: null };
 }
 
