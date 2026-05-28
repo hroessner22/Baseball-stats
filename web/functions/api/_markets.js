@@ -1,23 +1,39 @@
 // Markets SDK — vendored from sports-oracle's @oracle/markets package.
 //
 // Source: github.com/alexroessner/sports-oracle/packages/markets
-// Vendored 2026-05-27 for use in Cloudflare Pages Functions (no Bun
-// monorepo). Kept the read-only adapters that don't need API keys:
-// Polymarket (Gamma API), Kalshi (public REST), Manifold. The Odds API
-// adapter is stubbed in — wakes up when ODDS_API_KEY is set in env.
+// Vendored 2026-05-27, rewritten 2026-05-28 after live testing showed
+// the original adapters either filtered too aggressively (Polymarket)
+// or pointed at endpoints that didn't return what we needed (Kalshi).
 //
-// Unified Market shape:
-//   {
-//     id, source, sport, league?, title, description?,
-//     outcomes: [{ id, name, probability?, price?, liquidity? }],
-//     status: "open"|"closed"|"resolved"|"cancelled"|"unknown",
-//     startTime?, closeTime?, resolutionTime?,
-//     metadata: { homeTeam?, awayTeam?, homeTricode?, awayTricode?, gamePk?, ... },
-//     rawUrl?
-//   }
+// What this fetches now:
+//   - Polymarket: every event under tag_slug=baseball. Includes nightly
+//     game events when present plus futures (World Series, MVP, etc.).
+//   - Kalshi: every market under series_ticker=KXMLBGAME for per-game
+//     moneylines, plus a curated list of season-prop series (HR leader,
+//     RBI leader, pitcher-of-the-month, team season wins) for futures.
+//     Pairs of -{HOME}/-{AWAY} tickers fold into a single two-outcome
+//     Market so the UI sees one row per game.
+//   - Manifold: open binary markets matching MLB search.
+//   - The Odds API: still keyed; wakes up when ODDS_API_KEY is set.
 //
-// All probabilities normalized to [0, 1]. Consumers should prefer
-// `probability` over `price` for portable cross-source comparison.
+// Unified Market shape (top-level so the UI doesn't have to dig into
+// metadata): {
+//   id, source, sport, league, title, description,
+//   url,                  // tappable source link
+//   outcomes: [{ id, name, probability?, price?, point? }],
+//   question_type,        // moneyline | spread | total | player_prop
+//                         // team_prop | series | future | other
+//   status,               // open | closed | resolved | cancelled | unknown
+//   start_time, close_time,
+//   home_tricode, away_tricode, home_team, away_team,
+//   liquidity_usd, volume_usd,
+//   raw_market_id, source_event_id, source_event_title,
+// }
+//
+// All probabilities normalized to [0, 1]. The shape is intentionally
+// FLAT — the UI was previously reading m.url, m.liquidity_usd, etc.,
+// and silently rendering "—" because those fields were nested under
+// .metadata in the previous shape.
 
 const POLY_GAMMA = "https://gamma-api.polymarket.com";
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
@@ -30,7 +46,7 @@ const UA = "DIAMOND:CONTEXT/0.1 (+https://diamond-context.pages.dev)";
 // ── MLB team normalization ────────────────────────────────────────
 
 export const MLB_TEAMS = [
-    ["ARI","Arizona Diamondbacks",["arizona","d-backs","dbacks","diamondbacks"]],
+    ["ARI","Arizona Diamondbacks",["arizona","d-backs","dbacks","diamondbacks","az"]],
     ["ATL","Atlanta Braves",["atlanta","braves"]],
     ["BAL","Baltimore Orioles",["baltimore","orioles","os"]],
     ["BOS","Boston Red Sox",["boston","red sox","redsox"]],
@@ -43,13 +59,13 @@ export const MLB_TEAMS = [
     ["HOU","Houston Astros",["houston","astros"]],
     ["KC","Kansas City Royals",["kansas city","royals","kcr"]],
     ["LAA","Los Angeles Angels",["la angels","angels","anaheim"]],
-    ["LAD","Los Angeles Dodgers",["la dodgers","dodgers"]],
+    ["LAD","Los Angeles Dodgers",["la dodgers","dodgers","los angeles d"]],
     ["MIA","Miami Marlins",["miami","marlins","florida"]],
     ["MIL","Milwaukee Brewers",["milwaukee","brewers"]],
     ["MIN","Minnesota Twins",["minnesota","twins"]],
-    ["NYM","New York Mets",["ny mets","mets"]],
-    ["NYY","New York Yankees",["ny yankees","yankees","yanks"]],
-    ["OAK","Oakland Athletics",["oakland","athletics","as","a's"]],
+    ["NYM","New York Mets",["ny mets","mets","new york m"]],
+    ["NYY","New York Yankees",["ny yankees","yankees","yanks","new york y"]],
+    ["OAK","Oakland Athletics",["oakland","athletics","as","a's","ath"]],
     ["PHI","Philadelphia Phillies",["philadelphia","phillies","phils"]],
     ["PIT","Pittsburgh Pirates",["pittsburgh","pirates","bucs"]],
     ["SD","San Diego Padres",["san diego","padres","sdp"]],
@@ -59,7 +75,7 @@ export const MLB_TEAMS = [
     ["TB","Tampa Bay Rays",["tampa bay","rays","tbr"]],
     ["TEX","Texas Rangers",["texas","rangers"]],
     ["TOR","Toronto Blue Jays",["toronto","blue jays","jays"]],
-    ["WSH","Washington Nationals",["washington","nationals","nats"]],
+    ["WSH","Washington Nationals",["washington","nationals","nats","was"]],
 ];
 
 const TEAM_LOOKUP = {};
@@ -73,7 +89,6 @@ export function teamTricode(input) {
     if (!input) return null;
     const k = String(input).trim().toLowerCase();
     if (TEAM_LOOKUP[k]) return TEAM_LOOKUP[k];
-    // partial-contains fallback
     for (const [tri, name] of MLB_TEAMS) {
         if (k.includes(tri.toLowerCase())) return tri;
         if (k.includes(name.toLowerCase())) return tri;
@@ -86,7 +101,6 @@ export function teamTricode(input) {
 export function extractTeamsFromTitle(title) {
     if (!title) return { home: null, away: null };
     const cleaned = title.replace(/^(MLB|NBA|NHL|NFL):\s*/i, "");
-    // "X @ Y" → X is away, Y is home
     const at = cleaned.match(/(.+?)\s+@\s+(.+)/);
     if (at) {
         return {
@@ -94,7 +108,6 @@ export function extractTeamsFromTitle(title) {
             home: teamTricode(at[2].trim()),
         };
     }
-    // "X vs Y" / "X vs. Y" — convention varies; we don't know which is home
     const vs = cleaned.match(/(.+?)\s+vs\.?\s+(.+)/i);
     if (vs) {
         return {
@@ -106,7 +119,7 @@ export function extractTeamsFromTitle(title) {
 }
 
 
-// ── Polymarket adapter ────────────────────────────────────────────
+// ── HTTP helpers ──────────────────────────────────────────────────
 
 async function fetchJson(url, opts = {}) {
     const res = await fetch(url, {
@@ -127,53 +140,70 @@ function parseJsonArray(s) {
     } catch { return []; }
 }
 
+
+// ── Polymarket adapter ────────────────────────────────────────────
+//
+// /events?tag_slug=baseball is the canonical baseball feed. Each event
+// has zero or more sub-markets (multi-outcome questions are modeled as
+// one parent event + N child markets). We flatten to one Market per
+// sub-market so the UI can render them individually.
+
 async function listPolymarketMlbMarkets() {
-    // Polymarket's /events endpoint with category=Sports + active=true.
-    // Filter by title prefix "MLB:" (Polymarket's convention).
-    const url = `${POLY_GAMMA}/events?category=Sports&active=true&closed=false&limit=200`;
+    const url = `${POLY_GAMMA}/events`
+              + `?tag_slug=baseball&active=true&closed=false&limit=200`;
     let events;
     try {
         events = await fetchJson(url, { cacheTtl: 30 });
-    } catch (e) {
+    } catch {
         return [];
     }
+    if (!Array.isArray(events)) return [];
+
     const out = [];
-    for (const ev of events || []) {
-        const title = ev.title || "";
-        if (!/\b(MLB|mlb)\b/i.test(title)) continue;
+    for (const ev of events) {
+        const evTitle = ev.title || "";
+        const evSlug  = ev.slug || "";
+        const teams   = extractTeamsFromTitle(evTitle);
+        const startMs = ev.startDate ? Date.parse(ev.startDate) : null;
+        const endMs   = ev.endDate ? Date.parse(ev.endDate) : null;
+        const evVol   = Number(ev.volume) || Number(ev.volume24hr) || undefined;
+        const evLiq   = Number(ev.liquidity) || undefined;
+
         for (const m of ev.markets || []) {
             if (m.closed || m.archived) continue;
-            const outcomes = parseJsonArray(m.outcomes);
-            const prices   = parseJsonArray(m.outcomePrices).map(Number);
-            const { home, away } = extractTeamsFromTitle(ev.title);
-            const market = {
-                id:      `polymarket:${m.id || m.conditionId}`,
-                source:  "polymarket",
-                sport:   "mlb",
-                league:  "MLB",
-                title:   ev.title,
-                description: m.question || "",
-                outcomes: outcomes.map((name, i) => ({
-                    id:   `${m.id}:${i}`,
+            const names  = parseJsonArray(m.outcomes);
+            const prices = parseJsonArray(m.outcomePrices).map(Number);
+            if (!names.length) continue;
+
+            const mTitle = m.question || evTitle;
+            const qType  = classifyQuestion(mTitle, evTitle);
+            const url    = m.slug || evSlug
+                ? `https://polymarket.com/event/${evSlug || m.slug}`
+                : `https://polymarket.com/`;
+
+            out.push(flat({
+                id: `polymarket:${m.id || m.conditionId}`,
+                source: "polymarket",
+                title: mTitle,
+                description: m.description || "",
+                url,
+                outcomes: names.map((name, i) => ({
+                    id: `${m.id}:${i}`,
                     name: String(name),
                     probability: Number.isFinite(prices[i]) ? prices[i] : undefined,
                 })),
+                question_type: qType,
                 status: m.closed ? "closed" : "open",
-                startTime: ev.startDate ? new Date(ev.startDate) : undefined,
-                closeTime: m.endDate ? new Date(m.endDate) : undefined,
-                metadata: {
-                    eventTitle: ev.title,
-                    homeTricode: home,
-                    awayTricode: away,
-                    sourceMarketId: m.id,
-                    sourceEventId:  ev.id,
-                    questionType: classifyQuestion(m.question || ev.title),
-                },
-                rawUrl: m.slug
-                    ? `https://polymarket.com/event/${ev.slug || m.slug}`
-                    : undefined,
-            };
-            out.push(market);
+                start_time: startMs ? new Date(startMs).toISOString() : null,
+                close_time: endMs ? new Date(endMs).toISOString() : null,
+                home_tricode: teams.home,
+                away_tricode: teams.away,
+                liquidity_usd: Number(m.liquidity) || evLiq,
+                volume_usd:    Number(m.volume) || evVol,
+                raw_market_id: m.id || m.conditionId,
+                source_event_id: ev.id,
+                source_event_title: evTitle,
+            }));
         }
     }
     return out;
@@ -181,102 +211,221 @@ async function listPolymarketMlbMarkets() {
 
 
 // ── Kalshi adapter ────────────────────────────────────────────────
+//
+// Kalshi splits a two-outcome game into two YES/NO markets (one per
+// team). We fold the pair back into one Market with two outcomes so
+// the UI renders one card per game. Tickers carry the date + teams,
+// which we parse to set start_time + home/away tricode.
+
+// Series we pull. Game-day moneylines + a curated list of season
+// futures we know exist on Kalshi today.
+const KALSHI_SERIES = [
+    { ticker: "KXMLBGAME",        type: "game" },          // per-game moneyline
+    { ticker: "KXLEADERMLBHR",    type: "future_player" }, // HR leader
+    { ticker: "KXMLBRBI",         type: "future_player" }, // RBI leader
+    { ticker: "KXMLBPITCHEROTM",  type: "future_player" }, // pitcher of the month
+];
 
 async function listKalshiMlbMarkets() {
-    // Kalshi has MLB markets under series prefixes like "KXMLB" (game),
-    // "KXMLBSER" (series), etc. We pull the open markets for series
-    // tickers starting with KXMLB.
-    const url = `${KALSHI_BASE}/markets?status=open&limit=200`;
-    let data;
+    const all = [];
+    for (const s of KALSHI_SERIES) {
+        try {
+            const url = `${KALSHI_BASE}/markets`
+                      + `?series_ticker=${s.ticker}&status=open&limit=400`;
+            const data = await fetchJson(url, { cacheTtl: 30 });
+            const mkts = Array.isArray(data?.markets) ? data.markets : [];
+            if (s.type === "game") {
+                all.push(...foldKalshiGameMarkets(mkts));
+            } else {
+                for (const m of mkts) all.push(toKalshiSingleMarket(m, s.type));
+            }
+        } catch {
+            // skip this series, keep going with the rest
+        }
+    }
+    // Also fetch team season-wins futures (KXMLBWINS-{TRI}). One series
+    // per team — list them all in one parallel fan-out.
     try {
-        data = await fetchJson(url, { cacheTtl: 30 });
-    } catch {
-        return [];
+        const winsSeries = MLB_TEAMS.map(([tri]) => `KXMLBWINS-${tri}`);
+        const results = await Promise.allSettled(
+            winsSeries.map((s) => fetchJson(
+                `${KALSHI_BASE}/markets?series_ticker=${s}&status=open&limit=50`,
+                { cacheTtl: 60 },
+            ))
+        );
+        for (let i = 0; i < results.length; i++) {
+            if (results[i].status !== "fulfilled") continue;
+            const tri = MLB_TEAMS[i][0];
+            const mkts = results[i].value?.markets || [];
+            for (const m of mkts) {
+                const market = toKalshiSingleMarket(m, "future_team");
+                market.home_tricode = tri;
+                all.push(market);
+            }
+        }
+    } catch { /* season wins are bonus, no fatal */ }
+    return all.filter(Boolean);
+}
+
+// Parse KXMLBGAME-YYMMM DD HHMM AAABBB-TEAM into game key + side.
+// Example: KXMLBGAME-26MAY281610ATLBOS-ATL
+//   date = 2026-05-28, time = 16:10 ET, away = ATL, home = BOS, side = ATL
+function parseKalshiGameTicker(ticker) {
+    const m = (ticker || "").match(
+        /^KXMLBGAME-(\d{2})([A-Z]{3})(\d{2})(\d{2})(\d{2})([A-Z]{2,4})([A-Z]{2,4})-([A-Z]{2,4})$/
+    );
+    if (!m) return null;
+    const [, yy, monStr, dd, hh, mm, t1, t2, side] = m;
+    const months = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+    const monthIdx = months[monStr];
+    if (monthIdx == null) return null;
+    // ET = UTC-4 (DST) / UTC-5 (standard). MLB regular season is in DST.
+    const year = 2000 + Number(yy);
+    const startUtc = Date.UTC(year, monthIdx, Number(dd), Number(hh) + 4, Number(mm));
+    return {
+        date:  `${year}-${String(monthIdx + 1).padStart(2, "0")}-${dd}`,
+        start: new Date(startUtc).toISOString(),
+        // First listed pair is convention away/home; can't be 100% sure
+        // from ticker alone, so we leave both tricodes available and let
+        // game-side matching by abbr handle either ordering.
+        t1: teamTricode(t1) || t1,
+        t2: teamTricode(t2) || t2,
+        side: teamTricode(side) || side,
+    };
+}
+
+function foldKalshiGameMarkets(markets) {
+    // Group by everything-up-to-the-trailing-team in the ticker — that's
+    // the game key. Each game produces TWO Kalshi markets (one per team)
+    // that we collapse into one two-outcome Market.
+    const groups = new Map();
+    for (const m of markets || []) {
+        const t = m.ticker || "";
+        const parsed = parseKalshiGameTicker(t);
+        if (!parsed) continue;
+        const key = t.replace(/-[A-Z]{2,4}$/, "");
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ market: m, parsed });
     }
     const out = [];
-    for (const m of data?.markets || []) {
-        const ticker = m.ticker || "";
-        if (!ticker.toUpperCase().startsWith("KXMLB")) continue;
-        // Two-outcome event (Yes/No on a binary question, or two-team game).
-        // Kalshi prices are in cents (0-100). Convert to probability.
-        const yesProb = (m.yes_bid != null && m.yes_ask != null)
-            ? (m.yes_bid + m.yes_ask) / 200
-            : (m.last_price != null ? m.last_price / 100 : undefined);
-        const noProb = yesProb != null ? 1 - yesProb : undefined;
-        const { home, away } = extractTeamsFromTitle(m.title || m.subtitle || "");
-        out.push({
-            id: `kalshi:${ticker}`,
-            source: "kalshi",
-            sport:  "mlb",
-            league: "MLB",
-            title:  m.title || ticker,
-            description: m.subtitle || "",
-            outcomes: [
-                { id: `${ticker}:yes`, name: m.yes_sub_title || "Yes", probability: yesProb },
-                { id: `${ticker}:no`,  name: m.no_sub_title  || "No",  probability: noProb },
-            ],
-            status: m.status === "active" ? "open" : (m.status || "unknown"),
-            startTime: m.open_time ? new Date(m.open_time) : undefined,
-            closeTime: m.close_time ? new Date(m.close_time) : undefined,
-            metadata: {
-                eventTitle: m.event_ticker,
-                homeTricode: home,
-                awayTricode: away,
-                sourceMarketId: ticker,
-                questionType: classifyQuestion(m.title || m.subtitle || ""),
-            },
-            rawUrl: `https://kalshi.com/markets/${ticker.toLowerCase()}`,
+    for (const [key, arr] of groups) {
+        if (!arr.length) continue;
+        const sample = arr[0];
+        const t1 = sample.parsed.t1;
+        const t2 = sample.parsed.t2;
+        const outcomes = arr.map(({ market, parsed }) => {
+            const yb = Number(market.yes_bid);
+            const ya = Number(market.yes_ask);
+            const last = Number(market.last_price);
+            const mid = (Number.isFinite(yb) && Number.isFinite(ya) && yb + ya > 0)
+                ? (yb + ya) / 200
+                : (Number.isFinite(last) && last > 0 ? last / 100 : undefined);
+            return {
+                id:   `${market.ticker}:yes`,
+                name: parsed.side,
+                probability: mid,
+            };
         });
+        out.push(flat({
+            id: `kalshi:${key}`,
+            source: "kalshi",
+            title: `${t1} vs ${t2} winner`,
+            description: arr[0].market.subtitle || "",
+            url: `https://kalshi.com/markets/${key.toLowerCase()}`,
+            outcomes,
+            question_type: "moneyline",
+            status: "open",
+            start_time: sample.parsed.start,
+            close_time: arr[0].market.close_time || null,
+            home_tricode: t2,
+            away_tricode: t1,
+            liquidity_usd: undefined,
+            volume_usd: undefined,
+            raw_market_id: key,
+            source_event_id: key,
+            source_event_title: `${t1} vs ${t2}`,
+        }));
     }
     return out;
+}
+
+function toKalshiSingleMarket(m, type) {
+    const yb = Number(m.yes_bid);
+    const ya = Number(m.yes_ask);
+    const last = Number(m.last_price);
+    const yesProb = (Number.isFinite(yb) && Number.isFinite(ya) && yb + ya > 0)
+        ? (yb + ya) / 200
+        : (Number.isFinite(last) && last > 0 ? last / 100 : undefined);
+    const noProb = yesProb != null ? 1 - yesProb : undefined;
+    const title = m.title || m.subtitle || m.ticker;
+    return flat({
+        id: `kalshi:${m.ticker}`,
+        source: "kalshi",
+        title,
+        description: m.subtitle || "",
+        url: `https://kalshi.com/markets/${(m.ticker || "").toLowerCase()}`,
+        outcomes: [
+            { id: `${m.ticker}:yes`, name: m.yes_sub_title || "Yes", probability: yesProb },
+            { id: `${m.ticker}:no`,  name: m.no_sub_title  || "No",  probability: noProb },
+        ],
+        question_type:
+            type === "future_player" ? "player_prop"
+            : type === "future_team" ? "future"
+            : classifyQuestion(title),
+        status: m.status === "active" ? "open" : (m.status || "unknown"),
+        start_time: m.open_time || null,
+        close_time: m.close_time || null,
+        home_tricode: null,
+        away_tricode: null,
+        liquidity_usd: undefined,
+        volume_usd:    undefined,
+        raw_market_id: m.ticker,
+        source_event_id: m.event_ticker,
+        source_event_title: m.event_ticker,
+    });
 }
 
 
 // ── Manifold adapter ──────────────────────────────────────────────
 
 async function listManifoldMlbMarkets() {
-    // Manifold tag search. Free, no auth. Returns play-money markets but
-    // they're often closer to "real" prob than betting markets because
-    // there's no vig.
-    const url = `${MANIFOLD_BASE}/search-markets?term=MLB&filter=open&sort=score&limit=80`;
+    const url = `${MANIFOLD_BASE}/search-markets`
+              + `?term=MLB&filter=open&sort=score&limit=80`;
     let data;
     try {
         data = await fetchJson(url, { cacheTtl: 60 });
     } catch {
         return [];
     }
+    const arr = Array.isArray(data) ? data : (data?.markets || []);
     const out = [];
-    const arr = Array.isArray(data) ? data : (data.markets || []);
     for (const m of arr) {
         if (m.isResolved) continue;
-        // Binary markets: probability is the "yes" probability
         if (m.outcomeType !== "BINARY") continue;
         const p = typeof m.probability === "number" ? m.probability : undefined;
-        const { home, away } = extractTeamsFromTitle(m.question || "");
-        out.push({
+        const teams = extractTeamsFromTitle(m.question || "");
+        out.push(flat({
             id: `manifold:${m.id}`,
             source: "manifold",
-            sport:  "mlb",
-            league: "MLB",
-            title:  m.question || "",
+            title: m.question || "",
             description: "",
+            url: m.url || `https://manifold.markets/${m.creatorUsername}/${m.slug}`,
             outcomes: [
                 { id: `${m.id}:yes`, name: "Yes", probability: p },
                 { id: `${m.id}:no`,  name: "No",  probability: p != null ? 1 - p : undefined },
             ],
-            status: m.isResolved ? "resolved" : "open",
-            startTime: m.createdTime ? new Date(m.createdTime) : undefined,
-            closeTime: m.closeTime ? new Date(m.closeTime) : undefined,
-            metadata: {
-                eventTitle: m.question,
-                homeTricode: home,
-                awayTricode: away,
-                sourceMarketId: m.id,
-                liquidity: m.totalLiquidity,
-                questionType: classifyQuestion(m.question || ""),
-            },
-            rawUrl: m.url || `https://manifold.markets/${m.creatorUsername}/${m.slug}`,
-        });
+            question_type: classifyQuestion(m.question || ""),
+            status: "open",
+            start_time: m.createdTime ? new Date(m.createdTime).toISOString() : null,
+            close_time: m.closeTime ? new Date(m.closeTime).toISOString() : null,
+            home_tricode: teams.home,
+            away_tricode: teams.away,
+            liquidity_usd: Number(m.totalLiquidity) || undefined,
+            volume_usd:    Number(m.volume) || undefined,
+            raw_market_id: m.id,
+            source_event_id: m.id,
+            source_event_title: m.question,
+        }));
     }
     return out;
 }
@@ -288,7 +437,6 @@ async function listOddsApiMlbMarkets(env) {
     const key = env?.ODDS_API_KEY || env?.THE_ODDS_API_KEY;
     if (!key) return [];
 
-    // moneyline (h2h), run line (spreads), total runs O/U (totals)
     const params = new URLSearchParams({
         apiKey: key,
         regions: "us",
@@ -309,33 +457,37 @@ async function listOddsApiMlbMarkets(env) {
         for (const bm of ev.bookmakers || []) {
             for (const m of bm.markets || []) {
                 const title = `${ev.away_team} @ ${ev.home_team} · ${m.key} · ${bm.title}`;
-                out.push({
-                    id: `theoddsapi:${ev.id}:${bm.key}:${m.key}`,
-                    source: "theoddsapi",
-                    sport:  "mlb",
-                    league: "MLB",
+                const qType = m.key === "h2h"    ? "moneyline"
+                            : m.key === "spreads" ? "spread"
+                            : m.key === "totals"  ? "total"
+                            : "other";
+                out.push(flat({
+                    id: `odds:${ev.id}:${bm.key}:${m.key}`,
+                    source: "odds_api",
                     title,
-                    description: `${m.key} via ${bm.title}`,
+                    description: "",
+                    url: `https://the-odds-api.com/`,
                     outcomes: (m.outcomes || []).map((o) => ({
                         id: `${bm.key}:${m.key}:${o.name}${o.point != null ? `:${o.point}` : ""}`,
                         name: o.point != null ? `${o.name} ${o.point}` : o.name,
                         price: o.price,
-                        probability: o.price > 0 ? 1 / o.price : undefined,
+                        point: o.point,
+                        probability: o.price > 1 ? 1 / o.price : undefined,
                     })),
+                    question_type: qType,
                     status: "open",
-                    startTime: ev.commence_time ? new Date(ev.commence_time) : undefined,
-                    metadata: {
-                        eventTitle: title,
-                        homeTeam: ev.home_team,
-                        awayTeam: ev.away_team,
-                        homeTricode: homeTri,
-                        awayTricode: awayTri,
-                        sourceMarketId: `${ev.id}:${bm.key}:${m.key}`,
-                        bookmaker: bm.title,
-                        marketType: m.key,
-                        questionType: m.key,  // h2h / spreads / totals
-                    },
-                });
+                    start_time: ev.commence_time || null,
+                    close_time: null,
+                    home_tricode: homeTri,
+                    away_tricode: awayTri,
+                    home_team: ev.home_team,
+                    away_team: ev.away_team,
+                    liquidity_usd: undefined,
+                    volume_usd: undefined,
+                    raw_market_id: `${ev.id}:${bm.key}:${m.key}`,
+                    source_event_id: ev.id,
+                    source_event_title: title,
+                }));
             }
         }
     }
@@ -344,33 +496,92 @@ async function listOddsApiMlbMarkets(env) {
 
 
 // ── Question-type classification ──────────────────────────────────
+//
+// Buckets a market into one of:
+//   moneyline | spread | total | player_prop | team_prop | series | future | other
+// These are the buckets the UI dashboard renders sections for. Order
+// matters — more-specific patterns first so we don't shadow them.
 
-// Buckets a market title/question into a coarse category we can group on
-// in the UI. Keeps grouping cheap without parsing every source's nuances.
-function classifyQuestion(text) {
-    if (!text) return "other";
-    const t = text.toLowerCase();
-    if (/win the world series|championship|pennant/.test(t)) return "championship";
-    if (/win the division|division winner/.test(t))          return "division";
-    if (/mvp|cy young|rookie of the year|manager of the year/.test(t)) return "award";
-    if (/win the (al|nl)|league pennant/.test(t))            return "pennant";
-    if (/h2h|moneyline|who wins|win[\s-]?probability|win this game/.test(t)) return "moneyline";
-    if (/run line|spread/.test(t))                            return "spread";
-    if (/total|over\/under|o\/u|combined runs/.test(t))       return "total";
-    if (/home runs|hr|over .* hr/.test(t))                    return "player_hr";
-    if (/strikeouts|k's|so/.test(t))                          return "player_k";
-    if (/hits|h \(/.test(t))                                  return "player_hits";
-    if (/series|sweep/.test(t))                               return "series";
+function classifyQuestion(text, eventText) {
+    const t = (text || "").toLowerCase();
+    const e = (eventText || "").toLowerCase();
+    const both = `${t} ${e}`;
+
+    // Award & season-long futures — match first so "MLB MVP" doesn't
+    // get caught by a more generic pattern below.
+    if (/mvp|cy young|rookie of the year|comeback player|hank aaron|manager of the year/.test(both)) {
+        return "player_prop";  // player-level future, surfaces alongside game props
+    }
+    if (/world series|championship|league pennant|wins the (al|nl)/.test(both)) {
+        return "future";
+    }
+    if (/division (champion|winner)|wins (al|nl) (east|west|central)/.test(both)) {
+        return "future";
+    }
+    if (/regular season win total|win total|over\/under.*wins|season wins/.test(both)) {
+        return "future";  // team season-wins
+    }
+
+    // Player-level nightly + season props.
+    if (/home runs?|hrs?|over .* hr/.test(t))                    return "player_prop";
+    if (/strikeouts?|k['']?s?|so total/.test(t))                 return "player_prop";
+    if (/hits?\b|over .* hit/.test(t))                            return "player_prop";
+    if (/rbis?\b|runs batted in/.test(t))                         return "player_prop";
+    if (/total bases|tb total/.test(t))                           return "player_prop";
+    if (/stolen bases?\b|sb total/.test(t))                       return "player_prop";
+
+    // Game-level markets.
+    if (/run line|spread/.test(t))                                return "spread";
+    if (/total runs?\b|over\/under|o\/u|combined runs/.test(t))   return "total";
+    if (/moneyline|who wins|winner\?|win[\s-]?probability|win this game|game winner/.test(t)) {
+        return "moneyline";
+    }
+    // Series outcome (sweep, take series, win series).
+    if (/series\b|sweep/.test(t))                                 return "series";
+
+    // Team props that aren't moneyline/spread/total (first to score,
+    // both teams score, etc.).
+    if (/first to score|both teams|innings?\b/.test(t))           return "team_prop";
+
     return "other";
+}
+
+
+// ── Flatten + finalize ────────────────────────────────────────────
+
+// Ensure every market has the full set of UI-expected keys, even when
+// the adapter didn't set them — undefined fields disappear silently in
+// the UI, but missing fields show "—" weirdly. We materialize the full
+// shape here so consumers see consistent keys.
+function flat(o) {
+    return {
+        id: o.id,
+        source: o.source,
+        sport: "mlb",
+        league: "MLB",
+        title: o.title || "",
+        description: o.description || "",
+        url: o.url || null,
+        outcomes: o.outcomes || [],
+        question_type: o.question_type || "other",
+        status: o.status || "unknown",
+        start_time: o.start_time || null,
+        close_time: o.close_time || null,
+        home_tricode: o.home_tricode || null,
+        away_tricode: o.away_tricode || null,
+        home_team: o.home_team || null,
+        away_team: o.away_team || null,
+        liquidity_usd: o.liquidity_usd != null ? Number(o.liquidity_usd) : null,
+        volume_usd:    o.volume_usd    != null ? Number(o.volume_usd)    : null,
+        raw_market_id: o.raw_market_id || null,
+        source_event_id: o.source_event_id || null,
+        source_event_title: o.source_event_title || null,
+    };
 }
 
 
 // ── Registry: fan out, gather, normalize ──────────────────────────
 
-// Pulls MLB markets from every adapter (in parallel) and normalizes to
-// the unified Market shape. Adapter failures are swallowed individually
-// so one source being down doesn't break the rest. Returns markets in
-// no particular order — caller can group/filter.
 export async function listAllMlbMarkets(env) {
     const results = await Promise.allSettled([
         listPolymarketMlbMarkets(),
@@ -386,10 +597,14 @@ export async function listAllMlbMarkets(env) {
 }
 
 
-// Markets attached to one specific game — matched by home/away tricodes
-// and (when available) by game start time being on the right ET date.
-// MLB StatsAPI game_pks aren't in any market title, so we match by team
-// pair instead. Tricodes survive aliasing differences across sources.
+// Markets that apply to one specific game — matched by team tricode
+// (either pair direction) and optionally a start-time window.
+//
+// For game-day markets (Kalshi KXMLBGAME, Odds API), home/away tricodes
+// are populated so a strict tricode match works. For futures (World
+// Series, MVP), home_tricode/away_tricode are null — those don't bind
+// to a specific game and won't appear in per-game filters; they belong
+// in the season-long sidebar dashboard.
 export function filterMarketsForGame(markets, home, away, gameStartTime) {
     const homeTri = teamTricode(home);
     const awayTri = teamTricode(away);
@@ -400,19 +615,21 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
 
     const matches = [];
     for (const m of markets) {
-        const mHome = m.metadata?.homeTricode;
-        const mAway = m.metadata?.awayTricode;
-        // Tricode match: either pair direction works (some sources don't
-        // distinguish home/away in the title).
-        const teamsMatch =
-            (mHome === homeTri && mAway === awayTri) ||
-            (mHome === awayTri && mAway === homeTri);
+        const mHome = m.home_tricode;
+        const mAway = m.away_tricode;
+        // Team-pair match — accept either order. If only one tricode is
+        // set on the market (some Manifold titles parse partially), we
+        // still accept when that one side matches OUR home or away.
+        const both = mHome && mAway;
+        const teamsMatch = both
+            ? ((mHome === homeTri && mAway === awayTri) ||
+               (mHome === awayTri && mAway === homeTri))
+            : ((mHome && (mHome === homeTri || mHome === awayTri)) ||
+               (mAway && (mAway === homeTri || mAway === awayTri)));
         if (!teamsMatch) continue;
 
-        // Date filter: if both have a start time, they should be within
-        // 48h of each other (covers postponed games + time zones).
-        if (startMs && m.startTime) {
-            const dt = Math.abs(new Date(m.startTime).getTime() - startMs);
+        if (startMs && m.start_time) {
+            const dt = Math.abs(new Date(m.start_time).getTime() - startMs);
             if (dt > TWO_DAYS) continue;
         }
         matches.push(m);
@@ -421,48 +638,37 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
 }
 
 
-// Slice a list of markets into per-question-type groups for the dashboard.
-// Returns { moneyline: [...], spread: [...], total: [...], other: [...] }.
+// Slice a list of markets into per-question-type groups for the UI.
+// Keys are exactly the ones the UI's renderMarketsSection looks for.
 export function groupByQuestion(markets) {
     const out = {
         moneyline:   [],
         spread:      [],
         total:       [],
-        championship:[],
-        division:    [],
-        pennant:     [],
+        player_prop: [],
+        team_prop:   [],
         series:      [],
-        player_hr:   [],
-        player_k:    [],
-        player_hits: [],
+        future:      [],
         other:       [],
     };
     for (const m of markets) {
-        const q = m.metadata?.questionType || "other";
+        const q = m.question_type || "other";
         (out[q] || out.other).push(m);
     }
     return out;
 }
 
 
-// Average implied probability across N markets for the SAME outcome
-// (e.g. "Mets win this game" priced by Polymarket, Kalshi, Manifold).
-// Returns null when no market quotes that outcome. Weighted by liquidity
-// when available; equal-weighted otherwise.
-export function consensusProbability(markets, matchOutcomeName) {
-    const numerators = [];
-    const denominators = [];
-    for (const m of markets) {
-        const o = (m.outcomes || []).find(
-            (x) => matchOutcomeName(x, m)
-        );
-        if (!o || o.probability == null) continue;
-        const weight = m.metadata?.liquidity > 0 ? m.metadata.liquidity : 1;
-        numerators.push(o.probability * weight);
-        denominators.push(weight);
+// Average probability across markets where any outcome matches `match`.
+// Used for cross-source consensus on a yes/no question (e.g. "home wins").
+export function consensusProbability(markets, match) {
+    let sum = 0, n = 0;
+    for (const m of markets || []) {
+        for (const o of m.outcomes || []) {
+            if (o.probability == null) continue;
+            if (match(o, m)) { sum += o.probability; n += 1; break; }
+        }
     }
-    if (numerators.length === 0) return null;
-    const num = numerators.reduce((a, b) => a + b, 0);
-    const den = denominators.reduce((a, b) => a + b, 0);
-    return den > 0 ? num / den : null;
+    if (!n) return null;
+    return sum / n;
 }
