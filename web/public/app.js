@@ -2959,6 +2959,7 @@ function renderMarketConsensusPill(data) {
     if (!data || !data.available || !data.market_count) return "";
 
     const home = data.teams?.home?.abbr || "HOME";
+    const away = data.teams?.away?.abbr || "AWAY";
     const cons = data.consensus?.home_win;
     const ours = data.our_we_home;
 
@@ -2986,31 +2987,107 @@ function renderMarketConsensusPill(data) {
         `;
     }
 
-    // Supplementary chips: total runs O/U + run-line spread when those
-    // markets exist. Pulls the highest-volume / highest-liquidity quote
-    // from each section as the "headline" line.
+    // Supplementary chips: total runs O/U, run-line spread, then high-
+    // probability futures/team props for either team. We surface the
+    // most interesting non-moneyline markets here so users always see
+    // SOMETHING when markets exist, even for non-primetime games where
+    // the moneyline hasn't traded yet.
     const totalChip  = renderTotalRunsChip(data.markets?.total);
     const spreadChip = renderSpreadChip(data.markets?.spread, home);
-    const extras = (totalChip || spreadChip) ? `
-      <div class="mc-pill-extras">
-        ${totalChip || ""}
-        ${spreadChip || ""}
-      </div>
-    ` : "";
+    const futureChips = renderFutureChips(data.markets?.future, home, away);
+    const propChips   = renderTeamPropChips(data.markets?.team_prop, home, away);
+    const extrasInner =
+        (totalChip || "") + (spreadChip || "") + futureChips + propChips;
+    const extras = extrasInner ? `<div class="mc-pill-extras">${extrasInner}</div>` : "";
 
     // Hide entirely if BOTH headline and extras are empty.
     if (!headline && !extras) return "";
 
+    // Headline-less mode: when no moneyline consensus exists but we DO
+    // have futures/props, still show the label + extras so the user
+    // sees "Market lines available" with the chips below.
+    const labelText = headline
+        ? "Market lines"
+        : `Market lines · no game-day moneyline yet`;
+
     return `
       <div class="mc-pill">
         <div class="mc-pill-head">
-          <span class="mc-pill-label">Market lines</span>
-          <a class="mc-pill-link" href="#" data-mc-open-markets="1">Open all lines →</a>
+          <span class="mc-pill-label">${labelText}</span>
+          <a class="mc-pill-link" href="#" data-mc-open-markets="1">Open all (${data.market_count}) →</a>
         </div>
         ${headline}
         ${extras}
       </div>
     `;
+}
+
+// Pull top futures markets for either team — World Series, division
+// title, season-wins-over, etc. Surface up to 4 with the highest
+// non-null probability on either outcome. Chips link into the
+// Markets tab where the full list lives.
+function renderFutureChips(futures, homeAbbr, awayAbbr) {
+    if (!futures || !futures.length) return "";
+    const ranked = futures
+        .map((m) => {
+            const out = (m.outcomes || []).find((o) => o.probability != null);
+            const prob = out?.probability;
+            return { m, out, prob };
+        })
+        .filter((r) => r.prob != null)
+        .sort((a, b) => (b.prob || 0) - (a.prob || 0))
+        .slice(0, 4);
+    if (!ranked.length) return "";
+    return ranked.map(({ m, out, prob }) => `
+      <a class="mc-line-chip mc-line-chip-future" href="${m.url || "#"}" target="_blank" rel="noopener" title="${escapeHTMLAttr(m.title)}">
+        <span class="mc-line-key">FUTURE</span>
+        <span class="mc-line-val">${shortenFutureTitle(m.title, homeAbbr, awayAbbr)}</span>
+        <span class="mc-line-pct">${fmtPct(prob)}</span>
+        <span class="mc-line-src">${m.source}</span>
+      </a>
+    `).join("");
+}
+
+function renderTeamPropChips(props, homeAbbr, awayAbbr) {
+    if (!props || !props.length) return "";
+    const ranked = props
+        .map((m) => {
+            const best = (m.outcomes || [])
+                .filter((o) => o.probability != null)
+                .sort((a, b) => (b.probability || 0) - (a.probability || 0))[0];
+            return { m, best };
+        })
+        .filter((r) => r.best)
+        .slice(0, 3);
+    if (!ranked.length) return "";
+    return ranked.map(({ m, best }) => `
+      <a class="mc-line-chip mc-line-chip-prop" href="${m.url || "#"}" target="_blank" rel="noopener" title="${escapeHTMLAttr(m.title)}">
+        <span class="mc-line-key">PROP</span>
+        <span class="mc-line-val">${escapeHTML(best.name || "")}</span>
+        <span class="mc-line-pct">${fmtPct(best.probability)}</span>
+        <span class="mc-line-src">${m.source}</span>
+      </a>
+    `).join("");
+}
+
+// Compact a future title for chip display. "Will the Atlanta Braves
+// win the 2026 World Series?" → "ATL win WS 2026". Falls back to the
+// original title (truncated) when no pattern matches.
+function shortenFutureTitle(title, home, away) {
+    if (!title) return "";
+    let t = title
+        .replace(/^Will (the )?/i, "")
+        .replace(/Atlanta Braves/i, home === "ATL" ? home : "ATL")
+        .replace(/Boston Red Sox/i, home === "BOS" || away === "BOS" ? "BOS" : "BOS")
+        .replace(/2026 World Series\??$/i, "WS 2026")
+        .replace(/2026 American League Championship Series\??$/i, "ALCS")
+        .replace(/2026 National League Championship Series\??$/i, "NLCS")
+        .replace(/2026 AL East title\??$/i, "AL East")
+        .replace(/2026 NL East title\??$/i, "NL East")
+        .replace(/2026 MLB Regular Season/i, "regular season")
+        .replace(/\?$/, "");
+    if (t.length > 40) t = t.slice(0, 38) + "…";
+    return t.trim();
 }
 
 // Pull the best total-runs market and surface as a chip:

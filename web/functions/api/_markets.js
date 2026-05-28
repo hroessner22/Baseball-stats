@@ -591,12 +591,16 @@ function classifyQuestion(text, eventText) {
     if (/world series|championship|league pennant|wins the (al|nl)/.test(both)) {
         return "future";
     }
-    if (/division (champion|winner)|wins (al|nl) (east|west|central)/.test(both)) {
+    if (/division (champion|winner)|(wins?|win the) (al|nl) (east|west|central)/.test(both)) {
         return "future";
     }
+    if (/(al|nl) (east|west|central)( title|champion)?/.test(both))    return "future";
     if (/regular season win total|win total|over\/under.*wins|season wins/.test(both)) {
         return "future";  // team season-wins
     }
+    if (/win (more|fewer|at least|over) .* games/.test(both))           return "future";
+    if (/(next|new) [a-z ]*manager\??$/.test(both))                     return "future";
+    if (/longest winning streak|longest losing streak/.test(both))      return "future";
 
     // Player-level nightly + season props.
     if (/home runs?|hrs?|over .* hr/.test(t))                    return "player_prop";
