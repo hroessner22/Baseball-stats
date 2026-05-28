@@ -270,28 +270,62 @@ async function listKalshiMlbMarkets() {
 // Parse KXMLBGAME-YYMMM DD HHMM AAABBB-TEAM into game key + side.
 // Example: KXMLBGAME-26MAY281610ATLBOS-ATL
 //   date = 2026-05-28, time = 16:10 ET, away = ATL, home = BOS, side = ATL
+//
+// The team-pair section concatenates two 2-3 character tricodes with no
+// separator. A greedy regex split fails (e.g. "ATLBOS" greedy-matches
+// as "ATLB"+"OS", and "OS" then aliases incorrectly to BAL via the
+// Orioles alias). We deterministically try every valid (2 or 3) +
+// (2 or 3) split and accept the first where BOTH halves resolve to
+// canonical MLB tricodes.
 function parseKalshiGameTicker(ticker) {
     const m = (ticker || "").match(
-        /^KXMLBGAME-(\d{2})([A-Z]{3})(\d{2})(\d{2})(\d{2})([A-Z]{2,4})([A-Z]{2,4})-([A-Z]{2,4})$/
+        /^KXMLBGAME-(\d{2})([A-Z]{3})(\d{2})(\d{2})(\d{2})([A-Z]+)-([A-Z]{2,4})$/
     );
     if (!m) return null;
-    const [, yy, monStr, dd, hh, mm, t1, t2, side] = m;
+    const [, yy, monStr, dd, hh, mm, pair, sideRaw] = m;
     const months = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
     const monthIdx = months[monStr];
     if (monthIdx == null) return null;
+    const split = splitMlbTeamPair(pair);
+    if (!split) return null;
+    const sideTri = teamTricode(sideRaw);
+    if (!sideTri || (sideTri !== split.t1 && sideTri !== split.t2)) {
+        // Side has to be one of the two teams in the pair — sanity check.
+        return null;
+    }
     // ET = UTC-4 (DST) / UTC-5 (standard). MLB regular season is in DST.
     const year = 2000 + Number(yy);
     const startUtc = Date.UTC(year, monthIdx, Number(dd), Number(hh) + 4, Number(mm));
     return {
         date:  `${year}-${String(monthIdx + 1).padStart(2, "0")}-${dd}`,
         start: new Date(startUtc).toISOString(),
-        // First listed pair is convention away/home; can't be 100% sure
-        // from ticker alone, so we leave both tricodes available and let
-        // game-side matching by abbr handle either ordering.
-        t1: teamTricode(t1) || t1,
-        t2: teamTricode(t2) || t2,
-        side: teamTricode(side) || side,
+        // Kalshi convention is AWAY+HOME in the pair concatenation.
+        t1: split.t1,  // away
+        t2: split.t2,  // home
+        side: sideTri,
     };
+}
+
+// Deterministically split a concatenated two-team tricode pair. Tries
+// every valid (2 or 3) + (2 or 3) split and returns the first where
+// BOTH halves are recognized MLB tricodes. Returns null if no split
+// works — caller should drop the market.
+const MLB_TRICODE_SET = new Set(MLB_TEAMS.map(([tri]) => tri));
+function splitMlbTeamPair(pair) {
+    if (!pair || pair.length < 4 || pair.length > 6) return null;
+    // Order matters: try 3+3 (most common), then 2+3, 3+2, 2+2.
+    const splits = [];
+    if (pair.length === 6) splits.push([3, 3]);
+    if (pair.length === 5) splits.push([2, 3], [3, 2]);
+    if (pair.length === 4) splits.push([2, 2]);
+    for (const [a, b] of splits) {
+        const t1 = pair.slice(0, a);
+        const t2 = pair.slice(a, a + b);
+        if (MLB_TRICODE_SET.has(t1) && MLB_TRICODE_SET.has(t2)) {
+            return { t1, t2 };
+        }
+    }
+    return null;
 }
 
 function foldKalshiGameMarkets(markets) {
