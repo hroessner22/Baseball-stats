@@ -4366,6 +4366,91 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .markets-headline.three-way .markets-side[data-key="market"] {
     background: rgba(148, 163, 184, 0.06);
 }
+
+/* New 3-column header where the middle column is a stacked list of
+   every book we pull from (not a single consensus number). User
+   explicitly asked for every market's live odds. */
+.markets-headline.three-col {
+    grid-template-columns: 1fr 1.4fr 1fr;
+    text-align: center;
+    align-items: stretch;
+    gap: 16px;
+}
+.markets-headline.three-col .markets-side {
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+}
+.markets-headline.three-col .markets-side-books {
+    background: rgba(148, 163, 184, 0.06);
+    align-items: stretch;
+    text-align: left;
+}
+.markets-headline.three-col .markets-side-books .markets-side-label {
+    text-align: center;
+    margin-bottom: 6px;
+}
+.msrc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.msrc-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    text-decoration: none;
+    color: inherit;
+    transition: background 80ms ease;
+}
+.msrc-row:hover { background: rgba(56, 189, 248, 0.08); }
+.msrc-name {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+.msrc-name-bovada     { background: rgba(220, 38, 38, 0.18);   color: #FCA5A5; }
+.msrc-name-polymarket { background: rgba(67, 56, 202, 0.2);    color: #A5B4FC; }
+.msrc-name-kalshi     { background: rgba(34, 197, 94, 0.18);   color: #6EE7B7; }
+.msrc-name-manifold   { background: rgba(245, 158, 11, 0.18);  color: #FCD34D; }
+.msrc-name-odds_api   { background: rgba(56, 189, 248, 0.18);  color: #7DD3FC; }
+.msrc-quote {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    font-variant-numeric: tabular-nums;
+}
+.msrc-am {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--text);
+}
+.msrc-am-empty { color: var(--text-faint); }
+.msrc-pct {
+    font-size: 11px;
+    color: var(--text-dim);
+    min-width: 44px;
+    text-align: right;
+}
+.msrc-empty {
+    color: var(--text-faint);
+    font-style: italic;
+    font-size: 11px;
+    text-align: center;
+    padding: 8px 0;
+}
 .markets-side-sub {
     font-size: 10px;
     color: var(--text-faint);
