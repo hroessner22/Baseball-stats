@@ -4778,6 +4778,148 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 
 
+/* ── TEAM VIEW ───────────────────────────────────────────────────
+   Reached by clicking a team in standings. Surfaces futures (WS,
+   ALCS/NLCS, division, season wins) and player props for the team's
+   roster. Futures intentionally do NOT live on the live game tracker
+   per user feedback — only game-day lines there.
+*/
+
+.team-view {
+    padding: 18px 32px 64px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+.team-view .empty { padding: 48px 16px; }
+.team-doc {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: 1080px;
+    margin: 0 auto;
+}
+.team-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+}
+.team-header-name {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+}
+.team-header-meta {
+    color: var(--text-dim);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.team-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.team-section-title {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+.team-section-rows {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 8px;
+}
+.team-market-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    text-decoration: none;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color 80ms ease;
+}
+.team-market-row:hover { border-color: var(--accent-action); }
+.team-market-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.team-market-src {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text-dim);
+}
+.team-market-src-polymarket { background: rgba(67, 56, 202, 0.2);  color: #A5B4FC; }
+.team-market-src-kalshi     { background: rgba(34, 197, 94, 0.18); color: #6EE7B7; }
+.team-market-src-manifold   { background: rgba(245, 158, 11, 0.18); color: #FCD34D; }
+.team-market-src-odds_api   { background: rgba(56, 189, 248, 0.18); color: #7DD3FC; }
+.team-market-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.team-market-pct {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-action);
+    font-weight: 700;
+    font-size: 13px;
+}
+.team-market-bar {
+    height: 4px;
+    background: var(--bg);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.team-market-bar-fill {
+    height: 100%;
+    background: var(--accent-action);
+    border-radius: 2px;
+    transition: width 200ms ease;
+}
+.team-footnote {
+    color: var(--text-faint);
+    font-size: 11px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.team-link {
+    color: var(--text);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--text-dim);
+}
+.team-link:hover {
+    color: var(--accent-action);
+    border-bottom-color: currentColor;
+}
+
+
+@media (max-width: 600px) {
+    .team-view { padding: 14px 14px 48px; }
+    .team-header-name { font-size: 20px; }
+    .team-section-rows { grid-template-columns: 1fr; }
+}
+
+
 /* ── RESPONSIVE / MOBILE ───────────────────────────────────────── */
 
 @media (max-width: 600px) {

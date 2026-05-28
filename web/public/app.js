@@ -13,6 +13,7 @@ const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
+const teamView = document.getElementById("team-view");
 
 const BOARD_REFRESH_MS = 30_000;
 // Game view polls fast — every PA boundary (out, hit, walk, run scoring,
@@ -165,6 +166,16 @@ function handleRoute() {
         setActiveNav(null);
         return;
     }
+    // #team/{TRICODE} — clicked from standings. Shows team-level lines:
+    // World Series odds, division, league championship, season-wins
+    // over/under, and player props for that team's roster. Futures
+    // belong here, NOT on the live game tracker.
+    const teamMatch = hash.match(/^#team\/([A-Z]{2,4})$/);
+    if (teamMatch) {
+        showTeam(teamMatch[1]);
+        setActiveNav("standings");
+        return;
+    }
     // #live/YYYY-MM-DD = Board for a specific date (yesterday, last week,
     // an opening day in 2008, anything). Bare #live (or #) is today.
     const dateMatch = hash.match(/^#live\/(\d{4}-\d{2}-\d{2})$/);
@@ -294,6 +305,7 @@ function hideAllViews() {
     hotView.hidden = true;
     playerView.hidden = true;
     marketsView.hidden = true;
+    teamView.hidden = true;
 }
 
 // Centralized timer-clear so each show* doesn't have to know about every
@@ -306,6 +318,7 @@ function clearAllTimers() {
     if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
     if (marketsDashboardTimer) { clearInterval(marketsDashboardTimer); marketsDashboardTimer = null; }
+    if (teamTimer)      { clearInterval(teamTimer);      teamTimer = null; activeTeamTricode = null; }
     stopMarketsPoll();
 }
 
@@ -542,26 +555,22 @@ function lastName(fullName) {
     return parts.length < 2 ? fullName : parts[parts.length - 1];
 }
 
-// MLB headshot URL helpers. We were using midfield.mlbstatic.com's
-// /spots/N endpoint for inline avatars — it returns a tight face crop
-// that ALSO clips the top of the cap. Switched everything to the
-// cloudinary headshot path (img.mlbstatic.com .../headshot/67/current)
-// which serves the full head + shoulders + the whole hat. CSS handles
-// the circular display via `object-position: top` so the cap always
-// lands inside the frame even on circle crops.
+// MLB headshot URL helpers. Two endpoints, used in different places:
 //
-// Both serve cleanly when the MLBAM id is unknown / null — they fall
-// back to a generic silhouette. Cached at the edge by Cloudflare
-// automatically.
+//   playerHeadshotSpot()  — midfield.mlbstatic.com/spots/N. Team-colored
+//     circular badge with the player's face. The MLB / ESPN broadcast
+//     look. Used for EVERY small inline avatar across the site.
+//
+//   playerHeadshotLarge() — img.mlbstatic.com cloudinary headshot. Full
+//     head + shoulders, no team-color frame. Used ONLY for the big
+//     hero photo on the player profile page where the photo is large
+//     enough that the team-color badge would look out of place.
+//
+// Both serve cleanly when the MLBAM id is unknown — they return a
+// generic silhouette. Cached at Cloudflare's edge automatically.
 function playerHeadshotSpot(mlbam, size = 60) {
     if (!mlbam) return null;
-    // Request 2× the display size so the image stays crisp on retina,
-    // and so the whole cap is in the source rather than a face-tight
-    // crop. f_auto picks WebP/AVIF when the client supports it.
-    const w = Math.max(120, size * 2);
-    return `https://img.mlbstatic.com/mlb-photos/image/upload/`
-         + `w_${w},q_auto:best,f_auto`
-         + `/v1/people/${mlbam}/headshot/67/current`;
+    return `https://midfield.mlbstatic.com/v1/people/${mlbam}/spots/${size}`;
 }
 // Tiny inline avatar used in tables / rows / strips. One helper for
 // the whole site so swap-outs (CDN change, fallback URL, etc.) happen
@@ -708,7 +717,7 @@ function renderTeamRow(t, isLeader) {
                 : "";
     return `
       <tr class="${isLeader ? "leader" : ""}">
-        <td class="col-team"><strong>${t.team}</strong></td>
+        <td class="col-team"><a class="team-link" href="#team/${t.team}"><strong>${t.team}</strong></a></td>
         <td class="col-wl">${t.wins}-${t.losses}</td>
         <td class="col-pct">${t.pct}</td>
         <td class="col-gb">${t.gb}</td>
@@ -888,6 +897,199 @@ function renderMarketsDashboard(d) {
       </div>
     `;
 }
+
+
+// ── TEAM VIEW (futures + season props live here, NOT on live game) ──
+//
+// Reached by clicking a team tricode in the standings. Shows:
+//   - The team's season record, Pythagorean, L30, run differential
+//   - Every futures market we have on this team: World Series odds,
+//     ALCS/NLCS, division title, season-wins over/under
+//   - Player props for players on this team (filter by name from
+//     /api/markets player_prop bucket — Polymarket MVP, Cy Young,
+//     HR leader, etc.)
+//
+// Auto-refreshes every 30s so lines tick with the markets — same
+// cadence as the standalone Markets dashboard.
+
+const TEAM_REFRESH_MS = 30_000;
+let teamTimer = null;
+let activeTeamTricode = null;
+
+function showTeam(tricode) {
+    activeGameId = null;
+    activeTeamTricode = tricode;
+    clearAllTimers();
+    hideAllViews();
+    teamView.hidden = false;
+    renderEmpty(teamView, `Loading ${tricode}…`, "");
+    refreshTeam(tricode);
+    teamTimer = setInterval(() => refreshTeam(tricode), TEAM_REFRESH_MS);
+}
+
+async function refreshTeam(tricode) {
+    if (tricode !== activeTeamTricode) return;
+    try {
+        // Standings (for record + division position) and markets
+        // (for futures + player props) in parallel. Both edge-cached.
+        const [standingsRes, marketsRes] = await Promise.all([
+            fetch("/api/standings"),
+            fetch("/api/markets"),
+        ]);
+        const standings = standingsRes.ok ? await standingsRes.json() : null;
+        const markets   = marketsRes.ok ? await marketsRes.json() : null;
+        if (tricode !== activeTeamTricode) return;
+        teamView.innerHTML = renderTeamView(tricode, standings, markets);
+    } catch (e) {
+        if (!teamView.querySelector(".team-doc")) {
+            renderEmpty(teamView, `Couldn't load ${tricode}.`, `${e.message || e}`);
+        }
+    }
+}
+
+function renderTeamView(tricode, standings, markets) {
+    const teamRow = findTeamInStandings(standings, tricode);
+    const teamName = TEAM_NAMES[tricode] || tricode;
+
+    const header = `
+      <a class="back-link" href="#standings">← STANDINGS</a>
+      <header class="team-header">
+        <h2 class="team-header-name">${escapeHTMLAttr(teamName)}</h2>
+        <div class="team-header-meta">
+          ${teamRow
+            ? `${teamRow.wins}-${teamRow.losses} · ${teamRow.pct} · ${teamRow.run_diff > 0 ? "+" : ""}${teamRow.run_diff} run diff · L10 ${teamRow.last10} · streak ${teamRow.streak}`
+            : `${tricode}`}
+        </div>
+      </header>
+    `;
+
+    // Filter every market involving this team. For team-tagged markets
+    // that's straightforward — home_tricode or away_tricode matches.
+    // For player props we don't have a roster lookup, so we filter by
+    // name tokens for each known player. Limited to what's in the
+    // market title so it's safe.
+    const all = markets?.all || [];
+    const teamMarkets = all.filter((m) =>
+        m.home_tricode === tricode || m.away_tricode === tricode
+    );
+    const futures = teamMarkets.filter((m) => m.question_type === "future");
+
+    // Futures sub-categorized so the UI can group them. WS / LCS go
+    // first (high-stakes), then division, then season wins.
+    const wsMarkets   = futures.filter((m) => /world series/i.test(m.title || ""));
+    const lcsMarkets  = futures.filter((m) => /championship series/i.test(m.title || ""));
+    const divMarkets  = futures.filter((m) => /(al|nl) (east|west|central)|division/i.test(m.title || ""));
+    const winsMarkets = futures.filter((m) => /(more|fewer|at least|over) .* games|win total|regular season/i.test(m.title || ""));
+    const otherFut    = futures.filter((m) =>
+        !wsMarkets.includes(m) && !lcsMarkets.includes(m)
+        && !divMarkets.includes(m) && !winsMarkets.includes(m)
+    );
+
+    // Player props for this team — filter all player_prop markets to
+    // those that share a tricode OR mention the team name in title.
+    const allProps = (markets?.markets?.player_prop) || [];
+    const teamNameLc = teamName.toLowerCase();
+    const teamPlayerProps = allProps.filter((m) => {
+        if (m.home_tricode === tricode || m.away_tricode === tricode) return true;
+        const t = (m.title || "").toLowerCase();
+        return t.includes(teamNameLc);
+    });
+
+    const noFutures = futures.length === 0 && teamPlayerProps.length === 0;
+
+    return `
+      <div class="team-doc">
+        ${header}
+        ${noFutures
+            ? `<div class="empty">No public markets currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
+            : `
+              ${renderTeamFutureSection("World Series 2026",         wsMarkets,   tricode)}
+              ${renderTeamFutureSection("League Championship Series", lcsMarkets, tricode)}
+              ${renderTeamFutureSection("Division title",             divMarkets, tricode)}
+              ${renderTeamFutureSection("Regular-season wins",        winsMarkets, tricode)}
+              ${renderTeamFutureSection("Other team futures",         otherFut,    tricode)}
+              ${renderTeamPropSection(teamPlayerProps, teamName)}
+            `}
+        <footer class="team-footnote">
+          Lines refresh every 30s. Pulled from Polymarket, Kalshi, Manifold${markets?.sources?.includes("odds_api") ? ", and The Odds API" : ""}.
+        </footer>
+      </div>
+    `;
+}
+
+function renderTeamFutureSection(title, rows, tricode) {
+    if (!rows || !rows.length) return "";
+    return `
+      <section class="team-section">
+        <h3 class="team-section-title">${escapeHTMLAttr(title)}</h3>
+        <div class="team-section-rows">
+          ${rows.map((m) => renderTeamMarketRow(m, tricode)).join("")}
+        </div>
+      </section>
+    `;
+}
+
+function renderTeamPropSection(rows, teamName) {
+    if (!rows || !rows.length) return "";
+    return `
+      <section class="team-section">
+        <h3 class="team-section-title">Player props · ${escapeHTMLAttr(teamName)} roster</h3>
+        <div class="team-section-rows">
+          ${rows.map((m) => renderTeamMarketRow(m, null)).join("")}
+        </div>
+      </section>
+    `;
+}
+
+function renderTeamMarketRow(m, tricode) {
+    const outcomes = (m.outcomes || []).slice().sort((a, b) =>
+        (b.probability || 0) - (a.probability || 0)
+    );
+    const best = outcomes[0];
+    const pct  = best?.probability != null ? fmtPct(best.probability) : "—";
+    const bar  = best?.probability != null ? Math.round(best.probability * 100) : 0;
+    const url  = m.url || "#";
+    return `
+      <a class="team-market-row" href="${url}" target="_blank" rel="noopener">
+        <div class="team-market-head">
+          <span class="team-market-src team-market-src-${m.source}">${m.source}</span>
+          <span class="team-market-title">${escapeHTML(m.title || "")}</span>
+          <span class="team-market-pct">${pct}</span>
+        </div>
+        <div class="team-market-bar"><div class="team-market-bar-fill" style="width:${bar}%"></div></div>
+      </a>
+    `;
+}
+
+function findTeamInStandings(standings, tricode) {
+    if (!standings?.divisions) return null;
+    for (const div of standings.divisions) {
+        for (const t of (div.teams || [])) {
+            if (t.team === tricode) return t;
+        }
+    }
+    return null;
+}
+
+// Canonical team names for the header. Falls back to the tricode when
+// not found (shouldn't happen for MLB teams).
+const TEAM_NAMES = {
+    ARI: "Arizona Diamondbacks", ATL: "Atlanta Braves",
+    BAL: "Baltimore Orioles", BOS: "Boston Red Sox",
+    CHC: "Chicago Cubs", CHW: "Chicago White Sox",
+    CIN: "Cincinnati Reds", CLE: "Cleveland Guardians",
+    COL: "Colorado Rockies", DET: "Detroit Tigers",
+    HOU: "Houston Astros", KC:  "Kansas City Royals",
+    LAA: "Los Angeles Angels", LAD: "Los Angeles Dodgers",
+    MIA: "Miami Marlins", MIL: "Milwaukee Brewers",
+    MIN: "Minnesota Twins", NYM: "New York Mets",
+    NYY: "New York Yankees", OAK: "Oakland Athletics",
+    PHI: "Philadelphia Phillies", PIT: "Pittsburgh Pirates",
+    SD:  "San Diego Padres", SEA: "Seattle Mariners",
+    SF:  "San Francisco Giants", STL: "St. Louis Cardinals",
+    TB:  "Tampa Bay Rays", TEX: "Texas Rangers",
+    TOR: "Toronto Blue Jays", WSH: "Washington Nationals",
+};
 
 
 // ── ABOUT VIEW ──────────────────────────────────────────────────────
@@ -2979,18 +3181,28 @@ async function hydrateMarketConsensusPill(gameId) {
 // Shows the market's consensus probability for the home team next to
 // ours, plus a one-word verdict on the edge. Hidden entirely when no
 // moneyline market exists yet (most non-primetime games).
+// Live View consensus pill — STRICTLY game-day markets. Futures and
+// season props belong on the team page (#team/{tricode}), not here.
+// User feedback: futures showing up next to a live WE bar made the
+// pill noisy and irrelevant to the game in progress.
+//
+// Shows three things, in this order, when each exists:
+//   1. Moneyline cross-source consensus vs our model's home-win WE
+//   2. Total runs over/under chip
+//   3. Run-line spread chip
+//
+// Pill is hidden entirely when none of those exist for tonight — most
+// non-primetime MLB games don't have live total/spread quotes on the
+// free sources we wrap. The Markets tab on the game still surfaces
+// whatever does exist, with a clear "no game-day moneyline yet" empty
+// state for the user to see what was looked for.
 function renderMarketConsensusPill(data) {
     if (!data || !data.available || !data.market_count) return "";
 
     const home = data.teams?.home?.abbr || "HOME";
-    const away = data.teams?.away?.abbr || "AWAY";
     const cons = data.consensus?.home_win;
     const ours = data.our_we_home;
 
-    // Headline row: moneyline-style "home win" probability — our model
-    // vs cross-source market consensus. Hidden when no moneyline market
-    // exists (we still show supplementary chips below if those markets
-    // exist on their own).
     let headline = "";
     if (cons != null && ours != null) {
         const edge = ours - cons;
@@ -3011,34 +3223,20 @@ function renderMarketConsensusPill(data) {
         `;
     }
 
-    // Supplementary chips: total runs O/U, run-line spread, then high-
-    // probability futures/team props for either team. We surface the
-    // most interesting non-moneyline markets here so users always see
-    // SOMETHING when markets exist, even for non-primetime games where
-    // the moneyline hasn't traded yet.
     const totalChip  = renderTotalRunsChip(data.markets?.total);
     const spreadChip = renderSpreadChip(data.markets?.spread, home);
-    const futureChips = renderFutureChips(data.markets?.future, home, away);
-    const propChips   = renderTeamPropChips(data.markets?.team_prop, home, away);
-    const extrasInner =
-        (totalChip || "") + (spreadChip || "") + futureChips + propChips;
+    const extrasInner = (totalChip || "") + (spreadChip || "");
     const extras = extrasInner ? `<div class="mc-pill-extras">${extrasInner}</div>` : "";
 
-    // Hide entirely if BOTH headline and extras are empty.
+    // Pill hidden entirely when no game-day market exists. Futures are
+    // intentionally NOT shown here — see comment above.
     if (!headline && !extras) return "";
-
-    // Headline-less mode: when no moneyline consensus exists but we DO
-    // have futures/props, still show the label + extras so the user
-    // sees "Market lines available" with the chips below.
-    const labelText = headline
-        ? "Market lines"
-        : `Market lines · no game-day moneyline yet`;
 
     return `
       <div class="mc-pill">
         <div class="mc-pill-head">
-          <span class="mc-pill-label">${labelText}</span>
-          <a class="mc-pill-link" href="#" data-mc-open-markets="1">Open all (${data.market_count}) →</a>
+          <span class="mc-pill-label">Game-day market lines</span>
+          <a class="mc-pill-link" href="#" data-mc-open-markets="1">Open Markets tab →</a>
         </div>
         ${headline}
         ${extras}
