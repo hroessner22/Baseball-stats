@@ -3635,6 +3635,9 @@ function stopMarketsPoll() {
 let marketsSubTab = "game_lines";  // game_lines | player_props | team_props
 let marketsShowAlts = { spread: false, total: false };
 let marketsPlayerFilter = "";
+// Per-game header: click 'Market consensus' to expand a panel listing
+// every book / market source we pulled from.
+let marketsAllBooksOpen = false;
 
 function renderMarkets(d) {
     if (!d.available) {
@@ -3853,6 +3856,14 @@ document.addEventListener("click", (e) => {
         if (activeGameId && gameViewMode === "markets") hydrateMarkets(activeGameId);
         return;
     }
+    // Toggle the Market Consensus → all-books panel.
+    const booksBtn = e.target.closest("[data-mkt-toggle-books]");
+    if (booksBtn) {
+        e.preventDefault();
+        marketsAllBooksOpen = !marketsAllBooksOpen;
+        if (activeGameId && gameViewMode === "markets") hydrateMarkets(activeGameId);
+        return;
+    }
 });
 
 // Filter input — re-render on each keystroke but throttle so typing
@@ -3879,33 +3890,12 @@ document.addEventListener("input", (e) => {
 
 function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe, savantSource) {
     const home = d.teams.home.abbr;
+    const away = d.teams.away.abbr;
     const oursPct  = ourWe   != null ? fmtPct(ourWe)   : "—";
+    const consPct  = consHome != null ? fmtPct(consHome) : "—";
     const savantPct = savantWe != null ? fmtPct(savantWe) : "—";
 
-    // Per-source list — every book we pull from, with that book's
-    // live moneyline odds + implied probability for the home team.
-    // User: 'instead of market consensus, display every single market
-    // and its live odds. (Every market we pull data from)'.
-    const perSource = d.per_source || [];
-    const bookRows = perSource.map((b) => `
-      <a class="msrc-row" href="${b.url || "#"}" target="_blank" rel="noopener">
-        <span class="msrc-name msrc-name-${b.source}">${b.source}${(b.book_count || 1) > 1 ? ` (${b.book_count})` : ""}</span>
-        <span class="msrc-quote">
-          <span class="msrc-am ${b.home_american == null ? "msrc-am-empty" : ""}">
-            ${b.home_american != null ? formatAmericanOdds(b.home_american) : "—"}
-          </span>
-          <span class="msrc-pct">${b.home_win != null ? fmtPct(b.home_win) : "—"}</span>
-        </span>
-      </a>
-    `).join("");
-
-    // Verdict math: use the AVERAGE of book home-win probs to compare
-    // our model and Savant against the broader market.
-    const bookHomeProbs = perSource.map((b) => b.home_win).filter((p) => p != null);
-    const bookAvg = bookHomeProbs.length
-        ? bookHomeProbs.reduce((s, p) => s + p, 0) / bookHomeProbs.length
-        : null;
-    const numerics = [ourWe, bookAvg, savantWe].filter((p) => p != null);
+    const numerics = [ourWe, consHome, savantWe].filter((p) => p != null);
     const spread = numerics.length >= 2 ? Math.max(...numerics) - Math.min(...numerics) : 0;
     const spreadClass = spread < 0.02 ? "all-agree" : spread < 0.06 ? "small-edge" : "big-edge";
     const verdict =
@@ -3915,11 +3905,14 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe, savan
                 ? `All sources agree on ${home} ${fmtPct(numerics[0])}`
                 : spread < 0.06
                     ? `Tight: ${(spread * 100).toFixed(1)}pp max spread`
-                    : ourWe != null && bookAvg != null
-                        ? (ourWe > bookAvg
-                            ? `We have ${home} ${((ourWe - bookAvg) * 100).toFixed(1)}pp higher than book avg`
-                            : `Books have ${home} ${((bookAvg - ourWe) * 100).toFixed(1)}pp higher than us`)
+                    : ourWe != null && consHome != null
+                        ? (ourWe > consHome
+                            ? `We have ${home} ${((ourWe - consHome) * 100).toFixed(1)}pp higher than market`
+                            : `Market has ${home} ${((consHome - ourWe) * 100).toFixed(1)}pp higher than us`)
                         : `${(spread * 100).toFixed(1)}pp spread across sources`;
+
+    const open = marketsAllBooksOpen;
+    const breakdown = open ? renderMarketsAllBooksPanel(d) : "";
 
     return `
       <div class="markets-header">
@@ -3928,12 +3921,12 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe, savan
             <div class="markets-side-label">Our model — ${home} win</div>
             <div class="markets-side-num">${oursPct}</div>
           </div>
-          <div class="markets-side markets-side-books" data-key="books">
-            <div class="markets-side-label">Live odds · ${home} win</div>
-            <div class="msrc-list">
-              ${bookRows || `<div class="msrc-empty">No book quotes yet</div>`}
-            </div>
-          </div>
+          <button class="markets-side markets-side-clickable" data-key="market" data-mkt-toggle-books="1" aria-expanded="${open ? "true" : "false"}">
+            <div class="markets-side-label">Market consensus <span class="markets-side-caret">${open ? "▴" : "▾"}</span></div>
+            <div class="markets-side-num">${consPct}</div>
+            ${consAway != null ? `<div class="markets-side-sub">${away}: ${fmtPct(consAway)}</div>` : ""}
+            <div class="markets-side-cta">${open ? "Hide books" : "Click to see every book"}</div>
+          </button>
           <div class="markets-side" data-key="savant">
             <div class="markets-side-label">${savantLabel(savantSource)}</div>
             <div class="markets-side-num">${savantPct}</div>
@@ -3943,6 +3936,95 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe, savan
           </div>
         </div>
         <div class="markets-edge edge-${spreadClass}">${verdict}</div>
+        ${breakdown}
+      </div>
+    `;
+}
+
+// Click-to-expand panel under the header. Lists EVERY book / market
+// source we pulled from, grouped by source, showing each's moneyline,
+// run line and total quotes. User asked: 'show me all of the market's
+// odds. All the books, all the polymarkets etc.'
+function renderMarketsAllBooksPanel(d) {
+    const home = d.teams.home.abbr;
+    const away = d.teams.away.abbr;
+    const sources = d.sources_present || [];
+    if (!sources.length) {
+        return `<div class="mab-empty">No book quotes for this game yet.</div>`;
+    }
+    const allML  = d.markets?.moneyline || [];
+    const allSp  = d.markets?.spread    || [];
+    const allTot = d.markets?.total     || [];
+
+    const matchSide = (outcome, want) => {
+        const oName = (outcome.name || "").toLowerCase();
+        const abbr = want === "home" ? home.toLowerCase() : away.toLowerCase();
+        return oName === abbr
+            || oName.includes((want === "home" ? d.teams.home : d.teams.away)?.tricode?.toLowerCase() || "X")
+            || (oName.includes(want === "home" ? "home" : "away"));
+    };
+
+    const cards = sources.map((src) => {
+        const ml = allML.find((m) => m.source === src);
+        const sp = (allSp.filter((m) => m.source === src).find((m) => m.is_main_line))
+                || allSp.find((m) => m.source === src);
+        const tot = (allTot.filter((m) => m.source === src).find((m) => m.is_main_line))
+                 || allTot.find((m) => m.source === src);
+
+        return `
+          <article class="mab-card mab-card-${src}">
+            <header class="mab-head">
+              <span class="mab-src msrc-name msrc-name-${src}">${src}</span>
+            </header>
+            <div class="mab-rows">
+              ${renderMabRow("ML",   ml)}
+              ${renderMabRow("SPRD", sp)}
+              ${renderMabRow("TOT",  tot)}
+            </div>
+            ${(ml?.url || sp?.url || tot?.url) ? `
+              <a class="mab-link" href="${ml?.url || sp?.url || tot?.url}" target="_blank" rel="noopener">
+                Open on ${src} →
+              </a>
+            ` : ""}
+          </article>
+        `;
+    }).join("");
+
+    return `
+      <div class="markets-all-books">
+        <div class="mab-head-strip">
+          <strong>Every book we pull from</strong>
+          <span class="mab-meta">Moneyline · Run line · Total — for ${away} @ ${home}</span>
+        </div>
+        <div class="mab-grid">${cards}</div>
+      </div>
+    `;
+}
+
+function renderMabRow(label, market) {
+    if (!market) {
+        return `<div class="mab-row mab-row-empty"><span class="mab-row-label">${label}</span><span class="mab-row-empty-msg">not quoted</span></div>`;
+    }
+    const outcomes = (market.outcomes || []).slice().sort((a, b) => (b.probability || 0) - (a.probability || 0));
+    if (!outcomes.some((o) => o.probability != null || o.american != null)) {
+        return `<div class="mab-row mab-row-empty"><span class="mab-row-label">${label}</span><span class="mab-row-empty-msg">no quote yet</span></div>`;
+    }
+    const cells = outcomes.slice(0, 3).map((o) => {
+        const pct = o.probability_devig ?? o.probability;
+        return `
+          <span class="mab-cell">
+            <span class="mab-cell-name">${escapeHTML(o.name || "")}</span>
+            <span class="mab-cell-odds">
+              ${o.american != null ? `<span class="mab-cell-am">${formatAmericanOdds(o.american)}</span>` : ""}
+              ${pct != null ? `<span class="mab-cell-pct">${fmtPct(pct)}</span>` : ""}
+            </span>
+          </span>
+        `;
+    }).join("");
+    return `
+      <div class="mab-row">
+        <span class="mab-row-label">${label}</span>
+        <div class="mab-row-cells">${cells}</div>
       </div>
     `;
 }

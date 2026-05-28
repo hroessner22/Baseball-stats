@@ -4451,6 +4451,151 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     text-align: center;
     padding: 8px 0;
 }
+
+/* Click-to-expand "Market consensus" button + all-books panel that
+   drops in below the header. Replaces the previous static middle
+   column. User clicks → sees every book + market source individually. */
+.markets-side-clickable {
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: center;
+    cursor: pointer;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    transition: background 80ms ease;
+}
+.markets-side-clickable:hover {
+    background: rgba(56, 189, 248, 0.08);
+}
+.markets-side-caret {
+    font-size: 11px;
+    color: var(--accent-action);
+    margin-left: 4px;
+}
+.markets-side-cta {
+    margin-top: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--accent-action);
+    text-transform: uppercase;
+}
+
+/* Expanded all-books panel below the header. Per-source cards in a
+   responsive grid. */
+.markets-all-books {
+    margin-top: 14px;
+    background: rgba(148, 163, 184, 0.05);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.mab-head-strip {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.mab-head-strip strong {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+}
+.mab-meta { font-size: 11px; color: var(--text-dim); }
+.mab-empty {
+    color: var(--text-faint);
+    font-style: italic;
+    text-align: center;
+    padding: 16px;
+}
+.mab-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+}
+.mab-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.mab-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.mab-src.msrc-name { font-size: 11px; padding: 3px 9px; }
+.mab-rows { display: flex; flex-direction: column; gap: 6px; }
+.mab-row {
+    display: grid;
+    grid-template-columns: 50px 1fr;
+    gap: 8px;
+    align-items: center;
+}
+.mab-row-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+}
+.mab-row-cells {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.mab-cell {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+}
+.mab-cell-name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mab-cell-odds {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.mab-cell-am {
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+.mab-cell-pct {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.mab-row-empty { color: var(--text-faint); }
+.mab-row-empty-msg { font-size: 10px; font-style: italic; }
+.mab-link {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--accent-action);
+    text-decoration: none;
+    align-self: flex-end;
+}
+.mab-link:hover { text-decoration: underline; }
 .markets-side-sub {
     font-size: 10px;
     color: var(--text-faint);
