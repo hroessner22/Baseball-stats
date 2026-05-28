@@ -4902,6 +4902,101 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding-top: 12px;
     border-top: 1px solid var(--border);
 }
+
+/* Tonight's-game card on the team page. Bridge between team-context
+   (futures, season props) and the live PA-by-PA companion. */
+.team-today-game {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.team-today-game-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.team-today-game-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.team-today-game-link {
+    color: var(--accent-action);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 13px;
+}
+.team-today-game-link:hover { text-decoration: underline; }
+.team-today-game-state {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+}
+.team-today-game-ours {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+/* Empty-state hint for The Odds API setup. Renders ONLY when the
+   ODDS_API_KEY isn't set — gives the user the exact wrangler command
+   to wire it up. */
+.odds-api-hint {
+    background: rgba(56, 189, 248, 0.06);
+    border: 1px dashed rgba(56, 189, 248, 0.3);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    color: var(--text);
+}
+.odds-api-hint-title {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: #7DD3FC;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.odds-api-hint-body {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    margin: 0 0 8px 0;
+}
+.odds-api-hint-body strong { color: var(--text); }
+.odds-api-hint-steps {
+    margin: 0 0 8px 18px;
+    padding: 0;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.7;
+}
+.odds-api-hint-steps a {
+    color: #7DD3FC;
+    text-decoration: none;
+    border-bottom: 1px dotted currentColor;
+}
+.odds-api-hint-steps code,
+.odds-api-hint-foot code {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--text);
+}
+.odds-api-hint-foot {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
 .team-link {
     color: var(--text);
     text-decoration: none;

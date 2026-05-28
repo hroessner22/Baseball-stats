@@ -508,11 +508,67 @@ async function listManifoldMlbMarkets() {
 
 
 // ── The Odds API adapter (sportsbook aggregator) ──────────────────
+//
+// Two layers:
+//
+//   1. Game lines (h2h / spreads / totals) via the sport-level endpoint
+//      — ONE request returns every MLB game. Cache 5 min. This is what
+//      the free tier of The Odds API gives you (500 req/mo budget).
+//
+//   2. Player props (batter / pitcher) via the per-event endpoint —
+//      one request per event. Only fires when ODDS_API_INCLUDE_PROPS
+//      is set in env (and only on paid tiers >= $30/mo). Cache 15 min.
+//
+// We collapse the bookmaker dimension to a CONSENSUS market per
+// (event × market_type) by averaging probabilities across books.
+// Sportsbooks each get their own row in the response too via the
+// `book_lines` metadata so the UI can dive in. Simpler than rendering
+// 6 duplicate "FanDuel / DraftKings / BetMGM / Caesars / PointsBet /
+// BetRivers" rows per game.
+
+// Markets we ask the per-event endpoint for. The Odds API names props
+// by canonical key — these are MLB-specific. Most require a paid tier.
+const ODDS_API_PROP_MARKETS = [
+    "batter_hits",
+    "batter_home_runs",
+    "batter_total_bases",
+    "batter_rbis",
+    "batter_runs_scored",
+    "batter_walks",
+    "batter_strikeouts",
+    "batter_singles",
+    "batter_doubles",
+    "batter_stolen_bases",
+    "pitcher_strikeouts",
+    "pitcher_hits_allowed",
+    "pitcher_walks",
+    "pitcher_earned_runs",
+    "pitcher_outs",
+    "pitcher_record_a_win",
+];
 
 async function listOddsApiMlbMarkets(env) {
     const key = env?.ODDS_API_KEY || env?.THE_ODDS_API_KEY;
     if (!key) return [];
 
+    // 1. Game lines from the sport-level endpoint.
+    const gameLines = await fetchOddsApiGameLines(key);
+
+    // 2. Optional: player props per event. Paid-tier feature.
+    let propLines = [];
+    if (env?.ODDS_API_INCLUDE_PROPS) {
+        // Only fetch props for events that haven't started yet, to
+        // conserve the per-month request budget.
+        const upcoming = gameLines
+            .map((m) => m.source_event_id)
+            .filter((id, i, a) => id && a.indexOf(id) === i)  // dedupe
+            .slice(0, 16);  // cap at 16 games/day
+        propLines = await fetchOddsApiPlayerProps(key, upcoming);
+    }
+    return [...gameLines, ...propLines];
+}
+
+async function fetchOddsApiGameLines(key) {
     const params = new URLSearchParams({
         apiKey: key,
         regions: "us",
@@ -522,52 +578,163 @@ async function listOddsApiMlbMarkets(env) {
     const url = `${ODDS_API_BASE}/sports/baseball_mlb/odds?${params}`;
     let events;
     try {
-        events = await fetchJson(url, { cacheTtl: 60 });
+        events = await fetchJson(url, { cacheTtl: 300 });
     } catch {
         return [];
     }
+    return collapseOddsApiEvents(events, "game");
+}
+
+async function fetchOddsApiPlayerProps(key, eventIds) {
+    if (!eventIds.length) return [];
+    const results = await Promise.allSettled(eventIds.map((id) => {
+        const params = new URLSearchParams({
+            apiKey: key,
+            regions: "us",
+            markets: ODDS_API_PROP_MARKETS.join(","),
+            oddsFormat: "decimal",
+        });
+        const url = `${ODDS_API_BASE}/sports/baseball_mlb/events/${id}/odds?${params}`;
+        return fetchJson(url, { cacheTtl: 900 });
+    }));
+    const events = results
+        .filter((r) => r.status === "fulfilled" && r.value)
+        .map((r) => r.value);
+    return collapseOddsApiEvents(events, "prop");
+}
+
+// Convert The Odds API's nested {event → bookmakers → markets → outcomes}
+// into our flat Market shape. For each (event × market_key) we emit ONE
+// Market whose outcomes carry the consensus probability across books.
+function collapseOddsApiEvents(events, kind) {
     const out = [];
     for (const ev of events || []) {
         const homeTri = teamTricode(ev.home_team);
         const awayTri = teamTricode(ev.away_team);
+        // For each market_key, group outcomes from every bookmaker so
+        // we can average probabilities cross-book.
+        const grouped = new Map();  // market_key → outcomes Map
         for (const bm of ev.bookmakers || []) {
             for (const m of bm.markets || []) {
-                const title = `${ev.away_team} @ ${ev.home_team} · ${m.key} · ${bm.title}`;
-                const qType = m.key === "h2h"    ? "moneyline"
-                            : m.key === "spreads" ? "spread"
-                            : m.key === "totals"  ? "total"
-                            : "other";
-                out.push(flat({
-                    id: `odds:${ev.id}:${bm.key}:${m.key}`,
-                    source: "odds_api",
-                    title,
-                    description: "",
-                    url: `https://the-odds-api.com/`,
-                    outcomes: (m.outcomes || []).map((o) => ({
-                        id: `${bm.key}:${m.key}:${o.name}${o.point != null ? `:${o.point}` : ""}`,
-                        name: o.point != null ? `${o.name} ${o.point}` : o.name,
+                if (!grouped.has(m.key)) grouped.set(m.key, {
+                    market_key: m.key,
+                    description: m.description || "",
+                    outcomes_by_name: new Map(),  // name → [{book, price, probability, point}]
+                    books_present: new Set(),
+                });
+                const g = grouped.get(m.key);
+                g.books_present.add(bm.key);
+                for (const o of m.outcomes || []) {
+                    const key = o.point != null ? `${o.name}@${o.point}` : o.name;
+                    if (!g.outcomes_by_name.has(key)) {
+                        g.outcomes_by_name.set(key, []);
+                    }
+                    g.outcomes_by_name.get(key).push({
+                        book: bm.title,
+                        book_key: bm.key,
                         price: o.price,
                         point: o.point,
                         probability: o.price > 1 ? 1 / o.price : undefined,
-                    })),
-                    question_type: qType,
-                    status: "open",
-                    start_time: ev.commence_time || null,
-                    close_time: null,
-                    home_tricode: homeTri,
-                    away_tricode: awayTri,
-                    home_team: ev.home_team,
-                    away_team: ev.away_team,
-                    liquidity_usd: undefined,
-                    volume_usd: undefined,
-                    raw_market_id: `${ev.id}:${bm.key}:${m.key}`,
-                    source_event_id: ev.id,
-                    source_event_title: title,
-                }));
+                        description: o.description || null,  // for player props (player name)
+                    });
+                }
             }
+        }
+
+        for (const g of grouped.values()) {
+            const qType = mapOddsApiMarketKey(g.market_key);
+            const outcomes = Array.from(g.outcomes_by_name.entries()).map(([key, books]) => {
+                const probs = books.map((b) => b.probability).filter((p) => p != null);
+                const mean = probs.length ? probs.reduce((s, p) => s + p, 0) / probs.length : undefined;
+                const sample = books[0];
+                // Outcome `name` = the player (for props) or side (for ML).
+                // For props we append the side and threshold so it reads "Aaron Judge over 1.5".
+                const baseName = sample.description ? sample.description : sample.book ? key.split("@")[0] : key;
+                const point = sample.point;
+                const sideToken = key.includes("@") ? key.split("@")[0] : key;  // Over/Under or team name
+                const displayName = sample.description
+                    ? `${sample.description}: ${sideToken}${point != null ? ` ${point}` : ""}`
+                    : (point != null ? `${sideToken} ${point}` : sideToken);
+                return {
+                    id: `${g.market_key}:${key}`,
+                    name: displayName,
+                    probability: mean,
+                    point: point,
+                    book_count: probs.length,
+                    book_lines: books.map((b) => ({
+                        book: b.book, price: b.price, probability: b.probability,
+                    })),
+                };
+            });
+
+            const titleBase = `${ev.away_team} @ ${ev.home_team}`;
+            const title = kind === "prop"
+                ? `${titleBase} · ${prettyPropName(g.market_key)}`
+                : `${titleBase} · ${prettyGameLineName(g.market_key)}`;
+            out.push(flat({
+                id: `odds:${ev.id}:${g.market_key}`,
+                source: "odds_api",
+                title,
+                description: g.description,
+                url: `https://the-odds-api.com/sports/baseball_mlb/`,
+                outcomes,
+                question_type: qType,
+                status: "open",
+                start_time: ev.commence_time || null,
+                close_time: null,
+                home_tricode: homeTri,
+                away_tricode: awayTri,
+                home_team: ev.home_team,
+                away_team: ev.away_team,
+                liquidity_usd: undefined,
+                volume_usd:    undefined,
+                raw_market_id: `${ev.id}:${g.market_key}`,
+                source_event_id: ev.id,
+                source_event_title: titleBase,
+                book_count: g.books_present.size,
+                books_present: Array.from(g.books_present),
+            }));
         }
     }
     return out;
+}
+
+function mapOddsApiMarketKey(k) {
+    if (k === "h2h")     return "moneyline";
+    if (k === "spreads") return "spread";
+    if (k === "totals")  return "total";
+    if (k && k.startsWith("batter_") || (k && k.startsWith("pitcher_")))
+        return "player_prop";
+    return "other";
+}
+
+function prettyGameLineName(k) {
+    if (k === "h2h") return "moneyline";
+    if (k === "spreads") return "run line";
+    if (k === "totals") return "total runs O/U";
+    return k;
+}
+
+function prettyPropName(k) {
+    const m = {
+        batter_hits:           "Batter hits O/U",
+        batter_home_runs:      "Batter HRs O/U",
+        batter_total_bases:    "Batter total bases O/U",
+        batter_rbis:           "Batter RBIs O/U",
+        batter_runs_scored:    "Batter runs scored O/U",
+        batter_walks:          "Batter walks O/U",
+        batter_strikeouts:     "Batter K's O/U",
+        batter_singles:        "Batter singles O/U",
+        batter_doubles:        "Batter doubles O/U",
+        batter_stolen_bases:   "Batter SB O/U",
+        pitcher_strikeouts:    "Pitcher K's O/U",
+        pitcher_hits_allowed:  "Pitcher hits allowed O/U",
+        pitcher_walks:         "Pitcher walks O/U",
+        pitcher_earned_runs:   "Pitcher ER O/U",
+        pitcher_outs:          "Pitcher outs O/U",
+        pitcher_record_a_win:  "Pitcher to record a win",
+    };
+    return m[k] || k;
 }
 
 
@@ -664,6 +831,11 @@ function flat(o) {
         raw_market_id: o.raw_market_id || null,
         source_event_id: o.source_event_id || null,
         source_event_title: o.source_event_title || null,
+        // Sportsbook-aggregator extras (Odds API): how many books quote
+        // this market and which ones, so the UI can show "consensus of
+        // 6 books" rather than 6 duplicate rows.
+        book_count:    o.book_count != null ? Number(o.book_count) : null,
+        books_present: Array.isArray(o.books_present) ? o.books_present : null,
     };
 }
 
