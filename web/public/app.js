@@ -930,16 +930,20 @@ function showTeam(tricode) {
 async function refreshTeam(tricode) {
     if (tricode !== activeTeamTricode) return;
     try {
-        // Standings (for record + division position) and markets
-        // (for futures + player props) in parallel. Both edge-cached.
-        const [standingsRes, marketsRes] = await Promise.all([
+        // Three parallel fetches:
+        //   - standings: record + division position + L30
+        //   - markets:   futures + player props + game lines
+        //   - games/today: find this team's game today (if playing)
+        const [standingsRes, marketsRes, gamesRes] = await Promise.all([
             fetch("/api/standings"),
             fetch("/api/markets"),
+            fetch("/api/games/today"),
         ]);
         const standings = standingsRes.ok ? await standingsRes.json() : null;
         const markets   = marketsRes.ok ? await marketsRes.json() : null;
+        const games     = gamesRes.ok ? await gamesRes.json() : null;
         if (tricode !== activeTeamTricode) return;
-        teamView.innerHTML = renderTeamView(tricode, standings, markets);
+        teamView.innerHTML = renderTeamView(tricode, standings, markets, games);
     } catch (e) {
         if (!teamView.querySelector(".team-doc")) {
             renderEmpty(teamView, `Couldn't load ${tricode}.`, `${e.message || e}`);
@@ -947,7 +951,7 @@ async function refreshTeam(tricode) {
     }
 }
 
-function renderTeamView(tricode, standings, markets) {
+function renderTeamView(tricode, standings, markets, games) {
     const teamRow = findTeamInStandings(standings, tricode);
     const teamName = TEAM_NAMES[tricode] || tricode;
 
@@ -963,19 +967,31 @@ function renderTeamView(tricode, standings, markets) {
       </header>
     `;
 
-    // Filter every market involving this team. For team-tagged markets
-    // that's straightforward — home_tricode or away_tricode matches.
-    // For player props we don't have a roster lookup, so we filter by
-    // name tokens for each known player. Limited to what's in the
-    // market title so it's safe.
     const all = markets?.all || [];
     const teamMarkets = all.filter((m) =>
         m.home_tricode === tricode || m.away_tricode === tricode
     );
     const futures = teamMarkets.filter((m) => m.question_type === "future");
 
-    // Futures sub-categorized so the UI can group them. WS / LCS go
-    // first (high-stakes), then division, then season wins.
+    // Game lines (moneyline, spread, total) for THIS team's tonight
+    // game — surfaced above futures because they're the most actionable.
+    const gameLines = teamMarkets.filter((m) =>
+        m.question_type === "moneyline"
+        || m.question_type === "spread"
+        || m.question_type === "total"
+    );
+    const moneylines = gameLines.filter((m) => m.question_type === "moneyline");
+    const totals     = gameLines.filter((m) => m.question_type === "total");
+    const spreads    = gameLines.filter((m) => m.question_type === "spread");
+
+    // Today's scheduled game for this team, if any. Used to link the
+    // game lines to our model's WE and a CTA to "open the live tracker".
+    const todayGame = (games?.games || []).find((g) =>
+        g.home === tricode || g.away === tricode
+    );
+
+    const todayGameBlock = todayGame ? renderTeamTodayGame(todayGame, tricode) : "";
+
     const wsMarkets   = futures.filter((m) => /world series/i.test(m.title || ""));
     const lcsMarkets  = futures.filter((m) => /championship series/i.test(m.title || ""));
     const divMarkets  = futures.filter((m) => /(al|nl) (east|west|central)|division/i.test(m.title || ""));
@@ -985,8 +1001,6 @@ function renderTeamView(tricode, standings, markets) {
         && !divMarkets.includes(m) && !winsMarkets.includes(m)
     );
 
-    // Player props for this team — filter all player_prop markets to
-    // those that share a tricode OR mention the team name in title.
     const allProps = (markets?.markets?.player_prop) || [];
     const teamNameLc = teamName.toLowerCase();
     const teamPlayerProps = allProps.filter((m) => {
@@ -995,25 +1009,91 @@ function renderTeamView(tricode, standings, markets) {
         return t.includes(teamNameLc);
     });
 
-    const noFutures = futures.length === 0 && teamPlayerProps.length === 0;
+    const noMarkets =
+        gameLines.length === 0 && futures.length === 0 && teamPlayerProps.length === 0;
+
+    const oddsApiOn = markets?.sources?.includes("odds_api");
 
     return `
       <div class="team-doc">
         ${header}
-        ${noFutures
+        ${todayGameBlock}
+        ${noMarkets
             ? `<div class="empty">No public markets currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
             : `
+              ${renderTeamFutureSection("Game-day moneyline",  moneylines, tricode)}
+              ${renderTeamFutureSection("Total runs O/U",       totals,     tricode)}
+              ${renderTeamFutureSection("Run-line spread",      spreads,    tricode)}
+              ${renderTeamPropSection(teamPlayerProps, teamName)}
               ${renderTeamFutureSection("World Series 2026",         wsMarkets,   tricode)}
               ${renderTeamFutureSection("League Championship Series", lcsMarkets, tricode)}
               ${renderTeamFutureSection("Division title",             divMarkets, tricode)}
               ${renderTeamFutureSection("Regular-season wins",        winsMarkets, tricode)}
               ${renderTeamFutureSection("Other team futures",         otherFut,    tricode)}
-              ${renderTeamPropSection(teamPlayerProps, teamName)}
             `}
+        ${!oddsApiOn ? renderOddsApiHint() : ""}
         <footer class="team-footnote">
-          Lines refresh every 30s. Pulled from Polymarket, Kalshi, Manifold${markets?.sources?.includes("odds_api") ? ", and The Odds API" : ""}.
+          Lines refresh every 30s. Pulled from Polymarket, Kalshi, Manifold${oddsApiOn ? ", and The Odds API (FanDuel / DraftKings / BetMGM / Caesars)" : ""}.
         </footer>
       </div>
+    `;
+}
+
+// Tonight's game card on the team page. Shows our model's WE bar and
+// a link to the live game tracker — the bridge between team-context
+// (futures, season props) and the live PA-by-PA companion.
+function renderTeamTodayGame(g, tricode) {
+    const isHome = g.home === tricode;
+    const opp = isHome ? g.away : g.home;
+    const homePct = g.win_expectancy != null ? Math.round(g.win_expectancy * 100) : null;
+    const awayPct = homePct != null ? 100 - homePct : null;
+    const ourPct  = isHome ? homePct : awayPct;
+    const stateLine = g.status === "Live"
+        ? `${arrowHalf(g.half)} ${ordinalSuffix(g.inning)} · ${g.score?.away}-${g.score?.home}`
+        : g.status === "Final"
+            ? `Final · ${g.score?.away}-${g.score?.home}`
+            : `First pitch ${formatGameTime(g.start_time)}`;
+    const oursLine = (g.status === "Live" && ourPct != null)
+        ? `Our model: ${tricode} ${ourPct}%`
+        : "";
+    return `
+      <section class="team-today-game">
+        <div class="team-today-game-head">
+          <span class="team-today-game-label">Tonight</span>
+          <a class="team-today-game-link" href="#game/${g.game_pk}">${tricode} ${isHome ? "vs" : "@"} ${opp} →</a>
+        </div>
+        <div class="team-today-game-state">${stateLine}</div>
+        ${oursLine ? `<div class="team-today-game-ours">${oursLine}</div>` : ""}
+      </section>
+    `;
+}
+
+// Empty-state hint that nudges the user to configure The Odds API key
+// for nightly game lines + player props. Only renders when the env
+// var isn't set (sources_present won't include odds_api).
+function renderOddsApiHint() {
+    return `
+      <aside class="odds-api-hint">
+        <div class="odds-api-hint-title">Want nightly game lines + player props?</div>
+        <p class="odds-api-hint-body">
+          Polymarket / Kalshi / Manifold cover season futures well. For
+          nightly <strong>moneyline / total / spread / player prop</strong>
+          lines updated every minute from FanDuel, DraftKings, BetMGM,
+          Caesars, PointsBet and BetRivers — wire The Odds API:
+        </p>
+        <ol class="odds-api-hint-steps">
+          <li>Sign up: <a href="https://the-odds-api.com" target="_blank" rel="noopener">the-odds-api.com</a> (free tier = 500 req/mo, plenty for game lines).</li>
+          <li>Copy your API key from the dashboard.</li>
+          <li>Set it as a Pages secret (keeps it out of any chat or repo):<br/>
+            <code>wrangler pages secret put ODDS_API_KEY --project-name=diamond-context</code>
+          </li>
+          <li>For player props (paid tier ≥ $30/mo): also set <code>ODDS_API_INCLUDE_PROPS=1</code>.</li>
+        </ol>
+        <p class="odds-api-hint-foot">
+          Adapter is already vendored at <code>web/functions/api/_markets.js</code>;
+          adding the key flips it on with no code change.
+        </p>
+      </aside>
     `;
 }
 
