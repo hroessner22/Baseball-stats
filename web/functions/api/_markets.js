@@ -871,7 +871,9 @@ export async function listAllMlbMarkets(env) {
         const r = results[i];
         if (r.status === "fulfilled") {
             out.push(...r.value);
-            diagnostics[name] = { ok: true, count: r.value.length };
+            const entry = { ok: true, count: r.value.length };
+            if (r.value._dbg) entry.dbg = r.value._dbg;
+            diagnostics[name] = entry;
         } else {
             diagnostics[name] = { ok: false, error: String(r.reason?.message || r.reason || "unknown") };
         }
@@ -1405,16 +1407,27 @@ function americanToDecimal(american) {
 const SMARKETS_BASE = "https://api.smarkets.com/v3";
 
 async function listSmarketsMlbMarkets() {
+    const dbg = { phase: "init" };
     let events;
     try {
         const url = `${SMARKETS_BASE}/events/?type=baseball_match&state=upcoming&limit=20`;
         const data = await fetchJson(url, { cacheTtl: 30 });
         events = Array.isArray(data?.events) ? data.events : [];
-    } catch {
-        return [];
+        dbg.events_count = events.length;
+        dbg.phase = "events_loaded";
+    } catch (e) {
+        dbg.error_events = String(e?.message || e);
+        const out = [];
+        Object.defineProperty(out, "_dbg", { value: dbg, enumerable: false });
+        return out;
     }
-    if (!events.length) return [];
+    if (!events.length) {
+        const out = [];
+        Object.defineProperty(out, "_dbg", { value: dbg, enumerable: false });
+        return out;
+    }
     events = events.slice(0, 16);  // cap for Cloudflare 50-subreq budget
+    dbg.events_capped = events.length;
 
     // 1. Per-event markets fan-out (~16 reqs).
     const marketsByEvent = await Promise.allSettled(
@@ -1426,13 +1439,24 @@ async function listSmarketsMlbMarkets() {
 
     // 2. Find each event's "Match winner" market id.
     const winners = [];
+    let markets_total = 0, markets_fetched_ok = 0;
     for (const r of marketsByEvent) {
         if (r.status !== "fulfilled") continue;
+        markets_fetched_ok += 1;
         const { ev, markets } = r.value;
+        markets_total += markets.length;
         const winner = markets.find((m) => /winner|match/i.test(m.name || ""));
         if (winner) winners.push({ ev, winner });
     }
-    if (!winners.length) return [];
+    dbg.markets_fetched_ok = markets_fetched_ok;
+    dbg.markets_total = markets_total;
+    dbg.winners_count = winners.length;
+    dbg.phase = "winners_found";
+    if (!winners.length) {
+        const out = [];
+        Object.defineProperty(out, "_dbg", { value: dbg, enumerable: false });
+        return out;
+    }
 
     // 3. Batch contracts + prices in TWO total requests using
     //    Smarkets's comma-separated market-id URL syntax. Saves us
@@ -1444,6 +1468,13 @@ async function listSmarketsMlbMarkets() {
     ]);
     const contractsAll = contractsResp.status === "fulfilled" ? (contractsResp.value?.contracts || []) : [];
     const pricesByMkt  = pricesResp.status   === "fulfilled" ? (pricesResp.value?.last_executed_prices || {}) : {};
+    dbg.contracts_status = contractsResp.status;
+    if (contractsResp.status === "rejected") dbg.contracts_error = String(contractsResp.reason?.message || contractsResp.reason);
+    dbg.prices_status = pricesResp.status;
+    if (pricesResp.status === "rejected") dbg.prices_error = String(pricesResp.reason?.message || pricesResp.reason);
+    dbg.contracts_count = contractsAll.length;
+    dbg.prices_keys = Object.keys(pricesByMkt).length;
+    dbg.phase = "batched";
 
     const contractsByMkt = new Map();
     for (const c of contractsAll) {
@@ -1517,6 +1548,9 @@ async function listSmarketsMlbMarkets() {
             books_present: ["smarkets"],
         }));
     }
+    dbg.out_count = out.length;
+    dbg.phase = "done";
+    Object.defineProperty(out, "_dbg", { value: dbg, enumerable: false });
     return out;
 }
 
