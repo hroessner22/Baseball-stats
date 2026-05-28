@@ -632,13 +632,21 @@ export async function listAllMlbMarkets(env) {
 
 
 // Markets that apply to one specific game — matched by team tricode
-// (either pair direction) and optionally a start-time window.
+// (either pair direction) plus, for game-specific markets only, a
+// start-time window.
 //
-// For game-day markets (Kalshi KXMLBGAME, Odds API), home/away tricodes
-// are populated so a strict tricode match works. For futures (World
-// Series, MVP), home_tricode/away_tricode are null — those don't bind
-// to a specific game and won't appear in per-game filters; they belong
-// in the season-long sidebar dashboard.
+// Game-specific markets (moneyline, spread, total) MUST have a
+// start_time within 48 hours of this game. Otherwise we'd surface
+// stale Polymarket events from earlier in the series.
+//
+// Futures / season-long props (World Series odds, season wins,
+// MVP, etc.) ALWAYS apply to a team that's playing tonight. They
+// have arbitrary startDate (often the event-creation date), so we
+// skip the date check for those question types and match purely on
+// team involvement.
+//
+// Player props match by player name in the UI layer (per matchup-card
+// hydration), not here — this just bundles them with the team feed.
 export function filterMarketsForGame(markets, home, away, gameStartTime) {
     const homeTri = teamTricode(home);
     const awayTri = teamTricode(away);
@@ -647,13 +655,12 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
     const startMs = gameStartTime ? new Date(gameStartTime).getTime() : null;
     const TWO_DAYS = 48 * 3600 * 1000;
 
+    const TIME_BOUND_TYPES = new Set(["moneyline", "spread", "total", "team_prop"]);
+
     const matches = [];
     for (const m of markets) {
         const mHome = m.home_tricode;
         const mAway = m.away_tricode;
-        // Team-pair match — accept either order. If only one tricode is
-        // set on the market (some Manifold titles parse partially), we
-        // still accept when that one side matches OUR home or away.
         const both = mHome && mAway;
         const teamsMatch = both
             ? ((mHome === homeTri && mAway === awayTri) ||
@@ -662,7 +669,11 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
                (mAway && (mAway === homeTri || mAway === awayTri)));
         if (!teamsMatch) continue;
 
-        if (startMs && m.start_time) {
+        // Game-day markets are time-bound. Futures and player props
+        // aren't — a season-long "Will the Braves win the World
+        // Series?" applies tonight whether it was created in Feb or May.
+        if (TIME_BOUND_TYPES.has(m.question_type)
+            && startMs && m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - startMs);
             if (dt > TWO_DAYS) continue;
         }
