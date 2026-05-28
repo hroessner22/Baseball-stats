@@ -1301,6 +1301,73 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 8px 0;
 }
 
+/* Player-prop strip — chips showing every public market line on this
+   player for tonight's game. Sits between the projected line and the
+   recent-form sections so users see "model says X / market says Y"
+   without leaving the player profile. */
+.player-tonight .pt-prop-strip:not(:empty) {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: var(--radius);
+    background: rgba(148, 163, 184, 0.05);
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+}
+.player-tonight .pt-prop-strip-head {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+.player-tonight .pt-prop-strip-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.player-tonight .pt-prop-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border-radius: 99px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 600;
+    transition: border-color 80ms ease;
+}
+.player-tonight .pt-prop-chip:hover {
+    border-color: var(--accent-action);
+}
+.player-tonight .pt-prop-chip-side {
+    color: var(--text);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.player-tonight .pt-prop-chip-pct {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-action);
+    font-weight: 700;
+}
+.player-tonight .pt-prop-chip-src {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+}
+.player-tonight .pt-prop-strip-note {
+    margin-top: 6px;
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.04em;
+}
+
 /* Recent form — compact rows with the slash line. */
 .player-tonight .pt-recent-head,
 .player-tonight .pt-h2h-head {

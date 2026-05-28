@@ -903,9 +903,74 @@ async function refreshPlayer(mlbam) {
         const data = await profileRes.json();
         const tonight = tonightRes.ok ? await tonightRes.json() : null;
         playerView.innerHTML = renderPlayer(data, tonight);
+
+        // After paint, look up any prediction-market player props for
+        // this player tonight — when found, they attach to Player
+        // Tonight's stat tiles. Silent on miss (most players in most
+        // games have no public quotes). Runs after the main paint so
+        // the page isn't blocked on a markets fetch.
+        if (tonight?.available && tonight.game?.game_pk) {
+            const p = data.player || {};
+            const playerName = p.full_name
+                || `${p.first || p.name_first || ""} ${p.last || p.name_last || ""}`.trim();
+            hydratePlayerProps(tonight.game.game_pk, playerName, mlbam);
+        }
     } catch (e) {
         renderEmpty(playerView, "Couldn't load player.", `${e.message || e}`);
     }
+}
+
+// Pull the per-game markets bundle and filter player_prop rows whose
+// title contains every token of this player's name. Render each match
+// as a tappable chip next to the projected-line grid so the user sees
+// "model projects 1.1 HRs / market quotes 0.5+ HR at 22%" side by side.
+async function hydratePlayerProps(gamePk, playerName, mlbam) {
+    if (!playerName) return;
+    try {
+        const res = await fetch(`/api/game/${gamePk}/markets`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const slot = document.getElementById("pt-market-chips-slot");
+        if (!slot) return;  // Player Tonight not present (no projection)
+
+        const tokens = playerName.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+        const matches = (data?.markets?.player_prop || []).filter((m) => {
+            const title = (m.title || "").toLowerCase();
+            return tokens.every((t) => title.includes(t));
+        });
+
+        slot.innerHTML = renderPlayerPropChips(matches, playerName);
+    } catch { /* silent — no chips section if anything goes wrong */ }
+}
+
+function renderPlayerPropChips(matches, playerName) {
+    if (!matches.length) return "";
+    const chips = matches.map((m) => {
+        // Sort outcomes so the favored "yes/over" side shows first.
+        const outcomes = (m.outcomes || []).slice().sort((a, b) => (b.probability || 0) - (a.probability || 0));
+        const best = outcomes[0];
+        const pct  = best?.probability != null ? fmtPct(best.probability) : "—";
+        const side = (best?.name || "Yes").trim();
+        const src  = m.source || "?";
+        return `
+          <a class="pt-prop-chip" href="${m.url || "#"}" target="_blank" rel="noopener" title="${escapeHTMLAttr(m.title)}">
+            <span class="pt-prop-chip-side">${escapeHTML(side)}</span>
+            <span class="pt-prop-chip-pct">${pct}</span>
+            <span class="pt-prop-chip-src">${src}</span>
+          </a>
+        `;
+    }).join("");
+    return `
+      <div class="pt-prop-strip">
+        <div class="pt-prop-strip-head">
+          Markets quoting ${escapeHTML(playerName)} tonight
+        </div>
+        <div class="pt-prop-strip-chips">${chips}</div>
+        <div class="pt-prop-strip-note">
+          Open the Markets tab on the game for full per-market detail.
+        </div>
+      </div>
+    `;
 }
 
 // The 9 outcome buckets the engine speaks in. Used to compute slash
@@ -1104,6 +1169,7 @@ function renderTonightCard(player, t) {
           <div class="pt-tags">${lineupTag}${pitcherChip}</div>
         </header>
         ${expectedBlock}
+        <div id="pt-market-chips-slot"></div>
         ${recentBlock}
         ${h2hBlock}
         ${streakBlock}
