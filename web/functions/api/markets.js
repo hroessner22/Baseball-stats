@@ -1,18 +1,19 @@
 // /api/markets
 //
-// Single-call dump of every MLB prediction-market quote we can see —
-// across Polymarket, Kalshi, Manifold, and (when ODDS_API_KEY is set)
-// The Odds API. Used by the Board and dashboard surfaces that need a
-// firehose-style view of "what's bet on today."
+// Single-call dump of MLB prediction-market quotes across Polymarket,
+// Kalshi, Manifold, and (when ODDS_API_KEY is set) The Odds API.
 //
-// Per-game grouping happens on the client by walking `all` and using
-// extractTeamsFromTitle on each row, or by calling the per-game
-// endpoint at /api/game/{id}/markets which does the same thing
-// server-side and adds our model's WE for comparison.
+// Query params:
+//   scope=game_day  — only tonight's lines (moneyline/spread/total/
+//                     team_prop/player_prop with start_time in the
+//                     next 48h). Futures and series excluded. Used by
+//                     the sidebar Markets dashboard so the firehose
+//                     view stays focused on game-day lines.
+//   (no param)      — every market, used by team pages that filter
+//                     client-side for that team's futures.
 //
-// Cache: 30s. Single shared response for all viewers; sportsbook lines
-// move on the order of seconds-to-minutes, so 30s feels rapid without
-// hammering upstream APIs.
+// Cache: 30s. Lines move on the order of seconds-to-minutes; 30s feels
+// rapid without hammering upstreams.
 
 import {
     listAllMlbMarkets,
@@ -20,10 +21,15 @@ import {
 } from "./_markets.js";
 
 const CACHE_SECONDS = 30;
+const GAME_DAY_TYPES   = new Set(["moneyline", "spread", "total", "team_prop", "player_prop"]);
+const GAME_DAY_EXCLUDE = new Set(["future", "series"]);
+const GAME_DAY_WINDOW_MS = 48 * 3600 * 1000;
 
 
 export async function onRequest(context) {
     const env = context.env || {};
+    const url = new URL(context.request.url);
+    const scope = url.searchParams.get("scope");
 
     let markets;
     try {
@@ -35,6 +41,10 @@ export async function onRequest(context) {
         );
     }
 
+    if (scope === "game_day") {
+        markets = filterToGameDay(markets);
+    }
+
     const grouped = groupByQuestion(markets);
     const sources = Array.from(new Set(markets.map((m) => m.source))).sort();
     const counts  = sources.reduce((acc, s) => {
@@ -43,6 +53,7 @@ export async function onRequest(context) {
     }, {});
 
     return new Response(JSON.stringify({
+        scope: scope || "all",
         total: markets.length,
         sources,
         counts_by_source: counts,
@@ -58,5 +69,21 @@ export async function onRequest(context) {
             "cache-control": `public, max-age=${CACHE_SECONDS}`,
             "access-control-allow-origin": "*",
         },
+    });
+}
+
+// Same logic as filterMarketsForGame, but with `now` instead of a
+// specific game's start_time. Used for the dashboard's "tonight's
+// slate" view.
+function filterToGameDay(markets) {
+    const now = Date.now();
+    return markets.filter((m) => {
+        if (GAME_DAY_EXCLUDE.has(m.question_type)) return false;
+        if (!GAME_DAY_TYPES.has(m.question_type))   return false;
+        if (m.start_time) {
+            const dt = Math.abs(new Date(m.start_time).getTime() - now);
+            if (dt > GAME_DAY_WINDOW_MS) return false;
+        }
+        return true;
     });
 }

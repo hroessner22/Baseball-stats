@@ -849,7 +849,10 @@ function showMarketsDashboard() {
 
 async function refreshMarketsDashboard() {
     try {
-        const res = await fetch(`/api/markets`);
+        // ?scope=game_day excludes futures + series + season props.
+        // The firehose view is now tonight's-slate lines only — futures
+        // live on each team's page exclusively.
+        const res = await fetch(`/api/markets?scope=game_day`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (marketsView.hidden) return;  // user navigated away mid-flight
@@ -863,7 +866,7 @@ async function refreshMarketsDashboard() {
 }
 
 function renderMarketsDashboard(d) {
-    const totalLine = `${d.total} live quote${d.total === 1 ? "" : "s"} across ${d.sources.length} source${d.sources.length === 1 ? "" : "s"}`;
+    const totalLine = `${d.total} game-day quote${d.total === 1 ? "" : "s"} across ${d.sources.length} source${d.sources.length === 1 ? "" : "s"}`;
     const sourceChips = d.sources.map((s) =>
         `<span class="md-source-chip md-source-chip-${s}">${s} · ${d.counts_by_source[s]}</span>`
     ).join("");
@@ -871,7 +874,7 @@ function renderMarketsDashboard(d) {
     return `
       <div class="markets-dashboard">
         <header class="md-header">
-          <h2 class="md-title">Today's MLB markets</h2>
+          <h2 class="md-title">Tonight's MLB game-day lines</h2>
           <div class="md-sub">${totalLine}</div>
           <div class="md-sources">${sourceChips}</div>
           <div class="md-meta">
@@ -882,15 +885,20 @@ function renderMarketsDashboard(d) {
         ${renderMarketsSection("Moneyline (who wins)",     d.markets.moneyline)}
         ${renderMarketsSection("Spread (run line)",         d.markets.spread)}
         ${renderMarketsSection("Total runs (over/under)",   d.markets.total)}
-        ${renderMarketsSection("Player props",              d.markets.player_prop)}
+        ${renderMarketsSection("Player props · tonight",    d.markets.player_prop)}
         ${renderMarketsSection("Team props",                d.markets.team_prop)}
-        ${renderMarketsSection("Series outcomes",           d.markets.series)}
-        ${renderMarketsSection("Futures (season-long)",     d.markets.future)}
         ${renderMarketsSection("Other questions",           d.markets.other)}
 
+        <aside class="md-futures-pointer">
+          <strong>Looking for futures?</strong>
+          World Series odds, MVP, Cy Young, division titles, season win
+          totals — all live on each team's page. Open
+          <a href="#standings">standings</a> and click a team.
+        </aside>
+
         <footer class="md-footnote">
-          Quotes pulled live from Polymarket (gamma API), Kalshi (events
-          API), Manifold (binary markets)${d.sources.includes("odds_api") ? ", and The Odds API" : ""}.
+          Game-day lines only. Quotes pulled live from Polymarket (gamma
+          API), Kalshi (events API), Manifold (binary markets)${d.sources.includes("odds_api") ? ", and The Odds API" : ""}.
           For per-game side-by-side comparison vs our model, open a game
           and pick the Markets tab.
         </footer>
