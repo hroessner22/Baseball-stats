@@ -357,24 +357,43 @@ function slgFromPredicted(p) {
 
 function computeRecentForm(dailyRows) {
     if (!dailyRows || dailyRows.length === 0) return null;
-    const today = Date.now();
-    const day7  = today - 7  * 86400 * 1000;
-    const day15 = today - 15 * 86400 * 1000;
-    const day30 = today - 30 * 86400 * 1000;
-    const w7  = [];
-    const w15 = [];
-    const w30 = [];
+    // Group PAs by game_pk and order the games newest-first, then take
+    // the player's last 7 / 15 / 30 ACTUAL games. Calendar-day windows
+    // were undercounting players who had off-days, IL stints, rainouts,
+    // or platoon rest in the window — the directive says "last 30 games
+    // played and not less", so we count games not days.
+    const byGame = new Map();
     for (const r of dailyRows) {
-        const ts = Date.parse(r.game_date);
-        if (!Number.isFinite(ts)) continue;
-        if (ts >= day30) w30.push(r);
-        if (ts >= day15) w15.push(r);
-        if (ts >= day7)  w7.push(r);
+        if (r.game_pk == null) continue;
+        if (!byGame.has(r.game_pk)) {
+            byGame.set(r.game_pk, { ts: Date.parse(r.game_date) || 0, rows: [] });
+        }
+        byGame.get(r.game_pk).rows.push(r);
     }
+    const games = Array.from(byGame.entries())
+        .map(([game_pk, v]) => ({ game_pk, ts: v.ts, rows: v.rows }))
+        .sort((a, b) => b.ts - a.ts);
+
+    const flatten = (n) => games.slice(0, n).flatMap((g) => g.rows);
+    const w7  = flatten(7);
+    const w15 = flatten(15);
+    const w30 = flatten(30);
+
     return {
+        // Field names kept stable for the UI — these are the LAST N
+        // GAMES, not the last N days. Label copy on the UI side has
+        // been updated to match ("L7 games", "L15 games", "L30 games").
         last_7_days:  windowStats(w7),
         last_15_days: windowStats(w15),
         last_30_days: windowStats(w30),
+        // Diagnostic: actual counts achieved so the UI can warn when a
+        // player hasn't played 30 games yet.
+        actual_games: {
+            l7:  Math.min(games.length, 7),
+            l15: Math.min(games.length, 15),
+            l30: Math.min(games.length, 30),
+            total: games.length,
+        },
     };
 }
 

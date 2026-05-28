@@ -457,8 +457,11 @@ function tileBody(g) {
     }
     if (g.status === "Preview" && g.probables) {
         const fmt = (p) => p
-            ? `${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}`
-            : "TBA";
+            ? `<span class="tile-pitcher">
+                 ${inlineAvatar(p.id, { size: 28, class: "tile-photo", alt: p.name })}
+                 <span class="tile-pitcher-text">${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}</span>
+               </span>`
+            : `<span class="tile-pitcher-tba">TBA</span>`;
         return `
           <div class="tile-extra probables">
             ${fmt(g.probables.away)} <span class="dim">vs</span> ${fmt(g.probables.home)}
@@ -467,9 +470,15 @@ function tileBody(g) {
     }
     if (g.status === "Final" && g.decisions) {
         const parts = [];
-        if (g.decisions.winner) parts.push(`<span class="dim">W</span> ${lastName(g.decisions.winner)}`);
-        if (g.decisions.loser)  parts.push(`<span class="dim">L</span> ${lastName(g.decisions.loser)}`);
-        if (g.decisions.save)   parts.push(`<span class="dim">S</span> ${lastName(g.decisions.save)}`);
+        const seg = (tag, name, id) => `
+          <span class="tile-decision">
+            <span class="dim">${tag}</span>
+            ${inlineAvatar(id, { size: 24, class: "tile-photo", alt: name })}
+            ${lastName(name)}
+          </span>`;
+        if (g.decisions.winner) parts.push(seg("W", g.decisions.winner, g.decisions.winner_id));
+        if (g.decisions.loser)  parts.push(seg("L", g.decisions.loser,  g.decisions.loser_id));
+        if (g.decisions.save)   parts.push(seg("S", g.decisions.save,   g.decisions.save_id));
         if (parts.length === 0) return "";
         return `<div class="tile-extra decisions">${parts.join(" · ")}</div>`;
     }
@@ -485,13 +494,16 @@ function livePlayersHTML(detail) {
         if (!p) return "—";
         return `${p.name ? shortName(p.name) : "—"}${p[hand] ? " (" + p[hand] + ")" : ""}`;
     };
+    const photo = (p) => inlineAvatar(p?.id, { size: 28, class: "tile-live-photo", alt: p?.name });
     return `
       <div class="player-row ${dim}">
         <span class="label">at bat</span>
+        ${photo(detail?.batter)}
         <strong>${fmt(detail?.batter, "bats")}</strong>
       </div>
       <div class="player-row ${dim}">
         <span class="label">pitching</span>
+        ${photo(detail?.pitcher)}
         <strong>${fmt(detail?.pitcher, "throws")}</strong>
       </div>
     `;
@@ -530,23 +542,34 @@ function lastName(fullName) {
     return parts.length < 2 ? fullName : parts[parts.length - 1];
 }
 
-// MLB headshot URL helpers. Two CDN endpoints work:
-//   - midfield.mlbstatic.com/spots/N  → team-colored circular spot, ~7KB
-//                                       PNG, perfect for inline avatars
-//   - img.mlbstatic.com cloudinary    → larger crisp jpeg, used for hero
+// MLB headshot URL helpers. We were using midfield.mlbstatic.com's
+// /spots/N endpoint for inline avatars — it returns a tight face crop
+// that ALSO clips the top of the cap. Switched everything to the
+// cloudinary headshot path (img.mlbstatic.com .../headshot/67/current)
+// which serves the full head + shoulders + the whole hat. CSS handles
+// the circular display via `object-position: top` so the cap always
+// lands inside the frame even on circle crops.
 //
-// Both serve cleanly when the MLBAM id is unknown / null — they return
-// a generic silhouette. Cached at the edge by Cloudflare automatically.
+// Both serve cleanly when the MLBAM id is unknown / null — they fall
+// back to a generic silhouette. Cached at the edge by Cloudflare
+// automatically.
 function playerHeadshotSpot(mlbam, size = 60) {
     if (!mlbam) return null;
-    return `https://midfield.mlbstatic.com/v1/people/${mlbam}/spots/${size}`;
+    // Request 2× the display size so the image stays crisp on retina,
+    // and so the whole cap is in the source rather than a face-tight
+    // crop. f_auto picks WebP/AVIF when the client supports it.
+    const w = Math.max(120, size * 2);
+    return `https://img.mlbstatic.com/mlb-photos/image/upload/`
+         + `w_${w},q_auto:best,f_auto`
+         + `/v1/people/${mlbam}/headshot/67/current`;
 }
-// Tiny inline circular avatar used in tables / rows / strips. One
-// helper for the whole site so swap-outs (CDN change, fallback URL,
-// etc.) happen in one place.
+// Tiny inline avatar used in tables / rows / strips. One helper for
+// the whole site so swap-outs (CDN change, fallback URL, etc.) happen
+// in one place. Bumped baseline default size 24 → 32 so faces are
+// readable at glance distance.
 function inlineAvatar(mlbam, opts = {}) {
-    const size  = opts.size  || 24;
-    const cdnSize = opts.cdnSize || 60;
+    const size  = opts.size  || 32;
+    const cdnSize = opts.cdnSize || size;
     const cls   = opts.class || "ph-avatar";
     const label = opts.alt   || "";
     if (!mlbam) {
@@ -555,13 +578,13 @@ function inlineAvatar(mlbam, opts = {}) {
     return `<img class="${cls}" src="${playerHeadshotSpot(mlbam, cdnSize)}" alt="${escapeHTMLAttr(label)}" loading="lazy" width="${size}" height="${size}" onerror="this.style.opacity='0';"/>`;
 }
 function bsPhoto(mlbam) {
-    return inlineAvatar(mlbam, { size: 24, cdnSize: 60, class: "bs-photo" });
+    return inlineAvatar(mlbam, { size: 32, class: "bs-photo" });
 }
 
 function playerHeadshotLarge(mlbam, width = 240) {
     if (!mlbam) return null;
     return `https://img.mlbstatic.com/mlb-photos/image/upload/`
-         + `w_${width},q_auto:best/v1/people/${mlbam}/headshot/67/current`;
+         + `w_${width},q_auto:best,f_auto/v1/people/${mlbam}/headshot/67/current`;
 }
 
 // ── (the standalone Featured Game card was retired in favor of expanded
@@ -765,10 +788,15 @@ function renderLeaderCard(cat) {
 
 function renderLeaderRow(l) {
     const team = l.team ? `<span class="leader-team">${l.team}</span>` : "";
+    const photo = inlineAvatar(l.person_id, { size: 32, class: "leader-photo", alt: l.name });
+    const nameHtml = l.person_id
+        ? `<a class="leader-name player-link" href="#player/${l.person_id}">${shortName(l.name)}</a>`
+        : `<span class="leader-name">${shortName(l.name)}</span>`;
     return `
       <li class="leader-row" data-rank="${l.rank}">
         <span class="leader-rank">${l.rank}</span>
-        <span class="leader-name">${shortName(l.name)}</span>
+        ${photo}
+        ${nameHtml}
         ${team}
         <span class="leader-value">${l.value}</span>
       </li>
@@ -1098,14 +1126,21 @@ function renderTonightCard(player, t) {
       </div>
     `;
 
-    // Recent form — 7-day window is the headline; 30-day shown smaller.
+    // Recent form — last-7-games window is the headline; last-30-games
+    // shown smaller. The field names on the API side still read
+    // last_7_days / last_30_days for compatibility but the actual
+    // semantics are now "last N games played" (per /goal — see
+    // computeRecentForm() in api/player/[mlbam]/tonight.js).
     const rf7  = t.recent_form?.last_7_days;
     const rf30 = t.recent_form?.last_30_days;
+    const actuals = t.recent_form?.actual_games || {};
+    const tag = (label, actual) => actual && actual < label
+        ? `last ${actual} games` : `last ${label} games`;
     const recentBlock = (rf7 && rf7.pa > 0) ? `
       <div class="pt-recent">
         <div class="pt-recent-head">Recent form</div>
         <div class="pt-recent-row">
-          <span class="pt-recent-label">last 7 days</span>
+          <span class="pt-recent-label">${tag(7, actuals.l7)}</span>
           <span class="pt-recent-line">
             <strong>${rf7.h}-for-${rf7.ab}</strong>
             · ${rf7.avg}/${rf7.obp}/${rf7.slg}
@@ -1114,7 +1149,7 @@ function renderTonightCard(player, t) {
         </div>
         ${(rf30 && rf30.pa > 0) ? `
           <div class="pt-recent-row pt-recent-dim">
-            <span class="pt-recent-label">last 30 days</span>
+            <span class="pt-recent-label">${tag(30, actuals.l30)}</span>
             <span class="pt-recent-line">
               <strong>${rf30.h}-for-${rf30.ab}</strong>
               · ${rf30.avg}/${rf30.obp}/${rf30.slg}
@@ -1157,7 +1192,7 @@ function renderTonightCard(player, t) {
         : "";
     const pitcherChip = opPit
         ? `<span class="pt-tag pt-tag-pitcher">
-             ${inlineAvatar(opPit.id, { size: 24, cdnSize: 60, class: "pt-tag-photo", alt: opPit.name })}
+             ${inlineAvatar(opPit.id, { size: 36, class: "pt-tag-photo", alt: opPit.name })}
              <span class="pt-tag-text">vs <a class="player-link" href="#player/${opPit.id}">${opPit.name}</a>${opPit.throws ? " (" + opPit.throws + "HP)" : ""}</span>
            </span>`
         : "";
@@ -1897,7 +1932,7 @@ function renderWpaBand(batter, pitcher, season) {
             const wpaStr = (l.wpa >= 0 ? "+" : "") + l.wpa.toFixed(2);
             const cls = l.wpa >= 0 ? "wpa-pos" : "wpa-neg";
             const photo = l.player_mlbam
-                ? `<img class="wpa-photo" src="${playerHeadshotSpot(l.player_mlbam, 60)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/>`
+                ? `<img class="wpa-photo" src="${playerHeadshotSpot(l.player_mlbam, 72)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/>`
                 : `<span class="wpa-photo wpa-photo-empty" aria-hidden="true"></span>`;
             return `
               <li class="wpa-row">
@@ -1952,7 +1987,7 @@ function renderCandidate(c) {
         <span class="cand-stat-label">${s.label}</span>
       </div>
     `).join("");
-    const photo = inlineAvatar(c.person_id, { size: 28, cdnSize: 60, class: "cand-photo", alt: c.name });
+    const photo = inlineAvatar(c.person_id, { size: 40, class: "cand-photo", alt: c.name });
     const nameNode = c.person_id
         ? `<a class="cand-name player-link" href="#player/${c.person_id}">${shortName(c.name)}</a>`
         : `<span class="cand-name">${shortName(c.name)}</span>`;
@@ -2184,11 +2219,11 @@ function renderPABlock(play, prediction) {
         <header class="pa-head">
           <span class="pa-inning">${inn}</span>
           <span class="pa-matchup">
-            <a class="pa-avatar-link" href="#player/${play.batter.id}" aria-label="${escapeHTMLAttr(play.batter.name)}">${inlineAvatar(play.batter.id, { size: 32, cdnSize: 60, class: "pa-avatar", alt: play.batter.name })}</a>
+            <a class="pa-avatar-link" href="#player/${play.batter.id}" aria-label="${escapeHTMLAttr(play.batter.name)}">${inlineAvatar(play.batter.id, { size: 48, class: "pa-avatar", alt: play.batter.name })}</a>
             <a class="player-link" href="#player/${play.batter.id}"><strong>${shortName(play.batter.name)}</strong></a>
             <span class="dim">(${play.batter.hand}HB)</span>
             <span class="dim"> vs </span>
-            <a class="pa-avatar-link" href="#player/${play.pitcher.id}" aria-label="${escapeHTMLAttr(play.pitcher.name)}">${inlineAvatar(play.pitcher.id, { size: 32, cdnSize: 60, class: "pa-avatar", alt: play.pitcher.name })}</a>
+            <a class="pa-avatar-link" href="#player/${play.pitcher.id}" aria-label="${escapeHTMLAttr(play.pitcher.name)}">${inlineAvatar(play.pitcher.id, { size: 48, class: "pa-avatar", alt: play.pitcher.name })}</a>
             <a class="player-link" href="#player/${play.pitcher.id}"><strong>${shortName(play.pitcher.name)}</strong></a>
             <span class="dim">(${play.pitcher.hand}HP)</span>
           </span>
@@ -2407,7 +2442,7 @@ function renderThisInning(g) {
         // for walks, etc.).
         const outcomeCls = paOutcomeClass(p.eventType);
         const outcomeLabel = shortEventLabel(p.event || p.eventType || "—");
-        const avatar = inlineAvatar(p.batter_id, { size: 22, cdnSize: 60, class: "ti-photo", alt: p.batter });
+        const avatar = inlineAvatar(p.batter_id, { size: 30, class: "ti-photo", alt: p.batter });
         const batterLink = p.batter_id
             ? `<a class="player-link" href="#player/${p.batter_id}">${shortName(p.batter)}</a>`
             : shortName(p.batter || "—");
@@ -2423,7 +2458,7 @@ function renderThisInning(g) {
     const currentRow = g.batter
         ? `<div class="ti-row ti-now">
               <span class="ti-outcome ti-now-chip">NOW</span>
-              ${inlineAvatar(g.batter.id, { size: 22, cdnSize: 60, class: "ti-photo", alt: g.batter.name })}
+              ${inlineAvatar(g.batter.id, { size: 30, class: "ti-photo", alt: g.batter.name })}
               <span class="ti-batter">${shortName(g.batter.name)}</span>
               <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
            </div>`
@@ -2510,7 +2545,7 @@ function matchupRow(label, name, hand, mlbam) {
         : `<strong>${name}</strong>`;
     const headshot = mlbam
         ? `<a href="#player/${mlbam}" class="pr-avatar" aria-label="${name} profile">
-              <img src="${playerHeadshotSpot(mlbam, 60)}" alt=""
+              <img src="${playerHeadshotSpot(mlbam, 96)}" alt=""
                    loading="lazy" onerror="this.style.opacity='0';"/>
            </a>`
         : `<span class="pr-avatar pr-avatar-empty" aria-hidden="true"></span>`;
@@ -2922,32 +2957,106 @@ async function hydrateMarketConsensusPill(gameId) {
 // moneyline market exists yet (most non-primetime games).
 function renderMarketConsensusPill(data) {
     if (!data || !data.available || !data.market_count) return "";
+
+    const home = data.teams?.home?.abbr || "HOME";
     const cons = data.consensus?.home_win;
     const ours = data.our_we_home;
-    if (cons == null || ours == null) return "";
-    const home = data.teams?.home?.abbr || "HOME";
-    const edge = ours - cons;
-    const dir  = Math.abs(edge) < 0.02 ? "match"
-               : edge > 0 ? "we_higher" : "market_higher";
-    const verdict = dir === "match"
-        ? `model and market agree`
-        : dir === "we_higher"
-            ? `we're +${(edge * 100).toFixed(1)}pp on ${home}`
-            : `market's +${(-edge * 100).toFixed(1)}pp on ${home}`;
-    const cls = `mc-pill mc-pill-${dir}`;
+
+    // Headline row: moneyline-style "home win" probability — our model
+    // vs cross-source market consensus. Hidden when no moneyline market
+    // exists (we still show supplementary chips below if those markets
+    // exist on their own).
+    let headline = "";
+    if (cons != null && ours != null) {
+        const edge = ours - cons;
+        const dir  = Math.abs(edge) < 0.02 ? "match"
+                   : edge > 0 ? "we_higher" : "market_higher";
+        const verdict = dir === "match"
+            ? `model and market agree`
+            : dir === "we_higher"
+                ? `we're +${(edge * 100).toFixed(1)}pp on ${home}`
+                : `market's +${(-edge * 100).toFixed(1)}pp on ${home}`;
+        headline = `
+          <div class="mc-pill-row">
+            <div class="mc-pill-num"><div class="mc-pill-num-val">${fmtPct(ours)}</div><div class="mc-pill-num-key">our model</div></div>
+            <div class="mc-pill-vs">vs</div>
+            <div class="mc-pill-num"><div class="mc-pill-num-val">${fmtPct(cons)}</div><div class="mc-pill-num-key">market (${data.sources_present.length} src)</div></div>
+          </div>
+          <div class="mc-pill-verdict mc-pill-verdict-${dir}">${verdict}</div>
+        `;
+    }
+
+    // Supplementary chips: total runs O/U + run-line spread when those
+    // markets exist. Pulls the highest-volume / highest-liquidity quote
+    // from each section as the "headline" line.
+    const totalChip  = renderTotalRunsChip(data.markets?.total);
+    const spreadChip = renderSpreadChip(data.markets?.spread, home);
+    const extras = (totalChip || spreadChip) ? `
+      <div class="mc-pill-extras">
+        ${totalChip || ""}
+        ${spreadChip || ""}
+      </div>
+    ` : "";
+
+    // Hide entirely if BOTH headline and extras are empty.
+    if (!headline && !extras) return "";
+
     return `
-      <div class="${cls}">
+      <div class="mc-pill">
         <div class="mc-pill-head">
-          <span class="mc-pill-label">Market consensus</span>
+          <span class="mc-pill-label">Market lines</span>
           <a class="mc-pill-link" href="#" data-mc-open-markets="1">Open all lines →</a>
         </div>
-        <div class="mc-pill-row">
-          <div class="mc-pill-num"><div class="mc-pill-num-val">${fmtPct(ours)}</div><div class="mc-pill-num-key">our model</div></div>
-          <div class="mc-pill-vs">vs</div>
-          <div class="mc-pill-num"><div class="mc-pill-num-val">${fmtPct(cons)}</div><div class="mc-pill-num-key">market (${data.sources_present.length} src)</div></div>
-        </div>
-        <div class="mc-pill-verdict">${verdict}</div>
+        ${headline}
+        ${extras}
       </div>
+    `;
+}
+
+// Pull the best total-runs market and surface as a chip:
+// "TOTAL · over 8.5 @ 56% · 3 sources"
+function renderTotalRunsChip(totals) {
+    if (!totals || !totals.length) return "";
+    // Best market = highest liquidity, ties broken by most outcomes.
+    const sorted = totals.slice().sort((a, b) =>
+        (b.liquidity_usd || 0) - (a.liquidity_usd || 0)
+    );
+    const m = sorted[0];
+    if (!m) return "";
+    const overOut = (m.outcomes || []).find((o) => /over/i.test(o.name)) || m.outcomes?.[0];
+    if (!overOut) return "";
+    const thresholdMatch = (m.title || "").match(/(\d+(?:\.\d+)?)/);
+    const threshold = thresholdMatch ? thresholdMatch[1] : "";
+    return `
+      <a class="mc-line-chip mc-line-chip-total" href="#" data-mc-open-markets="1" title="${escapeHTMLAttr(m.title)}">
+        <span class="mc-line-key">TOTAL</span>
+        <span class="mc-line-val">over ${threshold || "?"}</span>
+        <span class="mc-line-pct">${fmtPct(overOut.probability)}</span>
+        <span class="mc-line-src">${m.source}</span>
+      </a>
+    `;
+}
+
+// Pull the best run-line spread market and surface as a chip:
+// "SPREAD · SF -1.5 @ 38% · polymarket"
+function renderSpreadChip(spreads, homeAbbr) {
+    if (!spreads || !spreads.length) return "";
+    const sorted = spreads.slice().sort((a, b) =>
+        (b.liquidity_usd || 0) - (a.liquidity_usd || 0)
+    );
+    const m = sorted[0];
+    if (!m) return "";
+    const out = (m.outcomes || []).find((o) =>
+        (o.name || "").toLowerCase().includes(homeAbbr.toLowerCase())
+    ) || m.outcomes?.[0];
+    if (!out) return "";
+    return `
+      <a class="mc-line-chip mc-line-chip-spread" href="#" data-mc-open-markets="1" title="${escapeHTMLAttr(m.title)}">
+        <span class="mc-line-key">SPREAD</span>
+        <span class="mc-line-val">${escapeHTML(out.name || "")}</span>
+        <span class="mc-line-pct">${fmtPct(out.probability)}</span>
+        <span class="mc-line-src">${m.source}</span>
+      </a>
     `;
 }
 
@@ -3189,6 +3298,10 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor, balls, st
         slot.innerHTML = html;
         cachedMatchupSlot = html;
         cachedMatchupKey = key;
+        // After paint, look up player-prop markets for both sides and
+        // surface them as chips under the outcome distribution. Silent
+        // on no-match.
+        hydrateMatchupPropChips(requestedFor, m.batter?.name, m.pitcher?.name);
     } catch (e) {
         // silently absent — the page works without the matchup card
     }
@@ -3260,7 +3373,11 @@ function renderForecastWE(d, game) {
                        : "";
         const roleTag = roleHint ? `<span class="fwe-role">${roleHint}</span>` : "";
         const we = p.we_at_exit !== null ? `${Math.round(p.we_at_exit * 100)}%` : "—";
-        return `<span class="fwe-pitcher" title="${p.pa_count} PAs simulated · ${homeAbbr} WP at exit ${we}">${lastName(p.name)}${roleTag}</span>`;
+        const photo = inlineAvatar(p.id || p.mlbam, { size: 26, class: "fwe-photo", alt: p.name });
+        const nameNode = (p.id || p.mlbam)
+            ? `<a class="fwe-name player-link" href="#player/${p.id || p.mlbam}">${lastName(p.name)}</a>`
+            : `<span class="fwe-name">${lastName(p.name)}</span>`;
+        return `<span class="fwe-pitcher" title="${p.pa_count} PAs simulated · ${homeAbbr} WP at exit ${we}">${photo}${nameNode}${roleTag}</span>`;
     }).join("<span class=\"fwe-arrow\">→</span>");
 
     return `
@@ -3678,13 +3795,13 @@ function showTraceTooltip(marker) {
     // without reading.
     const batterHtml = data.batter
         ? (data.batter_id
-            ? `<a class="tt-link tt-link-with-photo" href="#player/${data.batter_id}">${inlineAvatar(data.batter_id, { size: 18, cdnSize: 60, class: "tt-photo", alt: data.batter })}${shortName(data.batter)}</a>`
-            : `<span class="tt-link-with-photo">${inlineAvatar(null, { size: 18, class: "tt-photo" })}${shortName(data.batter)}</span>`)
+            ? `<a class="tt-link tt-link-with-photo" href="#player/${data.batter_id}">${inlineAvatar(data.batter_id, { size: 26, class: "tt-photo", alt: data.batter })}${shortName(data.batter)}</a>`
+            : `<span class="tt-link-with-photo">${inlineAvatar(null, { size: 26, class: "tt-photo" })}${shortName(data.batter)}</span>`)
         : "";
     const pitcherHtml = data.pitcher
         ? (data.pitcher_id
-            ? `<a class="tt-link tt-link-with-photo" href="#player/${data.pitcher_id}">${inlineAvatar(data.pitcher_id, { size: 18, cdnSize: 60, class: "tt-photo", alt: data.pitcher })}${shortName(data.pitcher)}</a>`
-            : `<span class="tt-link-with-photo">${inlineAvatar(null, { size: 18, class: "tt-photo" })}${shortName(data.pitcher)}</span>`)
+            ? `<a class="tt-link tt-link-with-photo" href="#player/${data.pitcher_id}">${inlineAvatar(data.pitcher_id, { size: 26, class: "tt-photo", alt: data.pitcher })}${shortName(data.pitcher)}</a>`
+            : `<span class="tt-link-with-photo">${inlineAvatar(null, { size: 26, class: "tt-photo" })}${shortName(data.pitcher)}</span>`)
         : "";
     const playersLine = (batterHtml && pitcherHtml)
         ? `<div class="tt-players">${batterHtml} vs ${pitcherHtml}</div>`
@@ -3925,10 +4042,10 @@ function renderMatchupCard(m) {
     return `
       <div class="card matchup-card">
         <div class="subject">
-          <a class="mc-avatar" href="#player/${m.batter.mlbam}" aria-label="${m.batter.name}"><img src="${playerHeadshotSpot(m.batter.mlbam, 90)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/></a>
+          <a class="mc-avatar" href="#player/${m.batter.mlbam}" aria-label="${m.batter.name}"><img src="${playerHeadshotSpot(m.batter.mlbam, 120)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/></a>
           <a class="player-link" href="#player/${m.batter.mlbam}">${m.batter.name}</a> (${m.batter.bats}HB)
           <span class="mc-vs">vs</span>
-          <a class="mc-avatar" href="#player/${m.pitcher.mlbam}" aria-label="${m.pitcher.name}"><img src="${playerHeadshotSpot(m.pitcher.mlbam, 90)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/></a>
+          <a class="mc-avatar" href="#player/${m.pitcher.mlbam}" aria-label="${m.pitcher.name}"><img src="${playerHeadshotSpot(m.pitcher.mlbam, 120)}" alt="" loading="lazy" onerror="this.style.opacity='0';"/></a>
           <a class="player-link" href="#player/${m.pitcher.mlbam}">${m.pitcher.name}</a> (${m.pitcher.throws}HP)
         </div>
         ${(batterForm || pitcherForm) ? `<div class="form-strip">${batterForm}${pitcherForm}</div>` : ""}
@@ -3945,6 +4062,68 @@ function renderMatchupCard(m) {
         </div>
         ${liveLine}
         ${recentForm}
+        <div id="matchup-prop-chips-slot"></div>
+      </div>
+    `;
+}
+
+// Pull the per-game markets bundle and surface player props for the
+// current batter + pitcher right under the matchup card's outcome
+// distribution. Silent on miss. Shares the 20s edge cache with the
+// Markets tab + Live View consensus pill.
+async function hydrateMatchupPropChips(gameId, batterName, pitcherName) {
+    if (!gameId || (!batterName && !pitcherName)) return;
+    try {
+        const res = await fetch(`/api/game/${gameId}/markets`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const slot = document.getElementById("matchup-prop-chips-slot");
+        if (!slot) return;
+        const all = data?.markets?.player_prop || [];
+        const filterFor = (name) => {
+            if (!name) return [];
+            const toks = name.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+            return all.filter((m) => {
+                const title = (m.title || "").toLowerCase();
+                return toks.every((t) => title.includes(t));
+            });
+        };
+        const batterMatches  = filterFor(batterName);
+        const pitcherMatches = filterFor(pitcherName);
+        slot.innerHTML = renderMatchupPropStrips(batterName, batterMatches, pitcherName, pitcherMatches);
+    } catch { /* silent */ }
+}
+
+function renderMatchupPropStrips(batterName, batterMatches, pitcherName, pitcherMatches) {
+    const strip = (label, matches) => {
+        if (!matches || !matches.length) return "";
+        const chips = matches.slice(0, 6).map((m) => {
+            const outcomes = (m.outcomes || []).slice().sort((a, b) => (b.probability || 0) - (a.probability || 0));
+            const best = outcomes[0];
+            const pct = best?.probability != null ? fmtPct(best.probability) : "—";
+            return `
+              <a class="mc-prop-chip" href="${m.url || "#"}" target="_blank" rel="noopener" title="${escapeHTMLAttr(m.title)}">
+                <span class="mc-prop-chip-side">${escapeHTML((best?.name || "").trim())}</span>
+                <span class="mc-prop-chip-pct">${pct}</span>
+                <span class="mc-prop-chip-src">${m.source || "?"}</span>
+              </a>
+            `;
+        }).join("");
+        return `
+          <div class="mc-prop-strip-row">
+            <div class="mc-prop-strip-label">${escapeHTML(label)} props</div>
+            <div class="mc-prop-strip-chips">${chips}</div>
+          </div>
+        `;
+    };
+    const batter  = strip(batterName,  batterMatches);
+    const pitcher = strip(pitcherName, pitcherMatches);
+    if (!batter && !pitcher) return "";
+    return `
+      <div class="mc-prop-strip">
+        <div class="mc-prop-strip-head">Market lines on this matchup</div>
+        ${batter}
+        ${pitcher}
       </div>
     `;
 }

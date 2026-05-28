@@ -260,13 +260,25 @@ function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInnin
     const namedById = (id) => {
         const p = players[`ID${id}`];
         if (!p) return null;
-        const g = (p.stats || {}).pitching || {};
+        const g  = (p.stats || {}).pitching || {};
+        const ss = (p.seasonStats || {}).pitching || {};
+        // Season role indicators. gamesStarted vs games tells us whether
+        // this arm is a starter (large GS), a swingman (some GS + some
+        // relief), or a true reliever (GS == 0 or very small).
+        const gamesStarted = Number(ss.gamesStarted || 0);
+        const gamesPlayed  = Number(ss.gamesPlayed  || 0);
         return {
             mlbam:    id,
             name:     p.person?.fullName || "",
             throws:   p.pitchHand?.code || null,
             pitches_thrown:   g.pitchesThrown || 0,
             innings_pitched:  g.inningsPitched || "0.0",
+            // Carried so the filter below can drop starters from the
+            // relief pool — the user complained that scheduled starters
+            // were showing up as "future relievers" in the chain.
+            season_gs:      gamesStarted,
+            season_games:   gamesPlayed,
+            is_starter:     isLikelyStarter(gamesStarted, gamesPlayed),
             role:     null,  // assigned below
         };
     };
@@ -274,13 +286,16 @@ function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInnin
     const currentPitcher = namedById(currentPitcherMlbam);
     if (!currentPitcher) return [];
 
-    // Bullpen arms NOT already used today. Used pitchers usually won't
-    // re-enter a game; exclude them from the future sequence.
+    // Bullpen arms NOT already used today AND not season-long starters.
+    // Two filters: (1) excludes anyone who's already pitched today (most
+    // won't re-enter); (2) excludes scheduled starters/SP4/SP5 types who
+    // happen to be on the active roster but aren't real relievers.
     const usedSet = new Set(usedIds.map(String));
     const availableBullpen = bullpenIds
         .filter((id) => !usedSet.has(String(id)))
         .map(namedById)
-        .filter(Boolean);
+        .filter(Boolean)
+        .filter((p) => !p.is_starter);
 
     // Conventional MLB roster ordering — the closer is at the END of
     // the bullpen list (it's how teams list 9th-inning specialists).
@@ -315,6 +330,27 @@ function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInnin
     }
 
     return sequence;
+}
+
+// Heuristic: is this arm a season-long starter, not a real reliever?
+// Three cases qualify:
+//   1. They've started ≥ 5 games — that's a rotation arm; the random
+//      bullpen-list rookie up for a spot start doesn't qualify.
+//   2. They've started > 60% of their appearances — swingman whose
+//      primary role is starter (eats long-relief and spot-starts).
+//   3. They've started anything AND their total appearances are small
+//      enough that they're clearly a starter (e.g. 3 GS / 3 G — a
+//      called-up SP whose only appearances are starts).
+// Used to drop these arms from the projected relief sequence so the
+// chain shows actual relievers instead of guys who'd never pitch in
+// the 7th-8th-9th unless the game is a blowout.
+function isLikelyStarter(gamesStarted, gamesPlayed) {
+    if (!gamesStarted) return false;                      // pure RP
+    if (gamesStarted >= 5) return true;                   // rotation arm
+    if (gamesPlayed === 0) return false;                  // safety
+    if (gamesStarted / gamesPlayed > 0.6) return true;    // primarily SP
+    if (gamesPlayed <= 4 && gamesStarted >= 2) return true; // small-sample SP
+    return false;
 }
 
 

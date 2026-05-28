@@ -186,8 +186,8 @@ function buildTile(g, handBy) {
         const hp = g.teams?.home?.probablePitcher;
         if (ap || hp) {
             probables = {
-                away: ap ? { name: ap.fullName, throws: handBy[ap.id] || null } : null,
-                home: hp ? { name: hp.fullName, throws: handBy[hp.id] || null } : null,
+                away: ap ? { id: ap.id, name: ap.fullName, throws: handBy[ap.id] || null } : null,
+                home: hp ? { id: hp.id, name: hp.fullName, throws: handBy[hp.id] || null } : null,
             };
         }
     }
@@ -197,9 +197,13 @@ function buildTile(g, handBy) {
     let decisions = null;
     if (status === "Final" && g.decisions) {
         decisions = {
-            winner: g.decisions.winner?.fullName || null,
-            loser:  g.decisions.loser?.fullName  || null,
-            save:   g.decisions.save?.fullName   || null,
+            // Names AND ids — UI attaches a headshot to each pitcher.
+            winner:    g.decisions.winner?.fullName || null,
+            winner_id: g.decisions.winner?.id      || null,
+            loser:     g.decisions.loser?.fullName  || null,
+            loser_id:  g.decisions.loser?.id       || null,
+            save:      g.decisions.save?.fullName   || null,
+            save_id:   g.decisions.save?.id        || null,
         };
     }
 
