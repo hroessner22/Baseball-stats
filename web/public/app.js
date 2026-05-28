@@ -4069,18 +4069,14 @@ function fmtPct(p) {
     return `${(p * 100).toFixed(1)}%`;
 }
 
-// Label for the Savant column. When the MLB winProbability endpoint
-// returns data we say so; otherwise the user sees the fallback source
-// so they know it's an estimate not a real-time MLB number.
-function savantLabel(source) {
-    if (source === "mlb_official")     return "Savant / MLB official";
-    if (source === "pregame_baseline") return "Savant baseline (pregame)";
-    if (source === "state_table")      return "Savant baseline (state)";
-    return "Savant / MLB";
+// Label for the Savant column. Pulled directly from Savant's gf
+// endpoint — same number their website displays. We do NOT fabricate
+// a value when they don't have one (user's explicit ask).
+function savantLabel(_source) {
+    return "Baseball Savant";
 }
 function savantSourceNote(source) {
-    if (source === "pregame_baseline") return "from team records (MLB not live yet)";
-    if (source === "state_table")      return "historical lookup (MLB feed lag)";
+    if (!source) return "Savant hasn't published yet";
     return "";
 }
 
