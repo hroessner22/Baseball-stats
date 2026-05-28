@@ -39,6 +39,7 @@ const POLY_GAMMA = "https://gamma-api.polymarket.com";
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 const MANIFOLD_BASE = "https://api.manifold.markets/v0";
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
+const BOVADA_BASE   = "https://www.bovada.lv/services/sports/event/coupon/events/A/description";
 
 const UA = "DIAMOND:CONTEXT/0.1 (+https://diamond-context.pages.dev)";
 
@@ -848,12 +849,179 @@ export async function listAllMlbMarkets(env) {
         listKalshiMlbMarkets(),
         listManifoldMlbMarkets(),
         listOddsApiMlbMarkets(env || {}),
+        listBovadaMlbMarkets(),
     ]);
     const out = [];
     for (const r of results) {
         if (r.status === "fulfilled") out.push(...r.value);
     }
     return out;
+}
+
+
+// ── Bovada adapter (free public sportsbook API, real American odds) ──
+//
+// Bovada serves their full MLB market book at a public no-auth JSON
+// endpoint. ~16 games/day, each with 100+ markets when we hit the
+// per-event URL: moneyline + run line + total + alternate lines +
+// pitcher props (win, K's O/U) + player props (HR, 2+ HR, first HR,
+// hit / total bases per player) + 1st-inning markets + game props +
+// run markets + correct score. Real American + decimal + fractional
+// odds on every row. THE free real-odds source.
+//
+// Two-step fetch:
+//   1. League endpoint: list events (gives game lines but no props).
+//   2. Per-event slug URL: full 126-market book per game.
+//
+// Cache 5 min — Bovada updates throughout the day; this keeps the page
+// feeling live without hammering them.
+
+async function listBovadaMlbMarkets() {
+    let leagueData;
+    try {
+        const leagueUrl = `${BOVADA_BASE}/baseball/mlb?marketFilterId=def&preMatchOnly=true&lang=en`;
+        leagueData = await fetchJson(leagueUrl, { cacheTtl: 300 });
+    } catch {
+        return [];
+    }
+    const root = Array.isArray(leagueData) ? leagueData[0] : leagueData;
+    const events = root?.events || [];
+    if (!events.length) return [];
+
+    // Per-event fan-out to get the full market book (props included).
+    // ~16 games × 1 request each = 16 fetches, all edge-cached for 5 min.
+    const fullEvents = await Promise.allSettled(
+        events.map((ev) => {
+            const link = (ev.link || "").replace(/^\//, "");
+            if (!link) return Promise.resolve(null);
+            const url = `${BOVADA_BASE}/${link}?lang=en`;
+            return fetchJson(url, { cacheTtl: 300 })
+                .then((d) => (Array.isArray(d) ? d[0] : d)?.events?.[0] || null)
+                .catch(() => null);
+        })
+    );
+
+    const out = [];
+    for (const r of fullEvents) {
+        if (r.status !== "fulfilled" || !r.value) continue;
+        out.push(...parseBovadaEvent(r.value));
+    }
+    return out;
+}
+
+function parseBovadaEvent(ev) {
+    const home = (ev.competitors || []).find((c) => c.home);
+    const away = (ev.competitors || []).find((c) => !c.home);
+    const homeTri = teamTricode(home?.name);
+    const awayTri = teamTricode(away?.name);
+    const startMs = ev.startTime || null;
+    const startIso = startMs ? new Date(startMs).toISOString() : null;
+    const eventTitle = ev.description || `${away?.name} @ ${home?.name}`;
+    const slug = (ev.link || "").replace(/^\//, "");
+    const eventUrl = slug ? `https://www.bovada.lv/${slug}` : "https://www.bovada.lv/baseball/mlb";
+
+    const out = [];
+    for (const g of ev.displayGroups || []) {
+        for (const m of g.markets || []) {
+            const market = bovadaMarketToFlat(m, g, ev, {
+                homeTri, awayTri, home, away,
+                startIso, eventTitle, eventUrl,
+            });
+            if (market) out.push(market);
+        }
+    }
+    return out;
+}
+
+function bovadaMarketToFlat(m, group, ev, ctx) {
+    const desc = m.description || "";
+    const descKey = m.descriptionKey || "";
+    const groupDesc = group.description || "";
+
+    // Question type by group + descriptionKey.
+    // Game Lines / Alternate Lines: descriptionKey distinguishes ML/spread/total.
+    let qType = "other";
+    if (groupDesc === "Game Lines" || groupDesc === "Alternate Lines") {
+        if (/head to head|moneyline/i.test(descKey + " " + desc)) qType = "moneyline";
+        else if (/runline|run line|spread|asian/i.test(descKey + " " + desc)) qType = "spread";
+        else if (/total|over\/under/i.test(descKey + " " + desc)) qType = "total";
+        else qType = "other";
+    } else if (groupDesc === "Pitcher Props" || groupDesc === "Player Props") {
+        qType = "player_prop";
+    } else if (groupDesc === "Game Props" || groupDesc === "1st Inning" || groupDesc === "Run Markets") {
+        qType = "team_prop";
+    }
+
+    const outcomes = (m.outcomes || []).map((o) => {
+        const p = o.price || {};
+        const american = p.american;
+        const decimal  = Number(p.decimal) || null;
+        // American → implied probability (raw, includes vig)
+        let probability = null;
+        if (decimal && decimal > 1) {
+            probability = 1 / decimal;
+        }
+        const handicap = p.handicap != null ? Number(p.handicap) : null;
+        const sideName = o.description || o.type || "";
+        // For totals (Over/Under) the handicap is the line, attach it to the name.
+        const display = handicap != null && /over|under/i.test(sideName)
+            ? `${sideName} ${handicap}`
+            : (handicap != null && qType === "spread"
+                ? `${sideName} ${handicap > 0 ? "+" : ""}${handicap}`
+                : sideName);
+        return {
+            id: `bovada:${m.id}:${o.id}`,
+            name: display,
+            probability: probability,           // raw vig-inclusive prob from decimal
+            price: decimal,
+            american: american,                 // e.g. "+130" or "-150"
+            point: handicap,
+            book_count: 1,
+            book_lines: [{ book: "Bovada", american, price: decimal, probability }],
+        };
+    });
+
+    // De-vig: for two-outcome markets, normalize so probabilities sum to 1
+    // (subtracts the bookmaker's hold). Pure for consensus comparison.
+    if (outcomes.length === 2
+        && outcomes[0].probability != null
+        && outcomes[1].probability != null) {
+        const sum = outcomes[0].probability + outcomes[1].probability;
+        if (sum > 0) {
+            for (const o of outcomes) {
+                o.probability_devig = o.probability / sum;
+            }
+        }
+    }
+
+    if (!outcomes.length) return null;
+
+    const titleBase = ctx.eventTitle;
+    const title = `${titleBase} · ${desc || descKey || groupDesc}`;
+
+    return flat({
+        id: `bovada:${ev.id}:${m.id}`,
+        source: "bovada",
+        title,
+        description: m.notes || "",
+        url: ctx.eventUrl,
+        outcomes,
+        question_type: qType,
+        status: "open",
+        start_time: ctx.startIso,
+        close_time: null,
+        home_tricode: ctx.homeTri,
+        away_tricode: ctx.awayTri,
+        home_team: ctx.home?.name || null,
+        away_team: ctx.away?.name || null,
+        liquidity_usd: undefined,
+        volume_usd: undefined,
+        raw_market_id: m.id,
+        source_event_id: ev.id,
+        source_event_title: titleBase,
+        book_count: 1,
+        books_present: ["bovada"],
+    });
 }
 
 
@@ -888,9 +1056,7 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
 
     const matches = [];
     for (const m of markets) {
-        // Hard-exclude futures and series — those belong on team page.
         if (PER_GAME_EXCLUDE.has(m.question_type)) continue;
-        // Only the allow-listed game-day types proceed.
         if (!PER_GAME_TYPES.has(m.question_type)) continue;
 
         const mHome = m.home_tricode;
@@ -903,16 +1069,48 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
                (mAway && (mAway === homeTri || mAway === awayTri)));
         if (!teamsMatch) continue;
 
-        // Time-bound to tonight's first pitch. Markets with no
-        // start_time fall through to the team filter only, which is
-        // fine for player props from sources that don't expose times.
         if (startMs && m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - startMs);
             if (dt > PER_GAME_WINDOW_MS) continue;
         }
         matches.push(m);
     }
-    return matches;
+    return dedupeByQuestionAndSource(matches, startMs);
+}
+
+// User-visible dedup: per (question_type × source), keep only the
+// market with start_time closest to the game's first pitch. Kalshi
+// has multiple KXMLBGAME tickers for the same team-pair (doubleheaders,
+// next-day series games), each getting its own moneyline row — the
+// per-game tab was showing the SAME-looking card 3 times in a row.
+// Player props are intentionally NOT folded because each prop is a
+// different question (HRs vs hits vs K's by player), so each row is
+// distinct already.
+function dedupeByQuestionAndSource(markets, anchorMs) {
+    const NON_DEDUPED = new Set(["player_prop", "team_prop"]);
+    const byKey = new Map();   // `${question}|${source}` → best market
+    const out = [];
+    for (const m of markets) {
+        if (NON_DEDUPED.has(m.question_type)) { out.push(m); continue; }
+        const key = `${m.question_type}|${m.source}`;
+        const prev = byKey.get(key);
+        if (!prev) { byKey.set(key, m); continue; }
+        // Pick the closer-to-anchor of the two by start_time. Ties (no
+        // start_time on either) break toward the one with more priced
+        // outcomes — usually the one with real trading.
+        const dNew = anchorMs && m.start_time
+            ? Math.abs(new Date(m.start_time).getTime() - anchorMs) : Infinity;
+        const dPrev = anchorMs && prev.start_time
+            ? Math.abs(new Date(prev.start_time).getTime() - anchorMs) : Infinity;
+        if (dNew < dPrev) { byKey.set(key, m); continue; }
+        if (dNew === dPrev) {
+            const newPriced  = (m.outcomes || []).filter((o) => o.probability != null).length;
+            const prevPriced = (prev.outcomes || []).filter((o) => o.probability != null).length;
+            if (newPriced > prevPriced) byKey.set(key, m);
+        }
+    }
+    for (const m of byKey.values()) out.push(m);
+    return out;
 }
 
 
