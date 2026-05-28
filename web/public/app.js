@@ -985,7 +985,18 @@ function filterMarketsByPlayerName(markets, playerName) {
 }
 
 function renderPlayerPropChips(matches, playerName) {
-    if (!matches.length) return "";
+    if (!matches.length) {
+        return `
+          <div class="pt-prop-strip pt-prop-strip-empty">
+            <div class="pt-prop-strip-head">Markets on ${escapeHTML(playerName)} tonight</div>
+            <div class="pt-prop-strip-empty-msg">
+              No public quotes (Polymarket / Kalshi / Manifold) found
+              for ${escapeHTML(playerName)} this season. Most non-marquee
+              players don't have season prop markets.
+            </div>
+          </div>
+        `;
+    }
     const chips = matches.map((m) => {
         // Sort outcomes so the favored "yes/over" side shows first.
         const outcomes = (m.outcomes || []).slice().sort((a, b) => (b.probability || 0) - (a.probability || 0));

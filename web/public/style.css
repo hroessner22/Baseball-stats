@@ -1426,6 +1426,11 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-faint);
     letter-spacing: 0.04em;
 }
+.player-tonight .pt-prop-strip-empty-msg {
+    font-size: 11px;
+    color: var(--text-faint);
+    line-height: 1.5;
+}
 
 /* Recent form — compact rows with the slash line. */
 .player-tonight .pt-recent-head,
