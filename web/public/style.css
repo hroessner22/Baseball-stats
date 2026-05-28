@@ -4470,36 +4470,55 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     flex-direction: column;
     gap: 6px;
 }
+/* Sportsbook-style outcome row. Two columns: NAME | (AMERICAN ODDS +
+   IMPLIED %). Mirrors ESPN BET, DraftKings, FanDuel conventions —
+   American odds are the universal price, implied probability is the
+   comparison number against our model. */
 .market-outcome {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 80px 50px;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
+    gap: 12px;
+    font-size: 13px;
+    padding: 6px 0;
 }
+.market-outcome + .market-outcome {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+.market-outcome.is-favorite .mo-name { font-weight: 700; }
+.market-outcome.is-favorite .mo-american { color: var(--accent-win); }
 .mo-name {
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-.mo-bar {
-    height: 6px;
-    background: var(--bg);
-    border-radius: 3px;
-    overflow: hidden;
-}
-.mo-bar-fill {
-    height: 100%;
-    background: var(--accent-action);
-    border-radius: 3px;
-    transition: width 200ms ease;
-}
-.mo-pct {
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-    color: var(--text);
     font-weight: 600;
+}
+.mo-odds-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    min-width: 70px;
+}
+.mo-american {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+}
+.mo-implied {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+.mo-no-quote {
+    color: var(--text-faint);
+    font-size: 10px;
+    font-style: italic;
 }
 .market-meta {
     font-size: 10px;

@@ -74,10 +74,12 @@ export async function onRequest(context) {
 
 // Same logic as filterMarketsForGame, but with `now` instead of a
 // specific game's start_time. Used for the dashboard's "tonight's
-// slate" view.
+// slate" view. Also dedupes by (team_pair × question × source) so
+// the same team-pair moneyline doesn't appear 3x (doubleheaders,
+// next-day series).
 function filterToGameDay(markets) {
     const now = Date.now();
-    return markets.filter((m) => {
+    const kept = markets.filter((m) => {
         if (GAME_DAY_EXCLUDE.has(m.question_type)) return false;
         if (!GAME_DAY_TYPES.has(m.question_type))   return false;
         if (m.start_time) {
@@ -86,4 +88,36 @@ function filterToGameDay(markets) {
         }
         return true;
     });
+    return dedupeByGameKey(kept);
+}
+
+// Same idea as the SDK's per-game dedup, but here we anchor on each
+// individual market's own start_time (the closest one to NOW wins per
+// team-pair × question × source). Used for the dashboard firehose.
+function dedupeByGameKey(markets) {
+    const NON_DEDUPED = new Set(["player_prop", "team_prop"]);
+    const now = Date.now();
+    const byKey = new Map();
+    const out = [];
+    for (const m of markets) {
+        if (NON_DEDUPED.has(m.question_type)) { out.push(m); continue; }
+        // Game key = sorted team pair, so order swaps don't make dupes.
+        const tri = [m.home_tricode, m.away_tricode].filter(Boolean).sort().join("v");
+        if (!tri) { out.push(m); continue; }
+        const key = `${tri}|${m.question_type}|${m.source}`;
+        const prev = byKey.get(key);
+        if (!prev) { byKey.set(key, m); continue; }
+        const dNew = m.start_time
+            ? Math.abs(new Date(m.start_time).getTime() - now) : Infinity;
+        const dPrev = prev.start_time
+            ? Math.abs(new Date(prev.start_time).getTime() - now) : Infinity;
+        if (dNew < dPrev) { byKey.set(key, m); continue; }
+        if (dNew === dPrev) {
+            const newPriced  = (m.outcomes || []).filter((o) => o.probability != null).length;
+            const prevPriced = (prev.outcomes || []).filter((o) => o.probability != null).length;
+            if (newPriced > prevPriced) byKey.set(key, m);
+        }
+    }
+    for (const m of byKey.values()) out.push(m);
+    return out;
 }

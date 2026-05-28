@@ -3576,32 +3576,61 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge) {
 
 function renderMarketsSection(title, rows) {
     if (!rows || !rows.length) return "";
+    // renderMarketRow returns "" for unpriced moneyline/spread/total
+    // rows — filter those out before deciding whether to render the
+    // section header at all.
+    const rendered = rows.map(renderMarketRow).filter((s) => s.length > 0);
+    if (!rendered.length) return "";
     return `
       <section class="markets-section">
         <h3 class="markets-section-title">${title}</h3>
         <div class="markets-rows">
-          ${rows.map(renderMarketRow).join("")}
+          ${rendered.join("")}
         </div>
       </section>
     `;
 }
 
+// Sportsbook-style market row.
+// Researched conventions (ESPN BET, DraftKings, FanDuel, Action Network):
+//   - Each outcome on its own line: NAME on left, ODDS on right
+//   - American odds (-150, +130) — what every US sportsbook displays
+//   - Implied probability shown below the American odds (the part that
+//     actually compares to our model)
+//   - Favored side highlighted (negative American odds)
+//   - No fake progress bars when there's no quoted price
+//   - Compact: source chip + market description + outcome rows + meta
 function renderMarketRow(market) {
     const src = market.source || "?";
     const status = market.status || "open";
     const statusBadge = status !== "open"
         ? `<span class="market-status market-status-${status}">${status}</span>`
         : "";
+
+    // Hide market entirely if no outcome has a price — empty Kalshi
+    // moneyline rows ("BOS —, ATL —") are noise on the game tab.
+    const hasAnyPrice = (market.outcomes || []).some((o) => o.probability != null);
+    if (!hasAnyPrice && (market.question_type === "moneyline"
+        || market.question_type === "spread"
+        || market.question_type === "total")) {
+        return "";
+    }
+
     const liquidity = market.liquidity_usd != null
         ? ` · $${formatCompactNumber(market.liquidity_usd)} liq`
         : "";
     const volume = market.volume_usd != null
         ? ` · $${formatCompactNumber(market.volume_usd)} vol`
         : "";
-    // Outcomes: sort by probability desc so the favored side is first.
+    const bookCount = market.book_count && market.book_count > 1
+        ? ` · consensus of ${market.book_count} books`
+        : "";
+
+    // Sort favored first (highest implied prob OR most-negative American).
     const outcomes = (market.outcomes || [])
         .slice()
         .sort((a, b) => (b.probability || 0) - (a.probability || 0));
+
     return `
       <article class="market-row" data-source="${src}">
         <header class="market-row-head">
@@ -3614,22 +3643,52 @@ function renderMarketRow(market) {
         <div class="market-outcomes">
           ${outcomes.map(renderMarketOutcome).join("")}
         </div>
-        <div class="market-meta">${src}${liquidity}${volume}</div>
+        <div class="market-meta">${src}${liquidity}${volume}${bookCount}</div>
       </article>
     `;
 }
 
 function renderMarketOutcome(outcome) {
     const prob = outcome.probability;
-    const pct  = prob != null ? fmtPct(prob) : "—";
-    const bar  = prob != null ? Math.round(prob * 100) : 0;
+    const probDevig = outcome.probability_devig;       // optional: vig-removed
+    const american  = outcome.american;                // optional: "+130", "-150"
+    const pct = probDevig != null ? fmtPct(probDevig)
+              : prob != null    ? fmtPct(prob)
+              : null;
+    const oddsText = american != null
+        ? formatAmericanOdds(american)
+        : (outcome.price != null ? `${Number(outcome.price).toFixed(2)} dec` : null);
+    const isFav = isAmericanFavorite(american) || (prob != null && prob >= 0.5);
+    const noQuote = pct == null && oddsText == null;
     return `
-      <div class="market-outcome">
+      <div class="market-outcome ${isFav ? "is-favorite" : ""}">
         <div class="mo-name">${escapeHTML(outcome.name || "")}</div>
-        <div class="mo-bar"><div class="mo-bar-fill" style="width:${bar}%"></div></div>
-        <div class="mo-pct">${pct}</div>
+        ${noQuote
+            ? `<div class="mo-no-quote">no quote yet</div>`
+            : `
+              <div class="mo-odds-block">
+                ${oddsText != null ? `<span class="mo-american">${oddsText}</span>` : ""}
+                ${pct != null ? `<span class="mo-implied">${pct}</span>` : ""}
+              </div>
+            `}
       </div>
     `;
+}
+
+function formatAmericanOdds(american) {
+    if (american == null) return "";
+    // Bovada returns strings like "+130" / "-150". Pass through cleanly.
+    const s = String(american).trim();
+    if (/^[+-]\d+$/.test(s)) return s;
+    const n = Number(s);
+    if (!Number.isFinite(n)) return s;
+    return n > 0 ? `+${n}` : `${n}`;
+}
+
+function isAmericanFavorite(american) {
+    if (american == null) return false;
+    const s = String(american).trim();
+    return s.startsWith("-");
 }
 
 function fmtPct(p) {
