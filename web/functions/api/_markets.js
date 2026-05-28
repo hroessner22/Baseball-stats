@@ -288,25 +288,24 @@ async function listKalshiMlbMarkets() {
             // skip this series, keep going with the rest
         }
     }
-    // Also fetch team season-wins futures (KXMLBWINS-{TRI}). One series
-    // per team — list them all in one parallel fan-out.
+    // Team season-wins futures (KXMLBWINS-{TRI}) — previously one
+    // series per team × 30 teams = 30 subrequests. Cloudflare caps
+    // total subrequests per request at 50 on the free tier, and we
+    // already burn ~17 each on Bovada and Pinnacle plus Smarkets's
+    // batch. Hold to the league-aggregate series KXMLBWINS only when
+    // it returns batched data — single request covers all teams.
     try {
-        const winsSeries = MLB_TEAMS.map(([tri]) => `KXMLBWINS-${tri}`);
-        const results = await Promise.allSettled(
-            winsSeries.map((s) => fetchJson(
-                `${KALSHI_BASE}/markets?series_ticker=${s}&status=open&limit=50`,
-                { cacheTtl: 60 },
-            ))
+        const data = await fetchJson(
+            `${KALSHI_BASE}/markets?series_ticker=KXMLBWINS&status=open&limit=400`,
+            { cacheTtl: 60 },
         );
-        for (let i = 0; i < results.length; i++) {
-            if (results[i].status !== "fulfilled") continue;
-            const tri = MLB_TEAMS[i][0];
-            const mkts = results[i].value?.markets || [];
-            for (const m of mkts) {
-                const market = toKalshiSingleMarket(m, "future_team");
-                market.home_tricode = tri;
-                all.push(market);
-            }
+        const mkts = data?.markets || [];
+        for (const m of mkts) {
+            const market = toKalshiSingleMarket(m, "future_team");
+            // Try to extract tricode from ticker tail: KXMLBWINS-XXX-...
+            const triMatch = (m.ticker || "").match(/^KXMLBWINS-([A-Z]{2,4})/);
+            if (triMatch) market.home_tricode = triMatch[1];
+            all.push(market);
         }
     } catch { /* season wins are bonus, no fatal */ }
     return all.filter(Boolean);
