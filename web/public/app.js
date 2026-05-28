@@ -3677,7 +3677,7 @@ function renderMarkets(d) {
 
     return `
       <div class="markets">
-        ${renderMarketsHeader(d, ourWe, consHome, consAway, edge, savant)}
+        ${renderMarketsHeader(d, ourWe, consHome, consAway, edge, savant, d.savant_we_source)}
         <nav class="markets-tabs" role="tablist">
           <button class="markets-tab ${tab === "game_lines" ? "active" : ""}" data-mtab="game_lines" role="tab">
             Game lines <span class="markets-tab-count">${nGl}</span>
@@ -3877,7 +3877,7 @@ document.addEventListener("input", (e) => {
     }, 180);
 });
 
-function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe) {
+function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe, savantSource) {
     const home = d.teams.home.abbr;
     const away = d.teams.away.abbr;
     const oursPct  = ourWe   != null ? fmtPct(ourWe)   : "—";
@@ -3920,8 +3920,11 @@ function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe) {
             ${consAway != null ? `<div class="markets-side-sub">${away}: ${fmtPct(consAway)}</div>` : ""}
           </div>
           <div class="markets-side" data-key="savant">
-            <div class="markets-side-label">Savant / MLB official</div>
+            <div class="markets-side-label">${savantLabel(savantSource)}</div>
             <div class="markets-side-num">${savantPct}</div>
+            ${savantSource && savantSource !== "mlb_official"
+              ? `<div class="markets-side-sub">${savantSourceNote(savantSource)}</div>`
+              : ""}
           </div>
         </div>
         <div class="markets-edge edge-${spreadClass}">${verdict}</div>
@@ -4064,6 +4067,21 @@ function isAmericanFavorite(american) {
 function fmtPct(p) {
     if (p == null) return "—";
     return `${(p * 100).toFixed(1)}%`;
+}
+
+// Label for the Savant column. When the MLB winProbability endpoint
+// returns data we say so; otherwise the user sees the fallback source
+// so they know it's an estimate not a real-time MLB number.
+function savantLabel(source) {
+    if (source === "mlb_official")     return "Savant / MLB official";
+    if (source === "pregame_baseline") return "Savant baseline (pregame)";
+    if (source === "state_table")      return "Savant baseline (state)";
+    return "Savant / MLB";
+}
+function savantSourceNote(source) {
+    if (source === "pregame_baseline") return "from team records (MLB not live yet)";
+    if (source === "state_table")      return "historical lookup (MLB feed lag)";
+    return "";
 }
 
 function formatCompactNumber(n) {

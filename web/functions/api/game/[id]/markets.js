@@ -64,10 +64,14 @@ export async function onRequest(context) {
     //    homeTeamWinProbability (returned as a percent number, 0-100).
     let allMarkets;
     let savantHomeWe = null;
+    let savantSource = null;
     try {
         const [marketsRes, savantRes] = await Promise.allSettled([
             listAllMlbMarkets(env),
-            fetchSavantWe(gameId),
+            // Pass game so the Savant fallback chain (pregame baseline →
+            // state-based table) has the inputs when MLB hasn't populated
+            // the winProbability endpoint yet.
+            fetchSavantWe(gameId, game),
         ]);
         if (marketsRes.status === "fulfilled") {
             allMarkets = marketsRes.value;
@@ -75,7 +79,8 @@ export async function onRequest(context) {
             throw marketsRes.reason;
         }
         if (savantRes.status === "fulfilled") {
-            savantHomeWe = savantRes.value;
+            savantHomeWe = savantRes.value?.value;
+            savantSource = savantRes.value?.source;
         }
     } catch (e) {
         return jsonError(502, `markets fetch failed: ${e.message || e}`);
@@ -126,10 +131,13 @@ export async function onRequest(context) {
                 ? game.win_expectancy - homeWinConsensus
                 : null,
         },
-        // Baseball Savant's live home win-probability (same source as
-        // their game page). Null when the game has no winProbability
-        // feed yet (preview state).
-        savant_we_home: savantHomeWe,
+        // Baseball Savant's live home win-probability. ALWAYS populated:
+        //   mlb_official      = winProbability endpoint (Savant's source)
+        //   pregame_baseline  = team-strength Pythagorean (pregame fallback)
+        //   state_table       = our historical state-based WE (live fallback)
+        // The UI uses savant_we_source to label which one is in play.
+        savant_we_home:    savantHomeWe,
+        savant_we_source:  savantSource,
         // Per-question-type buckets, each a list of Market rows.
         markets: grouped,
         // Flat array of all markets for clients that want their own grouping.
@@ -153,22 +161,49 @@ function jsonResponse(body, maxAge) {
 // pages. The endpoint returns one entry per at-bat with
 // homeTeamWinProbability + awayTeamWinProbability as percent numbers
 // (0-100). We read the last entry (current state) and convert to a
-// 0-1 float to match our home_win/away_win convention. Cached at the
-// edge for 30s — this is the live signal we want to tick alongside
-// market prices.
-async function fetchSavantWe(gameId) {
-    const url = `https://statsapi.mlb.com/api/v1/game/${gameId}/winProbability`;
-    const res = await fetch(url, {
-        headers: { "User-Agent": "DIAMOND:CONTEXT/0.1" },
-        cf: { cacheTtl: 30, cacheEverything: true },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!Array.isArray(data) || !data.length) return null;
-    const last = data[data.length - 1];
-    const homePct = Number(last?.homeTeamWinProbability);
-    if (!Number.isFinite(homePct)) return null;
-    return homePct / 100;
+// 0-1 float to match our home_win/away_win convention.
+//
+// FALLBACKS so every game ALWAYS has a Savant-style number:
+//   1. winProbability endpoint (best — MLB official, what Savant shows)
+//   2. game.team_adjustment.pregame_we (pregame estimate from team
+//      strength + Pythagorean — defensible "Savant baseline" before
+//      first pitch when MLB has no plays to compute from)
+//   3. game.win_expectancy (our state-based table value — same kind of
+//      historical lookup Savant uses, just from Retrosheet)
+//
+// Returns the resolved number plus the source so the UI can label it.
+async function fetchSavantWe(gameId, gameDetail) {
+    // 1. Try MLB's official winProbability endpoint.
+    try {
+        const url = `https://statsapi.mlb.com/api/v1/game/${gameId}/winProbability`;
+        const res = await fetch(url, {
+            headers: { "User-Agent": "DIAMOND:CONTEXT/0.1" },
+            cf: { cacheTtl: 30, cacheEverything: true },
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length) {
+                const last = data[data.length - 1];
+                const homePct = Number(last?.homeTeamWinProbability);
+                if (Number.isFinite(homePct)) {
+                    return { value: homePct / 100, source: "mlb_official" };
+                }
+            }
+        }
+    } catch { /* fall through to baselines */ }
+
+    // 2. Pregame baseline from team strength (Pythagorean + season).
+    const pregame = Number(gameDetail?.team_adjustment?.pregame_we);
+    if (Number.isFinite(pregame) && (gameDetail?.status === "Preview" || gameDetail?.status === "Scheduled")) {
+        return { value: pregame, source: "pregame_baseline" };
+    }
+
+    // 3. State-based fallback (our model's pre-adjustment value).
+    const stateWe = Number(gameDetail?.win_expectancy);
+    if (Number.isFinite(stateWe)) {
+        return { value: stateWe, source: "state_table" };
+    }
+    return { value: null, source: null };
 }
 
 function jsonError(status, message) {
