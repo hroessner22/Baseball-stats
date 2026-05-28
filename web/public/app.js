@@ -849,16 +849,26 @@ function showMarketsDashboard() {
 
 async function refreshMarketsDashboard() {
     try {
-        // ?scope=game_day excludes futures + series + season props.
-        // The firehose view is now tonight's-slate lines only — futures
-        // live on each team's page exclusively.
-        const res = await fetch(`/api/markets?scope=game_day`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (marketsView.hidden) return;  // user navigated away mid-flight
+        // Two parallel fetches: today's game-day markets AND the day's
+        // schedule. The schedule gives us the game_pk → team-pair lookup
+        // so each dashboard card can link directly into its live tracker.
+        const [marketsRes, gamesRes] = await Promise.all([
+            fetch(`/api/markets?scope=game_day`),
+            fetch(`/api/games/today`),
+        ]);
+        if (!marketsRes.ok) throw new Error(`HTTP ${marketsRes.status}`);
+        const data = await marketsRes.json();
+        const games = gamesRes.ok ? await gamesRes.json() : null;
+        if (marketsView.hidden) return;
+        // Build tricode-pair → game_pk index so cards can deep-link.
+        const gameLookup = {};
+        for (const g of games?.games || []) {
+            const key = [g.home, g.away].filter(Boolean).sort().join("v");
+            if (key) gameLookup[key] = { pk: g.game_pk, status: g.status };
+        }
+        data._game_lookup = gameLookup;
         marketsView.innerHTML = renderMarketsDashboard(data);
     } catch (e) {
-        // First load only — if we already painted, keep showing it.
         if (!marketsView.querySelector(".markets-dashboard")) {
             renderEmpty(marketsView, "Couldn't load markets.", `${e.message || e}`);
         }
@@ -871,6 +881,40 @@ function renderMarketsDashboard(d) {
         `<span class="md-source-chip md-source-chip-${s}">${s} · ${d.counts_by_source[s]}</span>`
     ).join("");
 
+    // Group every market by the (sorted) team-pair so each MLB game
+    // gets its own card with that game's moneyline + spread + total
+    // + props all in one place — the DraftKings / FanDuel layout.
+    // Markets without a team-pair fall into an "unmatched" bucket
+    // shown separately at the bottom.
+    const all = d.all || [];
+    const games = new Map();   // gameKey → { home, away, start_time, markets: { moneyline, spread, total, ... } }
+    const unmatched = [];
+    for (const m of all) {
+        const tri = [m.home_tricode, m.away_tricode].filter(Boolean).sort().join("v");
+        if (!tri) { unmatched.push(m); continue; }
+        if (!games.has(tri)) {
+            games.set(tri, {
+                key: tri,
+                home: m.home_tricode,
+                away: m.away_tricode,
+                start_time: m.start_time,
+                markets: { moneyline: [], spread: [], total: [], player_prop: [], team_prop: [], other: [] },
+            });
+        }
+        const g = games.get(tri);
+        const bucket = g.markets[m.question_type] || g.markets.other;
+        bucket.push(m);
+        // Earliest start_time wins (Kalshi has no start, Bovada does).
+        if (m.start_time && (!g.start_time || new Date(m.start_time) < new Date(g.start_time))) {
+            g.start_time = m.start_time;
+        }
+    }
+    const gameList = Array.from(games.values()).sort((a, b) => {
+        const ta = a.start_time ? new Date(a.start_time).getTime() : Infinity;
+        const tb = b.start_time ? new Date(b.start_time).getTime() : Infinity;
+        return ta - tb;
+    });
+
     return `
       <div class="markets-dashboard">
         <header class="md-header">
@@ -878,16 +922,22 @@ function renderMarketsDashboard(d) {
           <div class="md-sub">${totalLine}</div>
           <div class="md-sources">${sourceChips}</div>
           <div class="md-meta">
-            Auto-refreshes every 20s · Pulled ${formatRelativeTime(d.fetched_at)}
+            Auto-refreshes every 10s · Pulled ${formatRelativeTime(d.fetched_at)}
           </div>
         </header>
 
-        ${renderMarketsSection("Moneyline (who wins)",     d.markets.moneyline)}
-        ${renderMarketsSection("Spread (run line)",         d.markets.spread)}
-        ${renderMarketsSection("Total runs (over/under)",   d.markets.total)}
-        ${renderMarketsSection("Player props · tonight",    d.markets.player_prop)}
-        ${renderMarketsSection("Team props",                d.markets.team_prop)}
-        ${renderMarketsSection("Other questions",           d.markets.other)}
+        <div class="md-games">
+          ${gameList.map((g) => renderMarketsDashboardGameCard(g, d._game_lookup || {})).join("")}
+        </div>
+
+        ${unmatched.length ? `
+          <section class="md-unmatched">
+            <h3 class="md-section-title">Other markets (no team match)</h3>
+            <div class="markets-rows">
+              ${unmatched.map(renderMarketRow).filter((s) => s.length > 0).join("")}
+            </div>
+          </section>
+        ` : ""}
 
         <aside class="md-futures-pointer">
           <strong>Looking for futures?</strong>
@@ -897,13 +947,113 @@ function renderMarketsDashboard(d) {
         </aside>
 
         <footer class="md-footnote">
-          Game-day lines only. Quotes pulled live from Polymarket (gamma
-          API), Kalshi (events API), Manifold (binary markets)${d.sources.includes("odds_api") ? ", and The Odds API" : ""}.
-          For per-game side-by-side comparison vs our model, open a game
-          and pick the Markets tab.
+          Game-day lines only. Quotes pulled live from Polymarket, Kalshi,
+          Manifold, and Bovada${d.sources.includes("odds_api") ? ", plus The Odds API" : ""}.
+          Click any game card to open the live tracker.
         </footer>
       </div>
     `;
+}
+
+// One card per MLB game on the dashboard. Layout matches sportsbook
+// convention (DK / FD / BetMGM): header with teams + start time, then
+// three columns side-by-side for Moneyline / Spread / Total. Props
+// (player + team) collapsed behind a count chip — click goes into
+// the live tracker where the per-game Markets tab has the full nav.
+function renderMarketsDashboardGameCard(g, lookup) {
+    const m = g.markets;
+    const home = g.home || "HOME";
+    const away = g.away || "AWAY";
+    const startLbl = g.start_time ? formatGameClockShort(g.start_time) : "";
+    const game = lookup[g.key] || null;
+    const href = game?.pk ? `#game/${game.pk}` : `#standings`;
+    const statusLbl = game?.status === "Live" ? "LIVE"
+                    : game?.status === "Final" ? "FINAL"
+                    : "";
+
+    const pickMain = (arr) => arr.find((x) => x.is_main_line) || arr[0] || null;
+    const mainMl    = pickMain(m.moneyline);
+    const mainSpread = pickMain(m.spread);
+    const mainTotal  = pickMain(m.total);
+
+    const nPp = (m.player_prop || []).length;
+    const nTp = (m.team_prop   || []).length;
+
+    return `
+      <a class="md-game-card ${statusLbl ? "md-game-card-" + statusLbl.toLowerCase() : ""}" href="${href}">
+        <header class="md-game-head">
+          <div class="md-game-teams">
+            <span class="md-game-away">${away}</span>
+            <span class="md-game-at">@</span>
+            <span class="md-game-home">${home}</span>
+          </div>
+          <div class="md-game-meta">
+            ${statusLbl ? `<span class="md-game-status md-game-status-${statusLbl.toLowerCase()}">${statusLbl}</span>` : ""}
+            ${startLbl ? `<span class="md-game-time">${startLbl}</span>` : ""}
+          </div>
+        </header>
+        <div class="md-game-lines">
+          <div class="md-game-col">
+            <div class="md-game-col-label">Moneyline</div>
+            ${renderMdMiniMarket(mainMl)}
+          </div>
+          <div class="md-game-col">
+            <div class="md-game-col-label">Run line</div>
+            ${renderMdMiniMarket(mainSpread)}
+          </div>
+          <div class="md-game-col">
+            <div class="md-game-col-label">Total</div>
+            ${renderMdMiniMarket(mainTotal)}
+          </div>
+        </div>
+        <footer class="md-game-foot">
+          ${nPp ? `<span class="md-game-chip">${nPp} player prop${nPp === 1 ? "" : "s"}</span>` : ""}
+          ${nTp ? `<span class="md-game-chip md-game-chip-dim">${nTp} team prop${nTp === 1 ? "" : "s"}</span>` : ""}
+          <span class="md-game-cta">View all markets →</span>
+        </footer>
+      </a>
+    `;
+}
+
+// Two-outcome mini-line inside a dashboard game card. Just the rows
+// for the favored + dog with American odds + implied %. No bar.
+function renderMdMiniMarket(market) {
+    if (!market) return `<div class="md-game-empty">—</div>`;
+    const outcomes = (market.outcomes || [])
+        .slice()
+        .sort((a, b) => (b.probability || 0) - (a.probability || 0));
+    if (!outcomes.some((o) => o.probability != null)) {
+        return `<div class="md-game-empty">no quote</div>`;
+    }
+    return outcomes.map((o) => {
+        const pct = o.probability_devig ?? o.probability;
+        const american = o.american;
+        const isFav = isAmericanFavorite(american) || (o.probability != null && o.probability >= 0.5);
+        return `
+          <div class="md-game-outcome ${isFav ? "is-fav" : ""}">
+            <span class="md-game-out-name">${escapeHTML(o.name || "")}</span>
+            <span class="md-game-out-odds">
+              ${american != null ? `<span class="md-game-out-am">${formatAmericanOdds(american)}</span>` : ""}
+              ${pct != null ? `<span class="md-game-out-pct">${fmtPct(pct)}</span>` : ""}
+            </span>
+          </div>
+        `;
+    }).join("");
+}
+
+// "7:35 PM ET" without the day part — the dashboard already implies
+// today's slate.
+function formatGameClockShort(iso) {
+    if (!iso) return "";
+    try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString("en-US", {
+            hour: "numeric", minute: "2-digit",
+            timeZone: "America/New_York",
+        }) + " ET";
+    } catch {
+        return "";
+    }
 }
 
 

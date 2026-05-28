@@ -4963,6 +4963,181 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     line-height: 1.5;
 }
 
+/* One card per MLB game on the dashboard. Sportsbook convention
+   (DK / FD / BetMGM): teams + start time at top, three columns
+   side-by-side for moneyline / spread / total, props chips at
+   the bottom. Grid of these fans out across the page. */
+.md-games {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 14px;
+}
+.md-game-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: border-color 80ms ease, transform 80ms ease;
+    text-decoration: none;
+    color: inherit;
+}
+.md-game-card:hover {
+    border-color: rgba(56, 189, 248, 0.4);
+    transform: translateY(-1px);
+}
+.md-game-card-live { border-color: rgba(239, 68, 68, 0.3); }
+.md-game-card-final { opacity: 0.7; }
+.md-game-status {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.md-game-status-live {
+    background: rgba(239, 68, 68, 0.18);
+    color: var(--accent-live);
+}
+.md-game-status-final {
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-dim);
+}
+.md-game-meta { display: flex; align-items: baseline; gap: 6px; }
+.md-game-cta {
+    margin-left: auto;
+    color: var(--accent-action);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.md-game-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+.md-game-teams {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+}
+.md-game-away, .md-game-home {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: var(--text);
+}
+.md-game-at {
+    color: var(--text-faint);
+    font-size: 12px;
+    font-weight: 600;
+}
+.md-game-time {
+    color: var(--text-dim);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.md-game-lines {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+}
+.md-game-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.md-game-col-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+}
+.md-game-outcome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    padding: 3px 0;
+}
+.md-game-outcome.is-fav .md-game-out-name { font-weight: 700; }
+.md-game-outcome.is-fav .md-game-out-am { color: var(--accent-win); }
+.md-game-out-name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 95px;
+}
+.md-game-out-odds {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0px;
+    flex-shrink: 0;
+}
+.md-game-out-am {
+    font-weight: 800;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+}
+.md-game-out-pct {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+.md-game-empty {
+    color: var(--text-faint);
+    font-size: 11px;
+    font-style: italic;
+    padding: 4px 0;
+}
+.md-game-foot {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.md-game-chip {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 99px;
+    background: rgba(56, 189, 248, 0.1);
+    color: var(--accent-action);
+    text-decoration: none;
+}
+.md-game-chip-dim {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-dim);
+}
+.md-unmatched {
+    margin-top: 8px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.md-section-title {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+
 /* Pointer card on the dashboard that explains where futures went —
    each team's page. Subtle dashed border so it reads as an aside, not
    a section heading. */
