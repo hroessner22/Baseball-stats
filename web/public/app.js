@@ -2827,6 +2827,33 @@ function fieldPane(g) {
             ? `<text class="runner-name" x="${x}" y="${y}" text-anchor="${anchor}">${shortName(g.runners[slot])}</text>`
             : "";
 
+    // Overlay labels on the SVG itself so the field is informative
+    // without needing the matchup rows below. Pitcher last name near
+    // the mound, batter last name at home plate. ESPN / MLB at-bat
+    // graphics convention.
+    const pitcherSurname = g.pitcher?.name ? lastName(g.pitcher.name) : "";
+    const batterSurname  = g.batter?.name  ? lastName(g.batter.name)  : "";
+    const isLive = g.status === "Live";
+    const stateBanner = !isLive
+        ? `<div class="field-state-banner ${g.status?.toLowerCase()}">
+             ${g.status === "Final"
+               ? `Final · ${g.teams?.away?.abbr} ${g.score?.away ?? "—"} – ${g.teams?.home?.abbr} ${g.score?.home ?? "—"}`
+               : g.status === "Preview" || g.status === "Scheduled"
+                 ? `First pitch ${formatGameTime(g.start_time)}`
+                 : (g.detail || g.status || "")}
+           </div>`
+        : "";
+
+    // Pitch count + outs chip in the top-right corner of the field
+    // — same compact summary you see in broadcast graphics.
+    const countChip = isLive && g.balls != null && g.strikes != null
+        ? `<g class="field-count-chip" transform="translate(420 60)">
+              <rect x="-50" y="-22" width="100" height="44" rx="8"/>
+              <text class="fcc-count" x="0" y="-2"  text-anchor="middle">${g.balls}-${g.strikes}</text>
+              <text class="fcc-outs"  x="0" y="14" text-anchor="middle">${g.outs ?? 0} out${g.outs === 1 ? "" : "s"}</text>
+           </g>`
+        : "";
+
     return `
       <div class="field-pane" style="--we-intensity:${intensity}">
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
@@ -2861,6 +2888,12 @@ function fieldPane(g) {
           <circle class="mound" cx="250" cy="355" r="22"/>
           <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
 
+          <!-- Pitcher overlay (broadcast-style: surname near the mound) -->
+          ${pitcherSurname
+              ? `<text class="field-pitcher-name" x="250" y="395" text-anchor="middle">${escapeHTML(pitcherSurname)}</text>
+                 <text class="field-pitcher-hand" x="250" y="408" text-anchor="middle">${g.pitcher?.throws ? `${g.pitcher.throws}HP` : ""}</text>`
+              : ""}
+
           <!-- Bases -->
           <polygon class="base home"
                    points="244,458 256,458 256,464 250,470 244,464"/>
@@ -2877,11 +2910,19 @@ function fieldPane(g) {
                   x="-7" y="-7" width="14" height="14"/>
           </g>
 
+          <!-- Batter overlay near home plate -->
+          ${batterSurname
+              ? `<text class="field-batter-name" x="250" y="492" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
+              : ""}
+
           <!-- Runner names (legible against grass via text stroke) -->
           ${runnerLabel("first",  412, 326, "start")}
           ${runnerLabel("second", 250, 166, "middle")}
           ${runnerLabel("third",  88,  326, "end")}
+
+          ${countChip}
         </svg>
+        ${stateBanner}
         ${situationStrip(g)}
         ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
         ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
