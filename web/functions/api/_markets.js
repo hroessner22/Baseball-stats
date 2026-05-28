@@ -98,6 +98,9 @@ export function teamTricode(input) {
 
 // Try to extract home/away tricode from a title string. Title formats
 // vary across sources but most use "X vs Y", "X @ Y", or "MLB: X vs Y".
+// Falls back to scanning the title for any mention of a team name —
+// returns just that one as `home` so single-team futures ("Will the
+// Braves win the World Series?") still bind to a team.
 export function extractTeamsFromTitle(title) {
     if (!title) return { home: null, away: null };
     const cleaned = title.replace(/^(MLB|NBA|NHL|NFL):\s*/i, "");
@@ -115,7 +118,34 @@ export function extractTeamsFromTitle(title) {
             away: teamTricode(vs[2].trim()),
         };
     }
-    return { home: null, away: null };
+    // Fallback: scan the title for ANY mention of an MLB team name or
+    // tricode. Bucket the first match as `home` and a second match as
+    // `away`. For single-team futures ("Will Boston win the AL East?")
+    // only home gets set, which is enough for the per-game filter to
+    // accept it on either side.
+    const found = findTricodesInText(cleaned);
+    return {
+        home: found[0] || null,
+        away: found[1] || null,
+    };
+}
+
+// Scan free-form text for every MLB team mention, deduped in
+// appearance order. Used as a fallback team extractor for titles that
+// don't follow a "X vs Y" pattern. Matches full team names and the
+// canonical tricode, but NOT the 2-letter abbreviation aliases (those
+// produce too many false positives in prose, e.g. "as" → OAK).
+function findTricodesInText(text) {
+    if (!text) return [];
+    const t = text.toLowerCase();
+    const seen = new Set();
+    const order = [];
+    for (const [tri, name] of MLB_TEAMS) {
+        if (t.includes(name.toLowerCase()) || t.includes(tri.toLowerCase())) {
+            if (!seen.has(tri)) { seen.add(tri); order.push(tri); }
+        }
+    }
+    return order;
 }
 
 
@@ -163,7 +193,6 @@ async function listPolymarketMlbMarkets() {
     for (const ev of events) {
         const evTitle = ev.title || "";
         const evSlug  = ev.slug || "";
-        const teams   = extractTeamsFromTitle(evTitle);
         const startMs = ev.startDate ? Date.parse(ev.startDate) : null;
         const endMs   = ev.endDate ? Date.parse(ev.endDate) : null;
         const evVol   = Number(ev.volume) || Number(ev.volume24hr) || undefined;
@@ -176,6 +205,19 @@ async function listPolymarketMlbMarkets() {
             if (!names.length) continue;
 
             const mTitle = m.question || evTitle;
+            // Extract team tricodes from BOTH the sub-market question
+            // (which usually names a specific team, e.g. "Will Braves
+            // win World Series?") AND the parent event title (which
+            // names both teams in per-game events, e.g. "ATL @ BOS").
+            // Take the sub-market's tricode when set, otherwise the
+            // event's. This is the difference between Polymarket WS
+            // futures showing up on every team vs. only on no team.
+            const subTeams = extractTeamsFromTitle(mTitle);
+            const evTeams  = extractTeamsFromTitle(evTitle);
+            const teams = {
+                home: subTeams.home || evTeams.home || null,
+                away: subTeams.away || evTeams.away || null,
+            };
             const qType  = classifyQuestion(mTitle, evTitle);
             const url    = m.slug || evSlug
                 ? `https://polymarket.com/event/${evSlug || m.slug}`
@@ -569,6 +611,14 @@ function classifyQuestion(text, eventText) {
     if (/total runs?\b|over\/under|o\/u|combined runs/.test(t))   return "total";
     if (/moneyline|who wins|winner\?|win[\s-]?probability|win this game|game winner/.test(t)) {
         return "moneyline";
+    }
+    // Bare "Team1 vs Team2" / "Team1 @ Team2" with both being MLB
+    // teams — Polymarket's per-game moneyline events have this as
+    // their title with no "winner?" keyword. We catch them by detecting
+    // the matchup pattern AND a two-outcome shape (caller can override).
+    if (/^[\w. ]+\s+(vs\.?|@)\s+[\w. ]+$/.test((text || "").trim())) {
+        const { home, away } = extractTeamsFromTitle(text || "");
+        if (home && away) return "moneyline";
     }
     // Series outcome (sweep, take series, win series).
     if (/series\b|sweep/.test(t))                                 return "series";
