@@ -948,27 +948,40 @@ async function refreshPlayer(mlbam) {
     }
 }
 
-// Pull the per-game markets bundle and filter player_prop rows whose
-// title contains every token of this player's name. Render each match
-// as a tappable chip next to the projected-line grid so the user sees
-// "model projects 1.1 HRs / market quotes 0.5+ HR at 22%" side by side.
+// Pull the FULL all-MLB markets bundle (not just game-tagged) and
+// filter player_prop rows by player name. Game-tagged player props
+// would miss most cases — Polymarket / Kalshi MLB player markets
+// usually carry only the player name in the title, not the team, so
+// they don't bind to a specific game by tricode. We match by name.
+// Silent on miss (most non-marquee players have no public quotes).
 async function hydratePlayerProps(gamePk, playerName, mlbam) {
     if (!playerName) return;
     try {
-        const res = await fetch(`/api/game/${gamePk}/markets`);
+        const res = await fetch(`/api/markets`);
         if (!res.ok) return;
         const data = await res.json();
         const slot = document.getElementById("pt-market-chips-slot");
         if (!slot) return;  // Player Tonight not present (no projection)
 
-        const tokens = playerName.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
-        const matches = (data?.markets?.player_prop || []).filter((m) => {
-            const title = (m.title || "").toLowerCase();
-            return tokens.every((t) => title.includes(t));
-        });
-
+        const allProps = (data?.markets?.player_prop || []);
+        const matches = filterMarketsByPlayerName(allProps, playerName);
         slot.innerHTML = renderPlayerPropChips(matches, playerName);
     } catch { /* silent — no chips section if anything goes wrong */ }
+}
+
+// Robust player-name filter — every token (last name and first name)
+// must be present in the market title, case-insensitive. Skips tokens
+// shorter than 3 chars (initials, "Jr", etc.) to keep matches tight.
+function filterMarketsByPlayerName(markets, playerName) {
+    const tokens = (playerName || "")
+        .toLowerCase()
+        .split(/[\s.]+/)
+        .filter((t) => t.length >= 3 && !["jr", "sr", "the"].includes(t));
+    if (!tokens.length) return [];
+    return (markets || []).filter((m) => {
+        const title = (m.title || "").toLowerCase();
+        return tokens.every((t) => title.includes(t));
+    });
 }
 
 function renderPlayerPropChips(matches, playerName) {
@@ -4144,29 +4157,22 @@ function renderMatchupCard(m) {
     `;
 }
 
-// Pull the per-game markets bundle and surface player props for the
-// current batter + pitcher right under the matchup card's outcome
-// distribution. Silent on miss. Shares the 20s edge cache with the
-// Markets tab + Live View consensus pill.
+// Pull the FULL all-MLB markets bundle (not just game-tagged) and
+// surface player props for the current batter + pitcher under the
+// matchup card's outcome distribution. Pulls from /api/markets
+// because player props mostly don't bind to game tricodes — they
+// live as season-long markets named by player only.
 async function hydrateMatchupPropChips(gameId, batterName, pitcherName) {
     if (!gameId || (!batterName && !pitcherName)) return;
     try {
-        const res = await fetch(`/api/game/${gameId}/markets`);
+        const res = await fetch(`/api/markets`);
         if (!res.ok) return;
         const data = await res.json();
         const slot = document.getElementById("matchup-prop-chips-slot");
         if (!slot) return;
         const all = data?.markets?.player_prop || [];
-        const filterFor = (name) => {
-            if (!name) return [];
-            const toks = name.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
-            return all.filter((m) => {
-                const title = (m.title || "").toLowerCase();
-                return toks.every((t) => title.includes(t));
-            });
-        };
-        const batterMatches  = filterFor(batterName);
-        const pitcherMatches = filterFor(pitcherName);
+        const batterMatches  = filterMarketsByPlayerName(all, batterName);
+        const pitcherMatches = filterMarketsByPlayerName(all, pitcherName);
         slot.innerHTML = renderMatchupPropStrips(batterName, batterMatches, pitcherName, pitcherMatches);
     } catch { /* silent */ }
 }
