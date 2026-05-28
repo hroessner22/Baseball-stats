@@ -32,8 +32,10 @@ export async function onRequest(context) {
     const scope = url.searchParams.get("scope");
 
     let markets;
+    let initialDiagnostics = null;
     try {
         markets = await listAllMlbMarkets(env);
+        initialDiagnostics = markets._diagnostics || null;
     } catch (e) {
         return new Response(
             JSON.stringify({ error: `markets fetch failed: ${e.message || e}` }),
@@ -52,6 +54,9 @@ export async function onRequest(context) {
         return acc;
     }, {});
 
+    const debug = url.searchParams.get("debug");
+    const diagnostics = initialDiagnostics;
+
     return new Response(JSON.stringify({
         scope: scope || "all",
         total: markets.length,
@@ -62,6 +67,9 @@ export async function onRequest(context) {
         ),
         markets: grouped,
         all: markets,
+        // Per-adapter outcome surface for ?debug=1 — silent failures
+        // (Smarkets returning 0 etc.) become loud.
+        ...(debug ? { _diagnostics: diagnostics } : {}),
         fetched_at: new Date().toISOString(),
     }), {
         headers: {

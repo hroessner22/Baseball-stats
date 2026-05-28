@@ -849,21 +849,36 @@ function flat(o) {
 
 // ── Registry: fan out, gather, normalize ──────────────────────────
 
+// Optional second return value `diagnostics` exposes per-adapter
+// outcomes (count or error) — used by /api/markets?debug=1 to surface
+// silent adapter failures without spamming user-facing responses.
 export async function listAllMlbMarkets(env) {
-    const results = await Promise.allSettled([
-        listPolymarketMlbMarkets(),
-        listKalshiMlbMarkets(),
-        listManifoldMlbMarkets(),
-        listOddsApiMlbMarkets(env || {}),
-        listBovadaMlbMarkets(),
-        listPinnacleMlbMarkets(),
-        listSmarketsMlbMarkets(),
-        listSxBetMlbMarkets(),
-    ]);
+    const labeled = [
+        ["polymarket", listPolymarketMlbMarkets()],
+        ["kalshi",     listKalshiMlbMarkets()],
+        ["manifold",   listManifoldMlbMarkets()],
+        ["odds_api",   listOddsApiMlbMarkets(env || {})],
+        ["bovada",     listBovadaMlbMarkets()],
+        ["pinnacle",   listPinnacleMlbMarkets()],
+        ["smarkets",   listSmarketsMlbMarkets()],
+        ["sxbet",      listSxBetMlbMarkets()],
+    ];
+    const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
-    for (const r of results) {
-        if (r.status === "fulfilled") out.push(...r.value);
+    const diagnostics = {};
+    for (let i = 0; i < labeled.length; i++) {
+        const [name] = labeled[i];
+        const r = results[i];
+        if (r.status === "fulfilled") {
+            out.push(...r.value);
+            diagnostics[name] = { ok: true, count: r.value.length };
+        } else {
+            diagnostics[name] = { ok: false, error: String(r.reason?.message || r.reason || "unknown") };
+        }
     }
+    // Attach diagnostics as a non-enumerable property so it travels with
+    // the array but doesn't change the public shape.
+    Object.defineProperty(out, "_diagnostics", { value: diagnostics, enumerable: false });
     return out;
 }
 
