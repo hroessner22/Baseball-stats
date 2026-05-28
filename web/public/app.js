@@ -3879,50 +3879,65 @@ document.addEventListener("input", (e) => {
 
 function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe, savantSource) {
     const home = d.teams.home.abbr;
-    const away = d.teams.away.abbr;
     const oursPct  = ourWe   != null ? fmtPct(ourWe)   : "—";
-    const consPct  = consHome != null ? fmtPct(consHome) : "—";
     const savantPct = savantWe != null ? fmtPct(savantWe) : "—";
 
-    // 3-way comparison: our model vs market consensus vs Baseball
-    // Savant (MLB's official WE). Each is the prob of HOME winning.
-    // Highlight the most-divergent pair so the user sees where the
-    // edges are.
-    const present = [
-        { label: "Our model",   pct: ourWe,   key: "ours"   },
-        { label: "Market",      pct: consHome,key: "market" },
-        { label: "Savant (MLB)", pct: savantWe, key: "savant" },
-    ];
-    const numerics = present.filter((p) => p.pct != null).map((p) => p.pct);
+    // Per-source list — every book we pull from, with that book's
+    // live moneyline odds + implied probability for the home team.
+    // User: 'instead of market consensus, display every single market
+    // and its live odds. (Every market we pull data from)'.
+    const perSource = d.per_source || [];
+    const bookRows = perSource.map((b) => `
+      <a class="msrc-row" href="${b.url || "#"}" target="_blank" rel="noopener">
+        <span class="msrc-name msrc-name-${b.source}">${b.source}${(b.book_count || 1) > 1 ? ` (${b.book_count})` : ""}</span>
+        <span class="msrc-quote">
+          <span class="msrc-am ${b.home_american == null ? "msrc-am-empty" : ""}">
+            ${b.home_american != null ? formatAmericanOdds(b.home_american) : "—"}
+          </span>
+          <span class="msrc-pct">${b.home_win != null ? fmtPct(b.home_win) : "—"}</span>
+        </span>
+      </a>
+    `).join("");
+
+    // Verdict math: use the AVERAGE of book home-win probs to compare
+    // our model and Savant against the broader market.
+    const bookHomeProbs = perSource.map((b) => b.home_win).filter((p) => p != null);
+    const bookAvg = bookHomeProbs.length
+        ? bookHomeProbs.reduce((s, p) => s + p, 0) / bookHomeProbs.length
+        : null;
+    const numerics = [ourWe, bookAvg, savantWe].filter((p) => p != null);
     const spread = numerics.length >= 2 ? Math.max(...numerics) - Math.min(...numerics) : 0;
     const spreadClass = spread < 0.02 ? "all-agree" : spread < 0.06 ? "small-edge" : "big-edge";
     const verdict =
-        spread < 0.02 && numerics.length >= 2
-            ? `All three agree on ${home} ${fmtPct(numerics[0])}`
-            : spread < 0.06 && numerics.length >= 2
-                ? `Tight: max spread ${(spread * 100).toFixed(1)}pp across the three`
-                : ourWe != null && consHome != null
-                    ? (ourWe > consHome
-                        ? `We have ${home} ${((ourWe - consHome) * 100).toFixed(1)}pp higher than the market`
-                        : `Market has ${home} ${((consHome - ourWe) * 100).toFixed(1)}pp higher than us`)
-                    : "Awaiting line";
+        numerics.length < 2
+            ? "Awaiting line"
+            : spread < 0.02
+                ? `All sources agree on ${home} ${fmtPct(numerics[0])}`
+                : spread < 0.06
+                    ? `Tight: ${(spread * 100).toFixed(1)}pp max spread`
+                    : ourWe != null && bookAvg != null
+                        ? (ourWe > bookAvg
+                            ? `We have ${home} ${((ourWe - bookAvg) * 100).toFixed(1)}pp higher than book avg`
+                            : `Books have ${home} ${((bookAvg - ourWe) * 100).toFixed(1)}pp higher than us`)
+                        : `${(spread * 100).toFixed(1)}pp spread across sources`;
 
     return `
       <div class="markets-header">
-        <div class="markets-headline three-way">
+        <div class="markets-headline three-col">
           <div class="markets-side" data-key="ours">
             <div class="markets-side-label">Our model — ${home} win</div>
             <div class="markets-side-num">${oursPct}</div>
           </div>
-          <div class="markets-side" data-key="market">
-            <div class="markets-side-label">Market consensus</div>
-            <div class="markets-side-num">${consPct}</div>
-            ${consAway != null ? `<div class="markets-side-sub">${away}: ${fmtPct(consAway)}</div>` : ""}
+          <div class="markets-side markets-side-books" data-key="books">
+            <div class="markets-side-label">Live odds · ${home} win</div>
+            <div class="msrc-list">
+              ${bookRows || `<div class="msrc-empty">No book quotes yet</div>`}
+            </div>
           </div>
           <div class="markets-side" data-key="savant">
             <div class="markets-side-label">${savantLabel(savantSource)}</div>
             <div class="markets-side-num">${savantPct}</div>
-            ${savantSource && savantSource !== "mlb_official"
+            ${!savantSource
               ? `<div class="markets-side-sub">${savantSourceNote(savantSource)}</div>`
               : ""}
           </div>

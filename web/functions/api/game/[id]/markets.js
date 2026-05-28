@@ -109,6 +109,43 @@ export async function onRequest(context) {
         },
     );
 
+    // 5. Per-source quotes: one row per moneyline market with the
+    //    home + away outcome probabilities + American odds so the
+    //    UI can show each individual book's live line (user explicitly
+    //    asked for every market's odds, not just a single consensus).
+    const homeNameLc = (game.teams?.home?.name || "").toLowerCase();
+    const awayNameLc = (game.teams?.away?.name || "").toLowerCase();
+    const matchSide = (outcome, want) => {
+        const oName = (outcome.name || "").toLowerCase();
+        const wantAbbrLc = want === "home" ? homeAbbr.toLowerCase() : awayAbbr.toLowerCase();
+        const wantNameLc = want === "home" ? homeNameLc : awayNameLc;
+        return oName === wantAbbrLc
+            || (wantNameLc && oName.includes(wantNameLc));
+    };
+    const perSource = (grouped.moneyline || []).map((m) => {
+        const homeOut = (m.outcomes || []).find((o) => matchSide(o, "home"));
+        const awayOut = (m.outcomes || []).find((o) => matchSide(o, "away"));
+        const homeProb = homeOut?.probability_devig ?? homeOut?.probability ?? null;
+        const awayProb = awayOut?.probability_devig ?? awayOut?.probability ?? null;
+        return {
+            source:        m.source,
+            url:           m.url || null,
+            title:         m.title || null,
+            home_win:      homeProb,
+            away_win:      awayProb,
+            home_american: homeOut?.american ?? null,
+            away_american: awayOut?.american ?? null,
+            book_count:    m.book_count || 1,
+            books_present: m.books_present || [m.source],
+        };
+    }).sort((a, b) => {
+        // Prefer sources with priced outcomes, then alphabetical.
+        const ap = a.home_win != null ? 1 : 0;
+        const bp = b.home_win != null ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return (a.source || "").localeCompare(b.source || "");
+    });
+
     return jsonResponse({
         game_pk: parseInt(gameId, 10),
         available: true,
@@ -128,6 +165,10 @@ export async function onRequest(context) {
                 ? game.win_expectancy - homeWinConsensus
                 : null,
         },
+        // Per-source individual quotes — one row per book. UI renders
+        // these in the header instead of (or alongside) the averaged
+        // consensus number.
+        per_source: perSource,
         // Baseball Savant's live home win-probability. ALWAYS populated:
         //   mlb_official      = winProbability endpoint (Savant's source)
         //   pregame_baseline  = team-strength Pythagorean (pregame fallback)
