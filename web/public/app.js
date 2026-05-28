@@ -3479,6 +3479,13 @@ function stopMarketsPoll() {
     }
 }
 
+// Module-level state for the Markets sub-tab navigation. Persists
+// across the 8s poll so re-renders don't kick the user back to
+// "Game Lines" when they were browsing "Player Props".
+let marketsSubTab = "game_lines";  // game_lines | player_props | team_props
+let marketsShowAlts = { spread: false, total: false };
+let marketsPlayerFilter = "";
+
 function renderMarkets(d) {
     if (!d.available) {
         return `<div class="empty">${d.reason || "No markets available for this game."}</div>`;
@@ -3499,18 +3506,40 @@ function renderMarkets(d) {
     const consHome = d.consensus?.home_win;
     const consAway = d.consensus?.away_win;
     const edge    = d.consensus?.edge_home;
+    const savant  = d.savant_we_home;
 
-    // Game tracker shows ONLY game-day lines. Season futures, series
-    // futures, MVP/Cy Young, etc. live on the team page (#team/X) so
-    // the live PA-by-PA companion stays focused on tonight's matchup.
+    // Sub-tab navigation researched from DraftKings / FanDuel / BetMGM /
+    // Action Network — every sportsbook page splits big slate of
+    // markets into top-level tabs: Game Lines / Player Props / Team
+    // Props / Same-Game Parlay. We do the same so the user isn't
+    // scrolling through 100+ rows on one page.
+    const tab = marketsSubTab;
+
+    const gameLinesBody = tab === "game_lines" ? renderGameLinesTab(d) : "";
+    const playerBody    = tab === "player_props" ? renderPlayerPropsTab(d) : "";
+    const teamBody      = tab === "team_props" ? renderTeamPropsTab(d) : "";
+
+    const nGl = (d.markets.moneyline?.length || 0)
+              + (d.markets.spread?.length    || 0)
+              + (d.markets.total?.length     || 0);
+    const nPp = d.markets.player_prop?.length || 0;
+    const nTp = d.markets.team_prop?.length   || 0;
+
     return `
       <div class="markets">
-        ${renderMarketsHeader(d, ourWe, consHome, consAway, edge)}
-        ${renderMarketsSection("Moneyline (who wins)",    d.markets.moneyline)}
-        ${renderMarketsSection("Spread (run line)",       d.markets.spread)}
-        ${renderMarketsSection("Total runs (over/under)", d.markets.total)}
-        ${renderMarketsSection("Player props · tonight",  d.markets.player_prop)}
-        ${renderMarketsSection("Team props",              d.markets.team_prop)}
+        ${renderMarketsHeader(d, ourWe, consHome, consAway, edge, savant)}
+        <nav class="markets-tabs" role="tablist">
+          <button class="markets-tab ${tab === "game_lines" ? "active" : ""}" data-mtab="game_lines" role="tab">
+            Game lines <span class="markets-tab-count">${nGl}</span>
+          </button>
+          <button class="markets-tab ${tab === "player_props" ? "active" : ""}" data-mtab="player_props" role="tab">
+            Player props <span class="markets-tab-count">${nPp}</span>
+          </button>
+          <button class="markets-tab ${tab === "team_props" ? "active" : ""}" data-mtab="team_props" role="tab">
+            Team props <span class="markets-tab-count">${nTp}</span>
+          </button>
+        </nav>
+        ${gameLinesBody}${playerBody}${teamBody}
         ${(d.markets.future?.length || d.markets.series?.length) ? `
           <div class="markets-team-link-note">
             <a href="#team/${d.teams?.home?.tricode || d.teams?.home?.abbr}">
@@ -3521,11 +3550,9 @@ function renderMarkets(d) {
             </a>
           </div>
         ` : ""}
-        ${renderMarketsSection("Other questions",         d.markets.other)}
         <div class="markets-footnote">
           Game-day lines only. Season futures (WS odds, MVP, division) live
-          on each team's page.
-          Updates every 20s.
+          on each team's page. Updates every 8s.
           ${d.market_count} live quote${d.market_count === 1 ? "" : "s"}
           across ${d.sources_present.length} source${d.sources_present.length === 1 ? "" : "s"}
           (${d.sources_present.join(", ")}).
@@ -3535,43 +3562,219 @@ function renderMarkets(d) {
     `;
 }
 
-function renderMarketsHeader(d, ourWe, consHome, consAway, edge) {
+// Game Lines tab: Moneyline + Main Spread + Main Total prominent, with
+// alternate spread / total ladders collapsed behind a toggle.
+function renderGameLinesTab(d) {
+    const spread = d.markets.spread || [];
+    const total  = d.markets.total  || [];
+    const splitMainAlts = (rows) => {
+        const main = rows.filter((m) => m.is_main_line);
+        const alts = rows.filter((m) => !m.is_main_line);
+        return { main, alts };
+    };
+    const sp = splitMainAlts(spread);
+    const to = splitMainAlts(total);
+
+    return `
+      <div class="markets-tab-body" data-mtab-body="game_lines">
+        ${renderMarketsSection("Moneyline",            d.markets.moneyline)}
+        ${renderMarketsSection("Run line · main",      sp.main)}
+        ${sp.alts.length ? renderAlternateSection("spread", sp.alts) : ""}
+        ${renderMarketsSection("Total runs · main",    to.main)}
+        ${to.alts.length ? renderAlternateSection("total", to.alts) : ""}
+      </div>
+    `;
+}
+
+// Player Props tab: searchable list. Filter chip narrows by player
+// name token (case-insensitive). Sub-grouped by pitcher / batter prop.
+function renderPlayerPropsTab(d) {
+    const all = d.markets.player_prop || [];
+    if (!all.length) {
+        return `
+          <div class="markets-tab-body">
+            <div class="markets-empty">
+              <div class="markets-empty-title">No player props quoted on this game yet.</div>
+              <div class="markets-empty-sub">Bovada usually has 50+ prop markets per game; check back closer to first pitch.</div>
+            </div>
+          </div>
+        `;
+    }
+    const filt = (marketsPlayerFilter || "").toLowerCase().trim();
+    const matched = filt
+        ? all.filter((m) => (m.title || "").toLowerCase().includes(filt))
+        : all;
+
+    // Sub-bucket: titles mentioning "strikeout", "win", "record"
+    // tend to be pitcher props; everything else is batter.
+    const pitcher = matched.filter((m) => /strikeout|record a win|hits allowed|walks|earned run|pitcher/i.test(m.title || ""));
+    const batter  = matched.filter((m) => !pitcher.includes(m));
+
+    return `
+      <div class="markets-tab-body" data-mtab-body="player_props">
+        <div class="markets-filter">
+          <input type="text" class="markets-filter-input"
+                 placeholder="Filter by player name (e.g. Bregman)"
+                 value="${escapeHTMLAttr(marketsPlayerFilter)}"
+                 data-mtab-filter="1" />
+          ${filt ? `<button class="markets-filter-clear" data-mtab-clear-filter="1">clear</button>` : ""}
+        </div>
+        ${matched.length === 0
+          ? `<div class="empty">No props match "${escapeHTML(marketsPlayerFilter)}".</div>`
+          : `
+            ${renderMarketsSection(`Pitcher props (${pitcher.length})`, pitcher)}
+            ${renderMarketsSection(`Batter props (${batter.length})`,   batter)}
+          `}
+      </div>
+    `;
+}
+
+// Team Props tab: game props + 1st-inning + run markets.
+function renderTeamPropsTab(d) {
+    const all = d.markets.team_prop || [];
+    if (!all.length) {
+        return `
+          <div class="markets-tab-body">
+            <div class="markets-empty">
+              <div class="markets-empty-title">No team props quoted on this game yet.</div>
+              <div class="markets-empty-sub">First-inning, run-scoring, and winning-margin markets show up here.</div>
+            </div>
+          </div>
+        `;
+    }
+    // Sub-bucket by clue word in title.
+    const firstInning = all.filter((m) => /1st inning|first inning|1H|1I/i.test(m.title || ""));
+    const winMargin   = all.filter((m) => /winning margin|to win by/i.test(m.title || ""));
+    const runScoring  = all.filter((m) => !firstInning.includes(m) && !winMargin.includes(m));
+
+    return `
+      <div class="markets-tab-body" data-mtab-body="team_props">
+        ${renderMarketsSection(`Game props (${runScoring.length})`,   runScoring)}
+        ${renderMarketsSection(`1st-inning markets (${firstInning.length})`, firstInning)}
+        ${renderMarketsSection(`Winning margin (${winMargin.length})`, winMargin)}
+      </div>
+    `;
+}
+
+// Alternate spreads / totals collapsed by default. Click expands.
+function renderAlternateSection(kind, alts) {
+    const open = marketsShowAlts[kind];
+    const label = kind === "spread" ? "alternate spreads" : "alternate totals";
+    if (!open) {
+        return `
+          <button class="markets-alt-toggle" data-mtab-alts="${kind}">
+            Show ${alts.length} ${label} ▾
+          </button>
+        `;
+    }
+    const sectionTitle = kind === "spread" ? "Alternate run lines" : "Alternate totals";
+    return `
+      <div class="markets-alts-wrap">
+        <button class="markets-alt-toggle is-open" data-mtab-alts="${kind}">
+          Hide ${label} ▴
+        </button>
+        ${renderMarketsSection(sectionTitle, alts)}
+      </div>
+    `;
+}
+
+// Sub-tab + filter + alts-toggle click delegation. The Markets pane
+// re-renders every 8s, so we use event delegation off document.
+document.addEventListener("click", (e) => {
+    const tabBtn = e.target.closest("[data-mtab]");
+    if (tabBtn) {
+        e.preventDefault();
+        marketsSubTab = tabBtn.dataset.mtab;
+        if (activeGameId && gameViewMode === "markets") hydrateMarkets(activeGameId);
+        return;
+    }
+    const altBtn = e.target.closest("[data-mtab-alts]");
+    if (altBtn) {
+        e.preventDefault();
+        const kind = altBtn.dataset.mtabAlts;
+        marketsShowAlts[kind] = !marketsShowAlts[kind];
+        if (activeGameId && gameViewMode === "markets") hydrateMarkets(activeGameId);
+        return;
+    }
+    const clearBtn = e.target.closest("[data-mtab-clear-filter]");
+    if (clearBtn) {
+        e.preventDefault();
+        marketsPlayerFilter = "";
+        if (activeGameId && gameViewMode === "markets") hydrateMarkets(activeGameId);
+        return;
+    }
+});
+
+// Filter input — re-render on each keystroke but throttle so typing
+// is smooth. The input lives inside the pane that we innerHTML-replace,
+// so we listen at document level and use a debounce.
+let marketsFilterDebounce = null;
+document.addEventListener("input", (e) => {
+    const input = e.target.closest("[data-mtab-filter]");
+    if (!input) return;
+    marketsPlayerFilter = input.value;
+    if (marketsFilterDebounce) clearTimeout(marketsFilterDebounce);
+    marketsFilterDebounce = setTimeout(() => {
+        if (activeGameId && gameViewMode === "markets") {
+            hydrateMarkets(activeGameId);
+            // Restore focus + caret on the freshly-rerendered input.
+            const restored = document.querySelector("[data-mtab-filter]");
+            if (restored) {
+                restored.focus();
+                restored.setSelectionRange(restored.value.length, restored.value.length);
+            }
+        }
+    }, 180);
+});
+
+function renderMarketsHeader(d, ourWe, consHome, consAway, edge, savantWe) {
     const home = d.teams.home.abbr;
     const away = d.teams.away.abbr;
-    const oursPct = ourWe != null ? fmtPct(ourWe) : "—";
-    const consPct = consHome != null ? fmtPct(consHome) : "—";
-    const edgeTxt = edge != null
-        ? `${edge > 0 ? "+" : ""}${(edge * 100).toFixed(1)}pp`
-        : "—";
-    const edgeClass = edge == null
-        ? "edge-flat"
-        : Math.abs(edge) < 0.02
-            ? "edge-flat"
-            : edge > 0 ? "edge-us-higher" : "edge-market-higher";
-    const edgeLabel = edge == null
-        ? "No moneyline quoted yet"
-        : Math.abs(edge) < 0.02
-            ? "We agree with the market"
-            : edge > 0
-                ? `We have ${home} ${edgeTxt} higher than the market`
-                : `Market has ${home} ${(-edge * 100).toFixed(1)}pp higher than us`;
+    const oursPct  = ourWe   != null ? fmtPct(ourWe)   : "—";
+    const consPct  = consHome != null ? fmtPct(consHome) : "—";
+    const savantPct = savantWe != null ? fmtPct(savantWe) : "—";
+
+    // 3-way comparison: our model vs market consensus vs Baseball
+    // Savant (MLB's official WE). Each is the prob of HOME winning.
+    // Highlight the most-divergent pair so the user sees where the
+    // edges are.
+    const present = [
+        { label: "Our model",   pct: ourWe,   key: "ours"   },
+        { label: "Market",      pct: consHome,key: "market" },
+        { label: "Savant (MLB)", pct: savantWe, key: "savant" },
+    ];
+    const numerics = present.filter((p) => p.pct != null).map((p) => p.pct);
+    const spread = numerics.length >= 2 ? Math.max(...numerics) - Math.min(...numerics) : 0;
+    const spreadClass = spread < 0.02 ? "all-agree" : spread < 0.06 ? "small-edge" : "big-edge";
+    const verdict =
+        spread < 0.02 && numerics.length >= 2
+            ? `All three agree on ${home} ${fmtPct(numerics[0])}`
+            : spread < 0.06 && numerics.length >= 2
+                ? `Tight: max spread ${(spread * 100).toFixed(1)}pp across the three`
+                : ourWe != null && consHome != null
+                    ? (ourWe > consHome
+                        ? `We have ${home} ${((ourWe - consHome) * 100).toFixed(1)}pp higher than the market`
+                        : `Market has ${home} ${((consHome - ourWe) * 100).toFixed(1)}pp higher than us`)
+                    : "Awaiting line";
+
     return `
       <div class="markets-header">
-        <div class="markets-headline">
-          <div class="markets-side">
+        <div class="markets-headline three-way">
+          <div class="markets-side" data-key="ours">
             <div class="markets-side-label">Our model — ${home} win</div>
             <div class="markets-side-num">${oursPct}</div>
           </div>
-          <div class="markets-vs">vs</div>
-          <div class="markets-side">
-            <div class="markets-side-label">Market consensus — ${home} win</div>
+          <div class="markets-side" data-key="market">
+            <div class="markets-side-label">Market consensus</div>
             <div class="markets-side-num">${consPct}</div>
+            ${consAway != null ? `<div class="markets-side-sub">${away}: ${fmtPct(consAway)}</div>` : ""}
+          </div>
+          <div class="markets-side" data-key="savant">
+            <div class="markets-side-label">Savant / MLB official</div>
+            <div class="markets-side-num">${savantPct}</div>
           </div>
         </div>
-        <div class="markets-edge ${edgeClass}">${edgeLabel}</div>
-        <div class="markets-subhead">
-          ${consAway != null ? `${away} win consensus: ${fmtPct(consAway)}` : ""}
-        </div>
+        <div class="markets-edge edge-${spreadClass}">${verdict}</div>
       </div>
     `;
 }

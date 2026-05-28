@@ -4354,6 +4354,147 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     align-items: center;
     gap: 24px;
 }
+/* 3-way header layout: ours / market / Savant side-by-side */
+.markets-headline.three-way {
+    grid-template-columns: 1fr 1fr 1fr;
+    text-align: center;
+}
+.markets-headline.three-way .markets-side {
+    padding: 8px 0;
+    border-radius: var(--radius);
+}
+.markets-headline.three-way .markets-side[data-key="market"] {
+    background: rgba(148, 163, 184, 0.06);
+}
+.markets-side-sub {
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-top: 3px;
+    letter-spacing: 0.04em;
+}
+.markets-edge.edge-all-agree {
+    background: rgba(16, 185, 129, 0.14);
+    color: #34D399;
+}
+.markets-edge.edge-small-edge {
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-dim);
+}
+.markets-edge.edge-big-edge {
+    background: rgba(244, 114, 182, 0.14);
+    color: #F472B6;
+}
+
+/* Sub-tab navigation (Game Lines / Player Props / Team Props).
+   Researched: DK, FD, BetMGM, Action Network all use a sticky-ish
+   horizontal tab bar at the top of their game pages. */
+.markets-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+}
+.markets-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 10px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border-bottom: 2px solid transparent;
+    transition: color 80ms ease, border-color 80ms ease, background 80ms ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.markets-tab:hover { color: var(--text); background: rgba(148, 163, 184, 0.04); }
+.markets-tab.active {
+    color: var(--accent-action);
+    border-bottom-color: var(--accent-action);
+}
+.markets-tab-count {
+    font-size: 10px;
+    font-weight: 700;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-dim);
+    padding: 1px 7px;
+    border-radius: 99px;
+}
+.markets-tab.active .markets-tab-count {
+    background: rgba(56, 189, 248, 0.18);
+    color: var(--accent-action);
+}
+.markets-tab-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-top: 6px;
+}
+
+/* Player-prop filter input */
+.markets-filter {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.markets-filter-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 10px 14px;
+    font-size: 13px;
+    font-family: inherit;
+}
+.markets-filter-input:focus {
+    outline: none;
+    border-color: var(--accent-action);
+}
+.markets-filter-input::placeholder { color: var(--text-faint); }
+.markets-filter-clear {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 8px 14px;
+    border-radius: var(--radius);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+.markets-filter-clear:hover { color: var(--text); }
+
+/* Alternate-lines expander */
+.markets-alt-toggle {
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    color: var(--text-dim);
+    padding: 8px 14px;
+    border-radius: var(--radius);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    align-self: flex-start;
+}
+.markets-alt-toggle:hover { color: var(--text); border-color: var(--text-dim); }
+.markets-alt-toggle.is-open {
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.3);
+    color: var(--accent-action);
+}
+.markets-alts-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
 .markets-side-label {
     font-size: 11px;
     font-weight: 700;

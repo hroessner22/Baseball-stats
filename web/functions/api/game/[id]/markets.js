@@ -57,9 +57,26 @@ export async function onRequest(context) {
 
     // 2. Pull every MLB market across all sources (parallel inside
     //    the SDK), then filter to ones matching this game's teams.
+    //    Also fetch MLB's official winProbability feed — Baseball
+    //    Savant reads from the same source for the live-WE numbers it
+    //    shows on its game pages, so we get "Savant's WE" by hitting
+    //    /api/v1/game/{pk}/winProbability and reading the last entry's
+    //    homeTeamWinProbability (returned as a percent number, 0-100).
     let allMarkets;
+    let savantHomeWe = null;
     try {
-        allMarkets = await listAllMlbMarkets(env);
+        const [marketsRes, savantRes] = await Promise.allSettled([
+            listAllMlbMarkets(env),
+            fetchSavantWe(gameId),
+        ]);
+        if (marketsRes.status === "fulfilled") {
+            allMarkets = marketsRes.value;
+        } else {
+            throw marketsRes.reason;
+        }
+        if (savantRes.status === "fulfilled") {
+            savantHomeWe = savantRes.value;
+        }
     } catch (e) {
         return jsonError(502, `markets fetch failed: ${e.message || e}`);
     }
@@ -109,6 +126,10 @@ export async function onRequest(context) {
                 ? game.win_expectancy - homeWinConsensus
                 : null,
         },
+        // Baseball Savant's live home win-probability (same source as
+        // their game page). Null when the game has no winProbability
+        // feed yet (preview state).
+        savant_we_home: savantHomeWe,
         // Per-question-type buckets, each a list of Market rows.
         markets: grouped,
         // Flat array of all markets for clients that want their own grouping.
@@ -126,6 +147,28 @@ function jsonResponse(body, maxAge) {
             "access-control-allow-origin": "*",
         },
     });
+}
+
+// Baseball Savant displays MLB's official winProbability on its game
+// pages. The endpoint returns one entry per at-bat with
+// homeTeamWinProbability + awayTeamWinProbability as percent numbers
+// (0-100). We read the last entry (current state) and convert to a
+// 0-1 float to match our home_win/away_win convention. Cached at the
+// edge for 30s — this is the live signal we want to tick alongside
+// market prices.
+async function fetchSavantWe(gameId) {
+    const url = `https://statsapi.mlb.com/api/v1/game/${gameId}/winProbability`;
+    const res = await fetch(url, {
+        headers: { "User-Agent": "DIAMOND:CONTEXT/0.1" },
+        cf: { cacheTtl: 30, cacheEverything: true },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || !data.length) return null;
+    const last = data[data.length - 1];
+    const homePct = Number(last?.homeTeamWinProbability);
+    if (!Number.isFinite(homePct)) return null;
+    return homePct / 100;
 }
 
 function jsonError(status, message) {
