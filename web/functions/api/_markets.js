@@ -914,11 +914,15 @@ async function listBovadaMlbMarkets() {
         return [];
     }
     const root = Array.isArray(leagueData) ? leagueData[0] : leagueData;
-    const events = root?.events || [];
+    let events = root?.events || [];
     if (!events.length) return [];
+    // Cap to 10 events to stay under Cloudflare's 50-subrequest limit
+    // (shared across all adapters in listAllMlbMarkets fan-out). The
+    // 5-min edge cache means concurrent viewers see the same hit so
+    // we don't lose coverage in practice — just delayed by one cycle.
+    events = events.slice(0, 10);
 
     // Per-event fan-out to get the full market book (props included).
-    // ~16 games × 1 request each = 16 fetches, all edge-cached for 5 min.
     const fullEvents = await Promise.allSettled(
         events.map((ev) => {
             const link = (ev.link || "").replace(/^\//, "");
@@ -1254,7 +1258,7 @@ async function listPinnacleMlbMarkets() {
 
     // For each top-level (parent==null) matchup, hit the straight
     // markets endpoint to get moneyline / total / spread prices.
-    const eligible = matchups.filter((m) => !m.parent && m.participants?.length >= 2);
+    const eligible = matchups.filter((m) => !m.parent && m.participants?.length >= 2).slice(0, 10);
     const results = await Promise.allSettled(
         eligible.map(async (ev) => {
             const id = ev.id;
@@ -1425,7 +1429,7 @@ async function listSmarketsMlbMarkets() {
         Object.defineProperty(out, "_dbg", { value: dbg, enumerable: false });
         return out;
     }
-    events = events.slice(0, 16);  // cap for Cloudflare 50-subreq budget
+    events = events.slice(0, 10);  // cap for Cloudflare 50-subreq budget shared across all adapters
     dbg.events_capped = events.length;
 
     // 1. Per-event markets fan-out (~16 reqs).
