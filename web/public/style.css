@@ -347,8 +347,8 @@ main.board {
 }
 .tile .tile-players .player-row {
     display: grid;
-    grid-template-columns: 52px minmax(0, 1fr);
-    align-items: baseline;
+    grid-template-columns: 52px 28px minmax(0, 1fr);
+    align-items: center;
     gap: 8px;
     font-size: 11px;
 }
@@ -413,6 +413,47 @@ main.board {
     color: var(--text-dim);
     font-weight: 600;
     letter-spacing: 0.05em;
+}
+.tile .tile-pitcher,
+.tile .tile-decision {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    vertical-align: middle;
+}
+.tile .tile-photo {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg);
+    object-fit: cover;
+    object-position: center top;
+}
+.tile .tile-photo-empty {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg);
+}
+.tile .tile-pitcher-tba {
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.tile .tile-live-photo {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--bg);
+    object-fit: cover;
+    object-position: center top;
+    display: block;
+}
+.tile .tile-live-photo-empty {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--bg);
+    display: block;
 }
 
 /* HOT pill for close, late-inning live games. Top-right corner, red badge
@@ -636,11 +677,25 @@ main.board {
 }
 .leader-row {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) auto auto;
+    grid-template-columns: 20px 32px minmax(0, 1fr) auto auto;
     gap: 8px;
-    align-items: baseline;
+    align-items: center;
     padding: 6px 14px;
     font-size: 12px;
+}
+.leader-photo {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg);
+    object-fit: cover;
+    object-position: center top;
+}
+.leader-photo-empty {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg);
 }
 .leader-rank {
     color: var(--text-dim);
@@ -811,7 +866,7 @@ main.board {
 }
 .wpa-band .wpa-row {
     display: grid;
-    grid-template-columns: 22px 24px minmax(0, 1fr) 56px 48px;
+    grid-template-columns: 22px 36px minmax(0, 1fr) 56px 48px;
     gap: 8px;
     align-items: center;
     padding: 6px 0;
@@ -819,16 +874,17 @@ main.board {
     font-variant-numeric: tabular-nums;
 }
 .wpa-band .wpa-photo {
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .wpa-band .wpa-photo-empty {
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: var(--bg);
     display: block;
@@ -937,16 +993,17 @@ main.board {
     min-width: 0;
 }
 .cand-photo {
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     flex-shrink: 0;
 }
 .cand-photo-empty {
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     background: var(--bg);
     flex-shrink: 0;
@@ -1078,9 +1135,9 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 18px;
 }
 .ph-headshot {
-    flex: 0 0 96px;
-    width: 96px;
-    height: 96px;
+    flex: 0 0 128px;
+    width: 128px;
+    height: 128px;
     border-radius: 50%;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1091,6 +1148,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     width: 100%;
     height: 100%;
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .ph-headshot-initials {
@@ -1227,16 +1285,17 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 3px 8px 3px 3px;
 }
 .player-tonight .pt-tag-photo {
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     flex-shrink: 0;
 }
 .player-tonight .pt-tag-photo-empty {
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: var(--bg);
     flex-shrink: 0;
@@ -2213,16 +2272,17 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     min-width: 0;
 }
 .bs-table .bs-photo {
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     flex-shrink: 0;
 }
 .bs-table .bs-photo-empty {
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     background: var(--bg);
     flex-shrink: 0;
@@ -2319,16 +2379,17 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .pa-avatar-link { display: inline-flex; }
 .pa-matchup .pa-avatar {
-    width: 32px;
-    height: 32px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .pa-matchup .pa-avatar-empty {
-    width: 32px;
-    height: 32px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     background: var(--bg);
     display: block;
@@ -2971,9 +3032,9 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
    the player profile. MLB CDN spot photos are 7KB, lazy-loaded,
    gracefully fade to a neutral circle if the image fails. */
 .player-row .pr-avatar {
-    flex: 0 0 32px;
-    width: 32px;
-    height: 32px;
+    flex: 0 0 48px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--bg);
@@ -2987,6 +3048,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     width: 100%;
     height: 100%;
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .player-row .pr-avatar-empty {
@@ -3191,7 +3253,33 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .forecast-we .fwe-pitcher {
     color: var(--text);
     cursor: help;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    vertical-align: middle;
+}
+.forecast-we .fwe-photo {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg);
+    object-fit: cover;
+    object-position: center top;
+}
+.forecast-we .fwe-photo-empty {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--bg);
+}
+.forecast-we .fwe-name {
+    color: var(--text);
+    text-decoration: none;
     border-bottom: 1px dotted var(--text-dim);
+}
+.forecast-we a.fwe-name:hover {
+    color: var(--accent-action);
+    border-bottom-color: currentColor;
 }
 .forecast-we .fwe-arrow {
     color: var(--text-dim);
@@ -3368,7 +3456,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .this-inning .ti-row {
     display: grid;
-    grid-template-columns: 42px 22px minmax(80px, 1fr) 3fr;
+    grid-template-columns: 42px 30px minmax(80px, 1fr) 3fr;
     gap: 8px;
     align-items: center;
     padding: 4px 0;
@@ -3376,16 +3464,17 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     line-height: 1.45;
 }
 .this-inning .ti-photo {
-    width: 22px;
-    height: 22px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .this-inning .ti-photo-empty {
-    width: 22px;
-    height: 22px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     background: var(--bg);
     display: block;
@@ -3486,8 +3575,8 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 6px;
 }
 .matchup-card .mc-avatar {
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--bg);
@@ -3500,6 +3589,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     width: 100%;
     height: 100%;
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .matchup-card .mc-vs {
@@ -3773,16 +3863,17 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 4px;
 }
 .trace-card .tt-photo {
-    width: 18px;
-    height: 18px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
+    object-position: center top;
     display: block;
 }
 .trace-card .tt-photo-empty {
-    width: 18px;
-    height: 18px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     background: var(--bg);
     display: block;
@@ -4485,6 +4576,123 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-size: 11px;
     color: var(--text);
     font-weight: 600;
+}
+.mc-pill-verdict-we_higher    { color: #34D399; }
+.mc-pill-verdict-market_higher{ color: #F472B6; }
+
+/* Supplementary line chips below the moneyline — total runs O/U and
+   run-line spread. Each shows the question, the line, the consensus
+   probability, and the source. Click jumps into the Markets tab. */
+.mc-pill-extras {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+}
+.mc-line-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border-radius: 99px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 11px;
+    transition: border-color 80ms ease;
+}
+.mc-line-chip:hover { border-color: var(--accent-action); }
+.mc-line-chip .mc-line-key {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+.mc-line-chip .mc-line-val { font-weight: 600; }
+.mc-line-chip .mc-line-pct {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-action);
+    font-weight: 700;
+}
+.mc-line-chip .mc-line-src {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+}
+
+/* Matchup-card prop strip — player props for the current batter +
+   pitcher rendered under the outcome distribution. Sits inside the
+   matchup card so the user sees model vs market for both sides. */
+.mc-prop-strip:not(:empty) {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: var(--radius);
+    background: rgba(148, 163, 184, 0.05);
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.mc-prop-strip-head {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.mc-prop-strip-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.mc-prop-strip-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.mc-prop-strip-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.mc-prop-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 99px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 600;
+}
+.mc-prop-chip:hover { border-color: var(--accent-action); }
+.mc-prop-chip-side {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mc-prop-chip-pct {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-action);
+    font-weight: 700;
+}
+.mc-prop-chip-src {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-faint);
 }
 
 

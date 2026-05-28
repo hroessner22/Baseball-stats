@@ -80,6 +80,7 @@ function reshape(blocks, ordered) {
             label,
             leaders: (b.leaders || []).map((l) => ({
                 rank: l.rank,
+                person_id: l.person?.id || null,
                 name: l.person?.fullName || "?",
                 team: l.team?.abbreviation || null,
                 value: l.value,

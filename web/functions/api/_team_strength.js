@@ -60,8 +60,9 @@ export async function fetchTeamStrength(teamId, season) {
         const home = pickSplit(tr, "home");
         const away = pickSplit(tr, "away");
 
-        // L30 + L15 from schedule (compute by counting wins in the
-        // last N days of completed games for this team).
+        // L30 + L15 — the team's last 30 / 15 GAMES actually played
+        // (NOT the last 30 / 15 days). A team with a rainout still
+        // gets a true L30; a date window would have undercounted.
         const l30 = computeRecentRecord(schedule, teamId, 30);
         const l15 = computeRecentRecord(schedule, teamId, 15);
 
@@ -69,8 +70,8 @@ export async function fetchTeamStrength(teamId, season) {
         // Weights chosen for v1 — calibration will refine.
         //   25%  season actual W-L
         //   25%  season Pythagorean (luck-adjusted)
-        //   30%  last 30 days
-        //   20%  last 10 days
+        //   30%  last 30 games played
+        //   20%  last 10 games (lastTen split from standings)
         const combined_pct =
             0.25 * season_pct +
             0.25 * pyth_pct +
@@ -196,16 +197,22 @@ async function fetchTeamSchedule(teamId, season) {
 }
 
 
-// Count W-L from the team's last N days of completed games.
-function computeRecentRecord(scheduleData, teamId, days) {
-    const cutoff = Date.now() - days * 86400 * 1000;
-    let w = 0, l = 0;
+// Count W-L from the team's last N GAMES actually played — NOT the last
+// N days. User pointed out the prior implementation was a date window,
+// which means a team with a rainout or schedule gap would get fewer
+// than 30 games counted as "L30". This walks the team's full schedule,
+// pulls every final game, sorts newest-first, and keeps the first N.
+//
+// `n` is the game count; old callers that passed `days=30` semantics
+// still get the right behavior because the threshold value is unchanged.
+function computeRecentRecord(scheduleData, teamId, n) {
+    // Collect every final game involving this team, with timestamp +
+    // win bool so we can sort newest first then slice the top N.
+    const completed = [];
     for (const day of scheduleData?.dates || []) {
         for (const g of day.games || []) {
             const status = g.status?.abstractGameState;
             if (status !== "Final") continue;
-            const ts = Date.parse(g.gameDate);
-            if (!Number.isFinite(ts) || ts < cutoff) continue;
             const home = g.teams?.home;
             const away = g.teams?.away;
             if (!home?.team?.id || !away?.team?.id) continue;
@@ -214,13 +221,29 @@ function computeRecentRecord(scheduleData, teamId, days) {
             if (!isHome && !isAway) continue;
             const homeRuns = home.score ?? 0;
             const awayRuns = away.score ?? 0;
-            if (homeRuns === awayRuns) continue;  // tie (shouldn't happen)
-            const won = isHome
-                ? homeRuns > awayRuns
-                : awayRuns > homeRuns;
-            if (won) w += 1; else l += 1;
+            if (homeRuns === awayRuns) continue;  // tie (shouldn't happen in MLB)
+            const ts = Date.parse(g.gameDate);
+            if (!Number.isFinite(ts)) continue;
+            const won = isHome ? homeRuns > awayRuns : awayRuns > homeRuns;
+            completed.push({ ts, won });
         }
     }
-    if (w + l === 0) return null;
-    return { w, l, pct: winPct(w, l), window_days: days };
+    // Newest first → slice to N.
+    completed.sort((a, b) => b.ts - a.ts);
+    const window = completed.slice(0, n);
+    if (window.length === 0) return null;
+
+    let w = 0, l = 0;
+    for (const g of window) {
+        if (g.won) w += 1; else l += 1;
+    }
+    return {
+        w, l,
+        pct:           winPct(w, l),
+        // Reflect what we actually had to work with — if the team hasn't
+        // played 30 games yet, we report what we found and how many.
+        window_games:  window.length,
+        requested:     n,
+        short_window:  window.length < n,
+    };
 }
