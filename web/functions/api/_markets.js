@@ -1392,41 +1392,56 @@ const SMARKETS_BASE = "https://api.smarkets.com/v3";
 async function listSmarketsMlbMarkets() {
     let events;
     try {
-        const url = `${SMARKETS_BASE}/events/?type=baseball_match&state=upcoming&limit=50`;
+        const url = `${SMARKETS_BASE}/events/?type=baseball_match&state=upcoming&limit=20`;
         const data = await fetchJson(url, { cacheTtl: 30 });
         events = Array.isArray(data?.events) ? data.events : [];
     } catch {
         return [];
     }
     if (!events.length) return [];
+    events = events.slice(0, 16);  // cap for Cloudflare 50-subreq budget
 
-    // For each event, fetch the markets, then the "Match winner"
-    // market's contracts + last_executed_prices.
-    const results = await Promise.allSettled(events.map(async (ev) => {
-        const evId = ev.id;
-        const mktsRes = await fetchJson(
-            `${SMARKETS_BASE}/events/${evId}/markets/`,
-            { cacheTtl: 30 },
-        ).catch(() => null);
-        const markets = mktsRes?.markets || [];
+    // 1. Per-event markets fan-out (~16 reqs).
+    const marketsByEvent = await Promise.allSettled(
+        events.map((ev) => fetchJson(`${SMARKETS_BASE}/events/${ev.id}/markets/`, { cacheTtl: 30 })
+            .then((mkts) => ({ ev, markets: mkts?.markets || [] }))
+            .catch(() => ({ ev, markets: [] }))
+        ),
+    );
+
+    // 2. Find each event's "Match winner" market id.
+    const winners = [];
+    for (const r of marketsByEvent) {
+        if (r.status !== "fulfilled") continue;
+        const { ev, markets } = r.value;
         const winner = markets.find((m) => /winner|match/i.test(m.name || ""));
-        if (!winner) return null;
-        const [contracts, prices] = await Promise.allSettled([
-            fetchJson(`${SMARKETS_BASE}/markets/${winner.id}/contracts/`,                { cacheTtl: 20 }),
-            fetchJson(`${SMARKETS_BASE}/markets/${winner.id}/last_executed_prices/`,    { cacheTtl: 10 }),
-        ]);
-        return {
-            ev, winner,
-            contracts: contracts.status === "fulfilled" ? contracts.value?.contracts : null,
-            prices:    prices.status === "fulfilled" ? prices.value?.last_executed_prices?.[winner.id] : null,
-        };
-    }));
+        if (winner) winners.push({ ev, winner });
+    }
+    if (!winners.length) return [];
+
+    // 3. Batch contracts + prices in TWO total requests using
+    //    Smarkets's comma-separated market-id URL syntax. Saves us
+    //    30+ subrequests vs. one call per market.
+    const winnerIds = winners.map((w) => w.winner.id).join(",");
+    const [contractsResp, pricesResp] = await Promise.allSettled([
+        fetchJson(`${SMARKETS_BASE}/markets/${winnerIds}/contracts/`, { cacheTtl: 20 }),
+        fetchJson(`${SMARKETS_BASE}/markets/${winnerIds}/last_executed_prices/`, { cacheTtl: 10 }),
+    ]);
+    const contractsAll = contractsResp.status === "fulfilled" ? (contractsResp.value?.contracts || []) : [];
+    const pricesByMkt  = pricesResp.status   === "fulfilled" ? (pricesResp.value?.last_executed_prices || {}) : {};
+
+    const contractsByMkt = new Map();
+    for (const c of contractsAll) {
+        const mid = String(c.market_id);
+        if (!contractsByMkt.has(mid)) contractsByMkt.set(mid, []);
+        contractsByMkt.get(mid).push(c);
+    }
 
     const out = [];
-    for (const r of results) {
-        if (r.status !== "fulfilled" || !r.value) continue;
-        const { ev, winner, contracts, prices } = r.value;
-        if (!Array.isArray(contracts) || !contracts.length) continue;
+    for (const { ev, winner } of winners) {
+        const contracts = contractsByMkt.get(String(winner.id)) || [];
+        const prices = pricesByMkt[String(winner.id)] || null;
+        if (!contracts.length) continue;
         // Smarkets event name is "Astros at Rangers" — home is the
         // second team. We map contract_type ("HOME" / "AWAY") so the
         // mapping is unambiguous regardless of name order.
