@@ -3490,18 +3490,31 @@ function renderMarkets(d) {
     const consAway = d.consensus?.away_win;
     const edge    = d.consensus?.edge_home;
 
+    // Game tracker shows ONLY game-day lines. Season futures, series
+    // futures, MVP/Cy Young, etc. live on the team page (#team/X) so
+    // the live PA-by-PA companion stays focused on tonight's matchup.
     return `
       <div class="markets">
         ${renderMarketsHeader(d, ourWe, consHome, consAway, edge)}
         ${renderMarketsSection("Moneyline (who wins)",    d.markets.moneyline)}
         ${renderMarketsSection("Spread (run line)",       d.markets.spread)}
         ${renderMarketsSection("Total runs (over/under)", d.markets.total)}
-        ${renderMarketsSection("Player props",            d.markets.player_prop)}
+        ${renderMarketsSection("Player props · tonight",  d.markets.player_prop)}
         ${renderMarketsSection("Team props",              d.markets.team_prop)}
-        ${renderMarketsSection("Series outcomes",         d.markets.series)}
-        ${renderMarketsSection("Futures (season-long)",   d.markets.future)}
+        ${(d.markets.future?.length || d.markets.series?.length) ? `
+          <div class="markets-team-link-note">
+            <a href="#team/${d.teams?.home?.tricode || d.teams?.home?.abbr}">
+              Season futures for ${d.teams?.home?.abbr} →
+            </a>
+            <a href="#team/${d.teams?.away?.tricode || d.teams?.away?.abbr}">
+              Season futures for ${d.teams?.away?.abbr} →
+            </a>
+          </div>
+        ` : ""}
         ${renderMarketsSection("Other questions",         d.markets.other)}
         <div class="markets-footnote">
+          Game-day lines only. Season futures (WS odds, MVP, division) live
+          on each team's page.
           Updates every 20s.
           ${d.market_count} live quote${d.market_count === 1 ? "" : "s"}
           across ${d.sources_present.length} source${d.sources_present.length === 1 ? "" : "s"}
