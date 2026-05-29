@@ -179,6 +179,52 @@ function parseJsonArray(s) {
 // one parent event + N child markets). We flatten to one Market per
 // sub-market so the UI can render them individually.
 
+// Polymarket's event.startDate is the contract creation time (often a
+// week before the underlying game). The descriptions, however,
+// reliably embed the actual game time in the phrase
+//   "scheduled for {Month} {day} at {h}:{mm} {AM/PM} ET"
+// Parse that to a UTC millis timestamp so the per-game endpoint's
+// 48h time-window check can match correctly. If parsing fails, we
+// fall back to whatever was passed in (typically event.startDate).
+const POLY_MONTH_INDEX = {
+    jan:0,feb:1,mar:2,apr:3,may:4,jun:5,
+    jul:6,aug:7,sep:8,oct:9,nov:10,dec:11,
+};
+function parsePolymarketGameTime(description, fallbackIso) {
+    const fallbackMs = fallbackIso ? Date.parse(fallbackIso) : null;
+    if (!description) return fallbackMs;
+    const m = description.match(
+        /scheduled for ([A-Z][a-z]+)\s+(\d{1,2})(?:[a-z]*)?(?:,\s*(\d{4}))?(?:[^.]*?at\s+(\d{1,2}):(\d{2})\s*(AM|PM)\s*ET)?/i
+    );
+    if (!m) return fallbackMs;
+    const [, monStr, dayStr, yearStr, hhStr, mmStr, ampm] = m;
+    const monIdx = POLY_MONTH_INDEX[monStr.slice(0, 3).toLowerCase()];
+    if (monIdx == null) return fallbackMs;
+    const day = Number(dayStr);
+    if (!Number.isFinite(day) || day < 1 || day > 31) return fallbackMs;
+
+    // Year: explicit > fallback's year > current year. (Polymarket
+    // doesn't usually print a year, since the contracts resolve within
+    // the same calendar season.)
+    const year = yearStr ? Number(yearStr) :
+        fallbackMs ? new Date(fallbackMs).getUTCFullYear() :
+        new Date().getUTCFullYear();
+
+    // Time: default to 7 PM ET when the description doesn't specify
+    // (rare but possible). MLB regular-season games are in DST so
+    // ET = UTC-4 → add 4 hours to convert ET clock time → UTC.
+    let h24 = 19, mins = 0;
+    if (hhStr) {
+        h24 = Number(hhStr);
+        mins = Number(mmStr) || 0;
+        const tag = (ampm || "").toUpperCase();
+        if (tag === "PM" && h24 < 12) h24 += 12;
+        if (tag === "AM" && h24 === 12) h24 = 0;
+    }
+    return Date.UTC(year, monIdx, day, h24 + 4, mins);
+}
+
+
 async function listPolymarketMlbMarkets() {
     const url = `${POLY_GAMMA}/events`
               + `?tag_slug=baseball&active=true&closed=false&limit=200`;
@@ -196,7 +242,15 @@ async function listPolymarketMlbMarkets() {
     for (const ev of events) {
         const evTitle = ev.title || "";
         const evSlug  = ev.slug || "";
-        const startMs = ev.startDate ? Date.parse(ev.startDate) : null;
+        // ev.startDate on Polymarket is the contract CREATION time
+        // (often a week before the game). ev.endDate is the resolution
+        // cut-off (often a week after the game). Neither matches "first
+        // pitch", which the per-game time-window check needs. Parse the
+        // real game time out of the description's "scheduled for X" line
+        // and fall back to startDate only if the description is missing.
+        // Without this, every Polymarket MLB market gets silently
+        // dropped from /api/game/{id}/markets by the 48h window.
+        const startMs = parsePolymarketGameTime(ev.description, ev.startDate);
         const endMs   = ev.endDate ? Date.parse(ev.endDate) : null;
         const evVol   = Number(ev.volume) || Number(ev.volume24hr) || undefined;
         const evLiq   = Number(ev.liquidity) || undefined;
@@ -226,6 +280,10 @@ async function listPolymarketMlbMarkets() {
                 ? `https://polymarket.com/event/${evSlug || m.slug}`
                 : `https://polymarket.com/`;
 
+            // Sub-market may have its own scheduled date too — prefer
+            // it over the event-level parse so per-game-of-a-series
+            // contracts (rare but possible) bind to the right night.
+            const subStartMs = parsePolymarketGameTime(m.description, null) || startMs;
             out.push(flat({
                 id: `polymarket:${m.id || m.conditionId}`,
                 source: "polymarket",
@@ -239,7 +297,7 @@ async function listPolymarketMlbMarkets() {
                 })),
                 question_type: qType,
                 status: m.closed ? "closed" : "open",
-                start_time: startMs ? new Date(startMs).toISOString() : null,
+                start_time: subStartMs ? new Date(subStartMs).toISOString() : null,
                 close_time: endMs ? new Date(endMs).toISOString() : null,
                 home_tricode: teams.home,
                 away_tricode: teams.away,
@@ -2095,6 +2153,104 @@ async function listEspnDraftKingsMlbMarkets() {
         }
     }
     return out;
+}
+
+
+// ── Live-line source whitelist ────────────────────────────────────
+//
+// Some sources serve LIVE in-play odds (updated continuously while the
+// game is in progress); others are PREGAME-ONLY (the line is frozen at
+// first pitch and stays stuck on the opener until the next slate).
+// Mixing both into a "cross-source consensus" makes the average
+// meaningless once a game starts moving — the stale pregame number
+// drags consensus toward the pregame opinion even as live sources have
+// already moved 50pp the other way.
+//
+// CLASSIFICATION DISCIPLINE: every source listed below was verified
+// against MLB's official Baseball Savant home_win probability on a
+// real live game. A source qualifies as LIVE only if its quote is
+// within ~10pp of Savant on at least one in-progress game (and the
+// adapter actually covers in-progress games rather than next-up ones).
+// Anything else is PREGAME. Verification harness lives at
+// docs/markets/source-verification.md — re-run when adding a source.
+//
+// LIVE (verified against in-progress games):
+//   polymarket : prediction-market CLOB, 24/7 trading. Verified
+//                2026-05-28 game 822896: 6.5% home vs Savant 6.6%
+//                (0.1pp error).
+//   bovada     : sportsbook, public coupon endpoint serves live events
+//                (the league listing intentionally has preMatchOnly off).
+//                Verified 2026-05-28 game 822896: 12.6% home vs Savant
+//                6.6% (6pp sportsbook lag, but tracking live state).
+//   kalshi     : KXMLBGAME tickers trade until the game ends. No
+//                traders during tonight's game so the row was null
+//                (harmless — null skips consensus), but the model is
+//                live by design.
+//   sxbet      : on-chain orderbook, continuous. Same as kalshi —
+//                null tonight, harmless.
+//   manifold   : prediction market, continuously priced. Often missing
+//                from MLB games entirely (low volume); harmless.
+//
+// PREGAME / BROKEN (DO NOT use in live consensus):
+//   pinnacle     : VERIFIED 2026-05-28 — adapter's
+//                  /leagues/246/matchups endpoint excludes in-progress
+//                  matches by default. Every one of pinnacle's 62
+//                  moneyline rows tonight pointed at TOMORROW's slate
+//                  (TEX-KC, LAD-PHI, PIT-MIN, ...) — none covered the
+//                  live HOU-TEX. Add to LIVE_LINE_SOURCES only after
+//                  the adapter is rewritten to fetch the in-play
+//                  matchups endpoint and verified live.
+//   smarkets     : 2026-05-28 — adapter hits Cloudflare's per-Worker
+//                  subrequest cap on the prices fetch; when prices
+//                  come back empty, the adapter still emits outcomes
+//                  with probability=0 instead of probability=null,
+//                  which would land in consensus as a 0% home-win
+//                  quote and drag the average to the floor. Stays
+//                  PREGAME until the adapter is fixed.
+//   espn_dk      : VERIFIED 2026-05-28 game 823378 — reported PIT
+//                  -175 (~64% home) while PIT was getting blown out
+//                  and Savant had them at ~2%. The ESPN odds endpoint
+//                  reports the pregame line and does not refresh
+//                  in-play.
+//   thescore     : VERIFIED 2026-05-28 game 822896 — reported TEX
+//                  -145 (~57% home) for an in-progress game where
+//                  Savant had TEX at 6.6%. Also serves the prior
+//                  day's date in start_time (May 28 00:05Z) instead
+//                  of tonight's, suggesting `timestamped_odds[]`
+//                  freezes at the previous day's close-time line.
+//   vegasinsider : Las Vegas OPENING odds grid HTML — by design a
+//                  pregame snapshot of where the retail books opened.
+//                  Tonight's grid even returned TEX @ DET (a
+//                  tomorrow-or-later game), not tonight's HOU @ TEX.
+//   vi_*         : every VegasInsider sub-book (bet365, betmgm,
+//                  draftkings, caesars, fanduel, hardrock, fanatics,
+//                  riverscasino) inherits the grid's pregame-ness.
+//   odds_api     : free-tier sport-level h2h/spreads/totals are
+//                  pregame. (Currently disabled — no key configured.)
+//
+// 2026-05-28 user report: live UI showed market consensus 36.3% for
+// TEX while bovada had 12.6% and thescore had 57.1% — averaging the
+// stale thescore line into the live bovada line gave a number 30pp
+// off from reality. This whitelist is the fix.
+export const LIVE_LINE_SOURCES = new Set([
+    "polymarket",
+    "bovada",
+    "kalshi",
+    "sxbet",
+    "manifold",
+]);
+
+export function isLiveLineSource(source) {
+    return LIVE_LINE_SOURCES.has(source);
+}
+
+// Drop every market whose source doesn't update continuously through
+// the game. Use this before computing cross-source consensus or before
+// handing markets to the UI — pregame-only sources freeze at first
+// pitch and quietly pollute every downstream calc with stale prices.
+export function filterToLiveLineSources(markets) {
+    if (!Array.isArray(markets)) return [];
+    return markets.filter((m) => LIVE_LINE_SOURCES.has(m.source));
 }
 
 

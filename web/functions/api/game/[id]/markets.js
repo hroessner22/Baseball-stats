@@ -17,9 +17,11 @@
 import {
     listAllMlbMarkets,
     filterMarketsForGame,
+    filterToLiveLineSources,
     groupByQuestion,
     consensusProbability,
     teamTricode,
+    LIVE_LINE_SOURCES,
 } from "../../_markets.js";
 
 const CACHE_SECONDS = 10;   // rapid updates per user feedback
@@ -82,9 +84,24 @@ export async function onRequest(context) {
     } catch (e) {
         return jsonError(502, `markets fetch failed: ${e.message || e}`);
     }
-    const gameMarkets = filterMarketsForGame(
+    // Filter to this game's teams + time window, THEN drop every
+    // source that doesn't publish LIVE in-play lines. The pregame
+    // sources (espn_dk, thescore, vegasinsider + all vi_* sub-books,
+    // odds_api free-tier) freeze at first pitch and pollute every
+    // downstream calculation — see LIVE_LINE_SOURCES in _markets.js
+    // for the full source-by-source classification. User feedback
+    // 2026-05-28: live consensus was averaging pregame openers with
+    // current live lines and reporting nonsense numbers.
+    const allGameMarkets = filterMarketsForGame(
         allMarkets, homeAbbr, awayAbbr, game.start_time,
     );
+    const gameMarkets       = filterToLiveLineSources(allGameMarkets);
+    const droppedPregame    = allGameMarkets.length - gameMarkets.length;
+    const pregameSourcesSeen = Array.from(new Set(
+        allGameMarkets
+            .filter((m) => !LIVE_LINE_SOURCES.has(m.source))
+            .map((m) => m.source)
+    )).sort();
 
     // 3. Group by question type so the dashboard can render sections.
     const grouped = groupByQuestion(gameMarkets);
@@ -157,13 +174,26 @@ export async function onRequest(context) {
         sources_present: Array.from(new Set(gameMarkets.map((m) => m.source))).sort(),
         // Our model's headline WE (forwarded so the UI can show side-by-side).
         our_we_home: game.win_expectancy,
-        // Consensus across all sources that quote the question.
+        // Consensus across all LIVE-LINE sources that quote the
+        // question. Pregame-only sources (espn_dk, thescore,
+        // vegasinsider + all vi_*) are deliberately excluded — see
+        // LIVE_LINE_SOURCES in _markets.js for the source breakdown
+        // and the 2026-05-28 evidence for why mixing was broken.
         consensus: {
             home_win:  homeWinConsensus,
             away_win:  awayWinConsensus,
             edge_home: homeWinConsensus != null && game.win_expectancy != null
                 ? game.win_expectancy - homeWinConsensus
                 : null,
+            // Live-only metadata so the UI can show "consensus of N
+            // LIVE sources" and surface what was filtered out as
+            // pregame-stale.
+            live_only:               true,
+            contributing_sources:    Array.from(new Set(
+                (grouped.moneyline || []).map((m) => m.source)
+            )).sort(),
+            pregame_sources_dropped: pregameSourcesSeen,
+            dropped_market_count:    droppedPregame,
         },
         // Per-source individual quotes — one row per book. UI renders
         // these in the header instead of (or alongside) the averaged
