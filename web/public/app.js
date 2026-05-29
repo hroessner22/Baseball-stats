@@ -4980,25 +4980,22 @@ function renderMatchupCard(m) {
            </div>`
         : "";
 
-    // "What have they actually done this season?" — strictly the daily_pa
-    // outcomes, no prediction math layered on top. Honest descriptive
-    // counterpoint to the predicted distribution above.
+    // Recent-form card: redesigned per user feedback to use a sabermetric
+    // player representation instead of raw counts. Batter side shows the
+    // slash line (AVG/OBP/SLG/OPS) up top with K% / BB% / ISO bars vs
+    // league average. Pitcher side shows BAA / K-rate / BB-rate / HR-rate
+    // bars vs league. Inspired by MLB.com player cards + Baseball Savant
+    // percentile sliders.
     const rf = m.recent_form;
     const recentForm = (rf && (rf.batter.pa > 0 || rf.pitcher.bf > 0))
         ? `
           <div class="recent-form">
             <div class="recent-form-head">Recent form · current season</div>
             ${rf.batter.pa > 0
-                ? `<div class="rf-row">
-                     <span class="rf-label">${shortName(m.batter.name)}</span>
-                     <span class="rf-stats">${describeRecentOutcomes(rf.batter.pa, rf.batter.outcomes)}</span>
-                   </div>`
+                ? renderBatterStatCard(m.batter.name, m.batter.mlbam, rf.batter)
                 : ""}
             ${rf.pitcher.bf > 0
-                ? `<div class="rf-row">
-                     <span class="rf-label">${shortName(m.pitcher.name)}</span>
-                     <span class="rf-stats">${describeRecentOutcomes(rf.pitcher.bf, rf.pitcher.outcomes)}</span>
-                   </div>`
+                ? renderPitcherStatCard(m.pitcher.name, m.pitcher.mlbam, rf.pitcher)
                 : ""}
           </div>
         `
@@ -5191,6 +5188,146 @@ function describeRecentOutcomes(total, outcomes) {
     if (hits) parts.push(`${hits} H`);
     if (outs) parts.push(`${outs} OUT`);
     return `${total} PA — ${parts.join(" · ")}`;
+}
+
+// 2024-2025 MLB-average rate stats used as the reference line on every
+// stat bar. Sources: FanGraphs league dashboard. These shift slightly
+// year to year; the bar is a "vs typical" guide, not a precise percentile.
+const LG_AVG = {
+    K_PCT_BAT:    0.224,   // batter K%
+    BB_PCT_BAT:   0.085,   // batter BB%
+    AVG:          0.246,
+    OBP:          0.314,
+    SLG:          0.407,
+    OPS:          0.721,
+    ISO:          0.161,   // raw power (SLG-AVG)
+    HR_PER_PA:    0.029,   // batter HRs per plate appearance
+    K_PCT_PIT:    0.222,   // pitcher K%
+    BB_PCT_PIT:   0.085,   // pitcher BB%
+    BAA:          0.244,   // batting average against
+    HR_PER_BF:    0.029,   // HR allowed per batter faced
+};
+
+// Slash + key rates for batters. Slash line top, three Savant-style
+// rate bars below (K%, BB%, ISO) with the league line marked.
+function renderBatterStatCard(name, mlbam, b) {
+    const pa = b.pa;
+    const o  = b.outcomes;
+    const k  = o.K   || 0;
+    const bb = o.BB  || 0;
+    const hbp= o.HBP || 0;
+    const hr = o.HR  || 0;
+    const tr = o["3B"] || 0;
+    const db = o["2B"] || 0;
+    const sg = o["1B"] || 0;
+    const h  = sg + db + tr + hr;
+    const tb = sg + 2*db + 3*tr + 4*hr;
+    const ab = Math.max(1, pa - bb - hbp);
+    const avg = h / ab;
+    const obp = (h + bb + hbp) / pa;
+    const slg = tb / ab;
+    const ops = obp + slg;
+    const iso = slg - avg;
+    const kPct  = k  / pa;
+    const bbPct = bb / pa;
+    const hrRate = hr / pa;
+
+    return `
+      <div class="player-stat-card batter-card">
+        <header class="psc-head">
+          <span class="psc-name">${escapeHTML(shortName(name))}</span>
+          <span class="psc-meta">${pa} PA · ${h}-${ab}, ${hr} HR</span>
+        </header>
+        <div class="psc-slash">
+          <div class="psc-slash-tile"><div class="psc-slash-num">${fmtAvgSh(avg)}</div><div class="psc-slash-key">AVG</div></div>
+          <div class="psc-slash-tile"><div class="psc-slash-num">${fmtAvgSh(obp)}</div><div class="psc-slash-key">OBP</div></div>
+          <div class="psc-slash-tile"><div class="psc-slash-num">${fmtAvgSh(slg)}</div><div class="psc-slash-key">SLG</div></div>
+          <div class="psc-slash-tile psc-slash-ops"><div class="psc-slash-num">${fmtAvgSh(ops)}</div><div class="psc-slash-key">OPS</div></div>
+        </div>
+        <div class="psc-bars">
+          ${renderRateBar("K%",   kPct,  LG_AVG.K_PCT_BAT,  { invert: true })}
+          ${renderRateBar("BB%",  bbPct, LG_AVG.BB_PCT_BAT)}
+          ${renderRateBar("ISO",  iso,   LG_AVG.ISO,        { fmt: fmtAvgSh })}
+        </div>
+      </div>
+    `;
+}
+
+// Pitcher: BAA / K% / BB% / HR-allowed%. Same bar style as batter card
+// but with pitcher-specific reference lines (K% high is GOOD for
+// pitchers; BB% high is BAD).
+function renderPitcherStatCard(name, mlbam, p) {
+    const bf = p.bf;
+    const o  = p.outcomes;
+    const k  = o.K   || 0;
+    const bb = o.BB  || 0;
+    const hbp= o.HBP || 0;
+    const hr = o.HR  || 0;
+    const tr = o["3B"] || 0;
+    const db = o["2B"] || 0;
+    const sg = o["1B"] || 0;
+    const h  = sg + db + tr + hr;
+    const ab = Math.max(1, bf - bb - hbp);
+    const baa = h / ab;
+    const kPct  = k  / bf;
+    const bbPct = bb / bf;
+    const hrRate = hr / bf;
+
+    return `
+      <div class="player-stat-card pitcher-card">
+        <header class="psc-head">
+          <span class="psc-name">${escapeHTML(shortName(name))}</span>
+          <span class="psc-meta">${bf} BF · ${h} hits, ${hr} HR allowed</span>
+        </header>
+        <div class="psc-bars">
+          ${renderRateBar("K%",     kPct,   LG_AVG.K_PCT_PIT)}
+          ${renderRateBar("BB%",    bbPct,  LG_AVG.BB_PCT_PIT, { invert: true })}
+          ${renderRateBar("BAA",    baa,    LG_AVG.BAA,        { invert: true, fmt: fmtAvgSh })}
+          ${renderRateBar("HR rate", hrRate, LG_AVG.HR_PER_BF,  { invert: true })}
+        </div>
+      </div>
+    `;
+}
+
+// One horizontal rate bar showing the player's value relative to the
+// league average. Markers: filled portion = player, vertical tick =
+// league. Color: green when player is BETTER than league, red when
+// WORSE, gray when within ~10% of league. Invert flips the color
+// direction (high K% is BAD for batters, GOOD for pitchers; etc).
+function renderRateBar(label, val, leagueAvg, opts = {}) {
+    const invert = !!opts.invert;
+    const fmt    = opts.fmt || fmtPctSh;
+    // Map val to a 0-100 horizontal scale anchored on leagueAvg in the
+    // middle. ±60% of league spans the full width.
+    const range = leagueAvg * 1.2;       // 0 → 2.2× league across bar
+    const xPlayer  = Math.max(0, Math.min(100, (val / range) * 50));
+    const xLeague  = Math.max(0, Math.min(100, (leagueAvg / range) * 50));
+    // Wait, that gives us 0-50 for 0-2× league. Use 0-100 for 0-2× anchored at 50.
+    const xP = Math.max(0, Math.min(100, (val / (leagueAvg * 2)) * 100));
+    const xL = 50;  // league always sits at center
+    const delta = val - leagueAvg;
+    const sigBeats = Math.abs(delta) > leagueAvg * 0.10;
+    const better = invert ? delta < 0 : delta > 0;
+    const cls = !sigBeats ? "neutral" : better ? "better" : "worse";
+    return `
+      <div class="psc-rate ${cls}">
+        <span class="psc-rate-label">${label}</span>
+        <div class="psc-rate-track">
+          <div class="psc-rate-fill" style="width:${xP}%"></div>
+          <div class="psc-rate-marker" style="left:${xL}%" title="League avg ${fmt(leagueAvg)}"></div>
+        </div>
+        <span class="psc-rate-val">${fmt(val)}</span>
+      </div>
+    `;
+}
+
+function fmtAvgSh(p) {
+    if (p == null || !Number.isFinite(p)) return "—";
+    return p.toFixed(3).replace(/^0\./, ".");
+}
+function fmtPctSh(p) {
+    if (p == null || !Number.isFinite(p)) return "—";
+    return `${(p * 100).toFixed(1)}%`;
 }
 
 // One-sentence "why is this team favored?" — picks the most salient

@@ -4187,14 +4187,137 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
    model's prediction above. Limited to whatever days are in daily_pa. */
 .matchup-card .recent-form {
     margin-top: 12px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: var(--surface-2);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* Sabermetric player stat cards — replaces the raw '296 PA — 73 K · 26
+   BB · 10 HR · 60 H · 136 OUT' text dump per user feedback. Shows the
+   slash line up top, then horizontal rate bars (K% / BB% / ISO for
+   batters; K% / BB% / BAA / HR-rate for pitchers) anchored at the
+   league average. Inspired by MLB.com player cards + Savant percentile
+   sliders. */
+.player-stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.psc-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.psc-name {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--text);
+}
+.psc-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Slash-line tiles — batter card only */
+.psc-slash {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+}
+.psc-slash-tile {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 4px;
+    text-align: center;
+}
+.psc-slash-tile.psc-slash-ops {
+    background: rgba(56, 189, 248, 0.08);
+    border-color: rgba(56, 189, 248, 0.25);
+}
+.psc-slash-num {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+}
+.psc-slash-key {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 2px;
+}
+
+/* Rate bars — show player's value as fill, league avg as a tick. */
+.psc-bars {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
+.psc-rate {
+    display: grid;
+    grid-template-columns: 64px 1fr 56px;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+}
+.psc-rate-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.psc-rate-val {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--text);
+}
+.psc-rate-track {
+    position: relative;
+    height: 8px;
+    background: rgba(148, 163, 184, 0.12);
+    border-radius: 4px;
+    overflow: visible;
+}
+.psc-rate-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: 4px;
+    background: var(--text-dim);
+    transition: width 200ms ease, background 200ms ease;
+}
+.psc-rate-marker {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    background: rgba(255, 255, 255, 0.45);
+    transform: translateX(-1px);
+}
+.psc-rate.better  .psc-rate-fill { background: #22C55E; }
+.psc-rate.better  .psc-rate-val  { color: #34D399; }
+.psc-rate.worse   .psc-rate-fill { background: #EF4444; }
+.psc-rate.worse   .psc-rate-val  { color: #F87171; }
+.psc-rate.neutral .psc-rate-fill { background: rgba(148, 163, 184, 0.4); }
 .matchup-card .recent-form-head {
     font-size: 10px;
     font-weight: 700;
