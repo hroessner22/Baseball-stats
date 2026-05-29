@@ -2818,6 +2818,77 @@ function tickerState(g) {
     return (g.detail || g.status).slice(0, 6).toUpperCase();
 }
 
+// Tiny helper for the iconic-park overlays — pure (dist, angleDeg) → xy.
+// Duplicates parks.js's dirToXY but stays inline here since landmark
+// rendering only needs two segments per park.
+function _xy(d, angleDeg) {
+    const rad = angleDeg * Math.PI / 180;
+    return { x: 250 + d * Math.sin(rad), y: 460 - d * Math.cos(rad) };
+}
+
+// Park-specific landmark overlay — drawn on top of the outfield wall
+// when the park has an iconic feature worth flagging visually.
+function landmarkOverlay(park) {
+    if (!park || !park.landmark) return "";
+    if (park.landmark === "monster") {
+        // Green Monster runs from the LF foul pole to roughly LC. The
+        // 37-ft wall doesn't show up as a height in 2D so we paint it
+        // as a thick green stroke along that arc.
+        const a = _xy(park.LL, -45);
+        const b = _xy(park.L  ?? park.LC, park.L ? -33.75 : -22.5);
+        return `<path class="park-landmark monster" d="M ${a.x.toFixed(1)},${a.y.toFixed(1)} L ${b.x.toFixed(1)},${b.y.toFixed(1)}"/>`;
+    }
+    if (park.landmark === "short_porch") {
+        // Yankee Stadium's short RF — emphasize the wall from the RF
+        // pole into the RC gap so the 314-ft pull line jumps out.
+        const a = _xy(park.RL, 45);
+        const b = _xy(park.RC, 22.5);
+        return `<path class="park-landmark short-porch" d="M ${a.x.toFixed(1)},${a.y.toFixed(1)} L ${b.x.toFixed(1)},${b.y.toFixed(1)}"/>`;
+    }
+    if (park.landmark === "ivy") {
+        // Wrigley — ivy covers the entire outfield wall. Repaint the
+        // wall in ivy-green so the park feels like Wrigley.
+        const path = parkWallPath(park, { closeAtHome: false });
+        return path ? `<path class="park-landmark ivy" d="${path}"/>` : "";
+    }
+    if (park.landmark === "cove") {
+        // Oracle Park's McCovey Cove — water beyond RF. We draw a thin
+        // blue stripe outside the RF wall.
+        const a = _xy(park.RL + 15, 45);
+        const b = _xy(park.RC + 15, 22.5);
+        return `<path class="park-landmark cove" d="M ${a.x.toFixed(1)},${a.y.toFixed(1)} Q ${(a.x + b.x)/2 + 20},${(a.y + b.y)/2} ${b.x.toFixed(1)},${b.y.toFixed(1)}"/>`;
+    }
+    return "";
+}
+
+// Helper for fieldPane(): list of {x, y, d, anchor} for the canonical
+// distance markers on the outfield wall. Anchor + a small offset are
+// chosen so the labels sit just inside the wall and don't collide with
+// each other or with the wall stroke.
+function POINT_LABELS_FOR_PARK(park) {
+    if (!park) return [];
+    // Inset 18 ft toward home so labels sit inside the wall, not on it.
+    const labelPoints = [
+        { key: "LL", anchor: "end",    dx:  6, dy:  4 },
+        { key: "LC", anchor: "end",    dx:  4, dy: 12 },
+        { key: "C",  anchor: "middle", dx:  0, dy: 18 },
+        { key: "RC", anchor: "start",  dx: -4, dy: 12 },
+        { key: "RL", anchor: "start",  dx: -6, dy:  4 },
+    ];
+    const ANGLE = { LL: -45, LC: -22.5, C: 0, RC: 22.5, RL: 45 };
+    const out = [];
+    for (const lp of labelPoints) {
+        const d = park[lp.key];
+        if (d == null) continue;
+        const rad = ANGLE[lp.key] * Math.PI / 180;
+        const inset = 22;
+        const x = 250 + (d - inset) * Math.sin(rad) + lp.dx;
+        const y = 460 - (d - inset) * Math.cos(rad) + lp.dy;
+        out.push({ x, y, d, anchor: lp.anchor });
+    }
+    return out;
+}
+
 function fieldPane(g) {
     const we = g.win_expectancy;
     const intensity = we == null ? 0 : Math.abs(we - 0.5) * 2;
@@ -2826,6 +2897,20 @@ function fieldPane(g) {
         g.runners?.[slot]
             ? `<text class="runner-name" x="${x}" y="${y}" text-anchor="${anchor}">${shortName(g.runners[slot])}</text>`
             : "";
+
+    // Look up the actual ballpark this game is being played at so the
+    // outfield wall draws to scale instead of a generic fan. parks.js
+    // exposes the helpers as window globals (loaded before app.js).
+    const park       = (typeof resolvePark === "function") ? resolvePark(g) : null;
+    const wallPath   = park && parkWallPath(park,        { closeAtHome: true });
+    const trackPath  = park && parkWarningTrackPath(park, 12);
+    const foul       = park && parkFoulPoles(park);
+    const flavorChips = park && parkFlavorChips ? parkFlavorChips(park) : [];
+    const parkLabel  = park ? park.name : g.venue;
+    // Distance markers placed inside the wall at the canonical reference
+    // points so the silhouette is unambiguous (Coors's 424 RC, Fenway's
+    // 302 RL, Yankees's 314 RL all read at a glance).
+    const distMarks = park ? POINT_LABELS_FOR_PARK(park) : [];
 
     // Overlay labels on the SVG itself so the field is informative
     // without needing the matchup rows below. Pitcher last name near
@@ -2865,21 +2950,48 @@ function fieldPane(g) {
             </radialGradient>
           </defs>
 
-          <!-- Fair territory grass — fan shape, deeper in center -->
+          <!-- Fair territory grass — accurate park silhouette when we
+               know the venue, generic fan otherwise. Each park's posted
+               LL/L/LC/C/RC/R/RL reference distances are connected with
+               a Catmull-Rom curve so the outline matches Coors's deep
+               gaps, Yankees's short porch, Fenway's Green Monster, etc. -->
           <path class="outfield-grass"
-                d="M 250,460 L 440,270 Q 250,40 60,270 Z"/>
+                d="${wallPath || "M 250,460 L 440,270 Q 250,40 60,270 Z"}"/>
 
-          <!-- Warning track (the dirt ring inside the outfield wall) -->
-          <path class="warning-track"
-                d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>
+          <!-- Warning track (dirt ring inset 12 ft inside the wall) -->
+          ${trackPath
+              ? `<path class="warning-track-park" d="${trackPath}"/>`
+              : `<path class="warning-track" d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>`}
 
-          <!-- Foul lines (chalk) -->
-          <line class="foul-line" x1="250" y1="460" x2="440" y2="270"/>
-          <line class="foul-line" x1="250" y1="460" x2="60"  y2="270"/>
+          <!-- Foul lines (chalk) anchored at home, terminating at the
+               park's posted foul-pole distances. -->
+          <line class="foul-line" x1="250" y1="460"
+                x2="${foul ? foul.left.x.toFixed(1)  : 60}"
+                y2="${foul ? foul.left.y.toFixed(1)  : 270}"/>
+          <line class="foul-line" x1="250" y1="460"
+                x2="${foul ? foul.right.x.toFixed(1) : 440}"
+                y2="${foul ? foul.right.y.toFixed(1) : 270}"/>
 
-          <!-- Foul poles -->
-          <rect class="foul-pole" x="437" y="263" width="5" height="14"/>
-          <rect class="foul-pole" x="58"  y="263" width="5" height="14"/>
+          <!-- Foul poles at the actual posted LL / RL distances -->
+          <rect class="foul-pole"
+                x="${foul ? (foul.left.x  - 2.5).toFixed(1)  : 58}"
+                y="${foul ? (foul.left.y  - 7).toFixed(1)    : 263}"
+                width="5" height="14"/>
+          <rect class="foul-pole"
+                x="${foul ? (foul.right.x - 2.5).toFixed(1)  : 437}"
+                y="${foul ? (foul.right.y - 7).toFixed(1)    : 263}"
+                width="5" height="14"/>
+
+          <!-- Distance markers — small numerals at the posted points
+               so each silhouette is unambiguously the park it is. -->
+          ${distMarks.map((m) =>
+              `<text class="field-dist" x="${m.x.toFixed(1)}" y="${m.y.toFixed(1)}" text-anchor="${m.anchor}">${m.d}</text>`
+          ).join("")}
+
+          <!-- Park name strip across the very top of the field -->
+          ${parkLabel ? `<text class="field-park-name" x="250" y="22" text-anchor="middle">${escapeHTML(parkLabel)}</text>` : ""}
+
+          ${landmarkOverlay(park)}
 
           <!-- Basepaths (dirt diamond outline) -->
           <path class="basepath" d="M 250,455 L 388,318 L 250,180 L 112,318 Z"/>
@@ -2922,6 +3034,13 @@ function fieldPane(g) {
 
           ${countChip}
         </svg>
+        ${flavorChips && flavorChips.length
+            ? `<div class="field-park-chips">
+                 ${flavorChips.map((c) =>
+                     `<span class="fpc fpc-${c.kind}">${escapeHTML(c.text)}</span>`
+                 ).join("")}
+               </div>`
+            : ""}
         ${stateBanner}
         ${situationStrip(g)}
         ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
