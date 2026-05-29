@@ -4737,6 +4737,27 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .msrc-name-vi_hardrock     { background: rgba(202, 138, 4, 0.22);  color: #FDE68A; }
 .msrc-name-vi_fanatics     { background: rgba(14, 116, 144, 0.22); color: #A5F3FC; }
 .msrc-name-vi_riverscasino { background: rgba(30, 64, 175, 0.28);  color: #BFDBFE; }
+/* BettingPros aggregator — same retail books mirrored from their API
+   plus exchanges (Novig, ProphetX) and DFS books (DK Predictions,
+   FanDuel Picks, Fliff). Slightly desaturated to keep BP chips
+   visually distinct from VI chips so users can see which source is
+   fresher. */
+.msrc-name-bp_draftkings       { background: rgba(53, 169, 80, 0.13);  color: #BBF7D0; }
+.msrc-name-bp_fanduel          { background: rgba(37, 99, 235, 0.14);  color: #BFDBFE; }
+.msrc-name-bp_betmgm           { background: rgba(212, 175, 55, 0.14); color: #FEF3C7; }
+.msrc-name-bp_caesars          { background: rgba(139, 30, 63, 0.20);  color: #FECACA; }
+.msrc-name-bp_bet365           { background: rgba(22, 163, 74, 0.14);  color: #BBF7D0; }
+.msrc-name-bp_hardrock         { background: rgba(202, 138, 4, 0.14);  color: #FEF3C7; }
+.msrc-name-bp_fanatics         { background: rgba(14, 116, 144, 0.14); color: #CFFAFE; }
+.msrc-name-bp_betrivers        { background: rgba(30, 64, 175, 0.18);  color: #DBEAFE; }
+.msrc-name-bp_sugarhouse       { background: rgba(190, 18, 60, 0.16);  color: #FECDD3; }
+.msrc-name-bp_tipico           { background: rgba(15, 118, 110, 0.18); color: #99F6E4; }
+.msrc-name-bp_thescorebet      { background: rgba(234, 88, 12, 0.16);  color: #FFEDD5; }
+.msrc-name-bp_prophetx         { background: rgba(126, 34, 206, 0.18); color: #DDD6FE; }
+.msrc-name-bp_fliff            { background: rgba(244, 114, 182, 0.16); color: #FBCFE8; }
+.msrc-name-bp_novig            { background: rgba(99, 102, 241, 0.18); color: #C7D2FE; }
+.msrc-name-bp_dk_predictions   { background: rgba(132, 204, 22, 0.16); color: #D9F99D; }
+.msrc-name-bp_fanduel_picks    { background: rgba(96, 165, 250, 0.16); color: #DBEAFE; }
 .msrc-quote {
     display: inline-flex;
     align-items: baseline;
