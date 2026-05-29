@@ -864,6 +864,7 @@ export async function listAllMlbMarkets(env) {
         ["thescore",   listTheScoreMlbMarkets()],
         ["espn_dk",    listEspnDraftKingsMlbMarkets()],
         ["vegasinsider", listVegasInsiderMlbMarkets()],
+        ["bettingpros",  listBettingProsMlbMarkets()],
     ];
     const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
@@ -2131,6 +2132,175 @@ export function consensusProbability(markets, match) {
     }
     if (!n) return null;
     return sum / n;
+}
+
+
+// ── BettingPros adapter — 19 books via aggregator API ────────────
+//
+// BettingPros is a public odds aggregator at www.bettingpros.com. Their
+// production API is at api.bettingpros.com/v3/* gated by an x-api-key
+// header — the key is bundled in their frontend JS chunk and used by
+// every visitor's browser (same pattern as Pinnacle). Discovered by
+// reading their api-*.js bundle for the hardcoded string.
+//
+// One call to /v3/events?sport=MLB lists today's events (their IDs).
+// One call to /v3/offers?event_id=A:B:C&market_id=122&sport=MLB
+// returns the full BookID grid per event — typically 19 books quoting
+// moneyline, including everything VegasInsider gives us PLUS:
+//   - Tipico, Fliff, Novig, ProphetX (smaller / exchange operators)
+//   - DraftKings Predictions, DK Pick6 (DFS-style props markets)
+//   - SugarHouse, theScore Bet, FanDuel Picks
+//
+// Each (event × book) becomes its own Market with `source: bp_<slug>`
+// so the dashboard can show every book independently. Cap: max 10
+// offers per /v3/offers call so we paginate up to 2 pages for a
+// typical 16-game slate. ~3 subrequests total per /api/markets call —
+// same budget as theScore but ~3× the book coverage.
+
+const BP_BASE = "https://api.bettingpros.com/v3";
+const BP_API_KEY = "CHi8Hy5CEE4khd46XNYL23dCFX96oUdw6qOt1Dnh"; // bundled in their frontend
+const BP_MARKET_MONEYLINE = 122;
+
+// BettingPros book_id → [our slug, friendly label]. The slug is what
+// goes into Market.source (e.g. `bp_draftkings`). Books 0 (Consensus)
+// and the ones we have dedicated direct adapters for (Kalshi 68 /
+// Polymarket 73) are deliberately skipped.
+const BP_BOOKS = {
+    10:  ["fanduel",            "FanDuel"],
+    12:  ["draftkings",         "DraftKings"],
+    13:  ["caesars",            "Caesars"],
+    14:  ["fanatics",           "Fanatics"],
+    15:  ["sugarhouse",         "SugarHouse"],
+    18:  ["betrivers",          "BetRivers"],
+    19:  ["betmgm",             "BetMGM"],
+    24:  ["bet365",             "Bet365"],
+    27:  ["tipico",             "Tipico"],
+    33:  ["thescorebet",        "theScore Bet"],
+    38:  ["prophetx",           "ProphetX"],
+    39:  ["fliff",              "Fliff"],
+    49:  ["hardrock",           "Hard Rock"],
+    60:  ["novig",              "Novig"],
+    68:  ["kalshi",             "Kalshi"],
+    73:  ["polymarket",         "Polymarket"],
+    74:  ["dk_predictions",     "DK Predictions"],
+    75:  ["fanduel_picks",      "FanDuel Picks"],
+};
+const BP_BOOKS_SKIP = new Set(["kalshi", "polymarket"]);
+
+async function listBettingProsMlbMarkets() {
+    let events;
+    try {
+        const evData = await fetchJson(
+            `${BP_BASE}/events?sport=MLB&limit=25`,
+            { cacheTtl: 60, headers: { "x-api-key": BP_API_KEY } },
+        );
+        events = evData?.events || [];
+    } catch {
+        return [];
+    }
+    // Filter to events whose scheduled date is today (UTC). BettingPros
+    // returns the full slate; we only want tonight's lines.
+    const today = new Date().toISOString().slice(0, 10);
+    const todayIds = events
+        .filter((e) => (e.scheduled || "").startsWith(today))
+        .map((e) => e.id)
+        .filter(Boolean);
+    if (!todayIds.length) return [];
+
+    // /v3/offers caps at 10 events per call → paginate.
+    const chunks = [];
+    for (let i = 0; i < todayIds.length; i += 10) {
+        chunks.push(todayIds.slice(i, i + 10));
+    }
+    const offersData = await Promise.allSettled(
+        chunks.map((chunk) => fetchJson(
+            `${BP_BASE}/offers?market_id=${BP_MARKET_MONEYLINE}`
+            + `&sport=MLB&limit=10&event_id=${chunk.join(":")}`,
+            { cacheTtl: 20, headers: { "x-api-key": BP_API_KEY } },
+        )),
+    );
+
+    const out = [];
+    for (const r of offersData) {
+        if (r.status !== "fulfilled") continue;
+        const offers = r.value?.offers || [];
+        for (const offer of offers) {
+            const sels = offer.selections || [];
+            if (sels.length !== 2) continue;
+            const [sel0, sel1] = sels;
+            // Map book_id → main-line American cost per side.
+            const sideAm = (sel) => {
+                const m = new Map();
+                for (const b of sel.books || []) {
+                    const lines = b.lines || [];
+                    if (!lines.length) continue;
+                    const main = lines.find((l) => l.main && l.active && !l.is_off) || lines[0];
+                    if (main && main.cost != null) m.set(b.id, main.cost);
+                }
+                return m;
+            };
+            const am0 = sideAm(sel0);
+            const am1 = sideAm(sel1);
+
+            const tri0 = teamTricode(sel0.participant) || sel0.participant;
+            const tri1 = teamTricode(sel1.participant) || sel1.participant;
+            const awayTri = tri0;
+            const homeTri = tri1;
+            const matchup = `${sel0.participant} @ ${sel1.participant}`;
+
+            for (const [bookIdStr, [slug, label]] of Object.entries(BP_BOOKS)) {
+                if (BP_BOOKS_SKIP.has(slug)) continue;
+                const bookId = Number(bookIdStr);
+                const aAm = am0.get(bookId);
+                const hAm = am1.get(bookId);
+                if (aAm == null || hAm == null) continue;
+                const aP = americanToProbability(aAm);
+                const hP = americanToProbability(hAm);
+                if (aP == null || hP == null) continue;
+                const sum = aP + hP;
+                const src = `bp_${slug}`;
+                const aAmStr = aAm > 0 ? `+${aAm}` : `${aAm}`;
+                const hAmStr = hAm > 0 ? `+${hAm}` : `${hAm}`;
+                out.push(flat({
+                    id:      `${src}:ev${offer.event_id}:ml`,
+                    source:  src,
+                    title:   `${label} — ${matchup} Moneyline`,
+                    question_type: "moneyline",
+                    status:  "open",
+                    start_time: null,
+                    home_tricode: homeTri,
+                    away_tricode: awayTri,
+                    home_team:    sel1.participant,
+                    away_team:    sel0.participant,
+                    outcomes: [
+                        {
+                            id:   `${src}:ev${offer.event_id}:away`,
+                            name: sel0.participant,
+                            probability: aP,
+                            probability_devig: sum > 0 ? aP / sum : null,
+                            american: aAmStr,
+                            price:    aP > 0 ? 1 / aP : undefined,
+                        },
+                        {
+                            id:   `${src}:ev${offer.event_id}:home`,
+                            name: sel1.participant,
+                            probability: hP,
+                            probability_devig: sum > 0 ? hP / sum : null,
+                            american: hAmStr,
+                            price:    hP > 0 ? 1 / hP : undefined,
+                        },
+                    ],
+                    raw_market_id:      String(offer.event_id),
+                    source_event_id:    String(offer.event_id),
+                    source_event_title: matchup,
+                    book_count: 1,
+                    books_present: [slug],
+                    is_main_line: true,
+                }));
+            }
+        }
+    }
+    return out;
 }
 
 
