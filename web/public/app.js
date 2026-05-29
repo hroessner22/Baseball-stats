@@ -4005,6 +4005,21 @@ function renderMarketsAllBooksPanel(d) {
             || (oName.includes(want === "home" ? "home" : "away"));
     };
 
+    // Friendly chip labels for the 8 VegasInsider-scraped books — the
+    // raw slug ("vi_draftkings") is engineering shorthand; users see
+    // "DraftKings (VI)" instead so the firehose is readable.
+    const VI_LABELS = {
+        vi_draftkings: "DraftKings (VI)",
+        vi_fanduel:    "FanDuel (VI)",
+        vi_betmgm:     "BetMGM (VI)",
+        vi_caesars:    "Caesars (VI)",
+        vi_bet365:     "Bet365 (VI)",
+        vi_hardrock:   "Hard Rock (VI)",
+        vi_fanatics:   "Fanatics (VI)",
+        vi_riverscasino: "BetRivers (VI)",
+    };
+    const labelForSource = (s) => VI_LABELS[s] || s;
+
     const cards = sources.map((src) => {
         const ml = allML.find((m) => m.source === src);
         const sp = (allSp.filter((m) => m.source === src).find((m) => m.is_main_line))
@@ -4015,7 +4030,7 @@ function renderMarketsAllBooksPanel(d) {
         return `
           <article class="mab-card mab-card-${src}">
             <header class="mab-head">
-              <span class="mab-src msrc-name msrc-name-${src}">${src}</span>
+              <span class="mab-src msrc-name msrc-name-${src}">${labelForSource(src)}</span>
             </header>
             <div class="mab-rows">
               ${renderMabRow("ML",   ml)}
@@ -4024,7 +4039,7 @@ function renderMarketsAllBooksPanel(d) {
             </div>
             ${(ml?.url || sp?.url || tot?.url) ? `
               <a class="mab-link" href="${ml?.url || sp?.url || tot?.url}" target="_blank" rel="noopener">
-                Open on ${src} →
+                Open on ${labelForSource(src)} →
               </a>
             ` : ""}
           </article>

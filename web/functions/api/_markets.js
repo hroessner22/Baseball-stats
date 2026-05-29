@@ -863,6 +863,7 @@ export async function listAllMlbMarkets(env) {
         ["sxbet",      listSxBetMlbMarkets()],
         ["thescore",   listTheScoreMlbMarkets()],
         ["espn_dk",    listEspnDraftKingsMlbMarkets()],
+        ["vegasinsider", listVegasInsiderMlbMarkets()],
     ];
     const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
@@ -2130,4 +2131,168 @@ export function consensusProbability(markets, match) {
     }
     if (!n) return null;
     return sum / n;
+}
+
+
+// ── VegasInsider HTML adapter — fans out 8 Akamai-blocked books ───
+//
+// VegasInsider's public Las Vegas odds grid is a single HTML page
+// containing one moneyline cell per book per game in a fixed column
+// order: Open, Bet365, BetMGM, DraftKings, Caesars, FanDuel, HardRock,
+// Fanatics, RiversCasino, Consensus. That gives us a free read of the
+// exact 8 retail US books that block direct API access via Akamai —
+// DraftKings, FanDuel, BetMGM, Caesars, Bet365, HardRock, Fanatics,
+// RiversCasino — plus Bet365 (not US-licensed) — all in a single
+// subrequest (the cheapest possible adapter for our 50-subrequest cap).
+//
+// We emit one Market per (game, book) so each book gets its own row
+// (and chip) in the UI — same shape as Bovada / Pinnacle / etc., just
+// with `source: vi_<book>` keys. The Consensus column is skipped
+// (we already compute our own cross-source consensus downstream).
+// The Open column is also skipped — it's a historical opener, not live.
+
+const VEGAS_INSIDER_URL = "https://www.vegasinsider.com/mlb/odds/las-vegas/";
+
+// Column order in the VI grid, used to map each <td.game-odds> to a book.
+const VI_BOOK_ORDER = [
+    "open",
+    "bet365",
+    "betmgm",
+    "draftkings",
+    "caesars",
+    "fanduel",
+    "hardrock",
+    "fanatics",
+    "riverscasino",
+    "consensus",
+];
+
+// Books we surface — Open + Consensus skipped (see above).
+const VI_BOOKS_EMIT = new Set([
+    "bet365", "betmgm", "draftkings", "caesars",
+    "fanduel", "hardrock", "fanatics", "riverscasino",
+]);
+
+const VI_BOOK_LABELS = {
+    bet365:       "Bet365",
+    betmgm:       "BetMGM",
+    draftkings:   "DraftKings",
+    caesars:      "Caesars",
+    fanduel:      "FanDuel",
+    hardrock:     "Hard Rock",
+    fanatics:     "Fanatics",
+    riverscasino: "BetRivers",
+};
+
+// American odds → implied probability (no devig — we devig per-pair below).
+function americanToProbability(american) {
+    const n = Number(american);
+    if (!Number.isFinite(n) || n === 0) return null;
+    if (n > 0)  return 100 / (n + 100);
+    return -n / (-n + 100);
+}
+
+async function listVegasInsiderMlbMarkets() {
+    let html;
+    try {
+        const res = await fetch(VEGAS_INSIDER_URL, {
+            headers: { "User-Agent": UA, "accept": "text/html" },
+            cf: { cacheTtl: 30, cacheEverything: true },
+        });
+        if (!res.ok) return [];
+        html = await res.text();
+    } catch {
+        return [];
+    }
+    if (!html || html.length < 5000) return [];
+
+    // Each game has TWO rows (header = away team, footer = home team).
+    // We walk every <tr> with class "header" or "footer", capture the
+    // data-abbr (team) and the ordered list of moneyline cells.
+    const trRe   = /<tr[^>]*class="[^"]*(?:header|footer)[^"]*"[\s\S]*?<\/tr>/g;
+    const abbrRe = /data-abbr="([A-Z]+)"/;
+    const mlRe   = /class="data-moneyline">\s*([+\-0-9]+)\s*</g;
+
+    const rows = [];
+    let m;
+    while ((m = trRe.exec(html)) !== null) {
+        const row = m[0];
+        const abbr = abbrRe.exec(row);
+        if (!abbr) continue;
+        const lines = [];
+        let lm;
+        const localRe = new RegExp(mlRe.source, "g");
+        while ((lm = localRe.exec(row)) !== null) {
+            lines.push(lm[1]);
+        }
+        if (lines.length < 8) continue;
+        rows.push({ abbr: abbr[1], lines });
+    }
+
+    // Pair adjacent rows into games (away first, then home — VI's order).
+    const out = [];
+    for (let i = 0; i + 1 < rows.length; i += 2) {
+        const away = rows[i];
+        const home = rows[i + 1];
+        const awayTri = teamTricode(away.abbr);
+        const homeTri = teamTricode(home.abbr);
+        if (!awayTri || !homeTri) continue;
+
+        for (let col = 0; col < VI_BOOK_ORDER.length; col++) {
+            const book = VI_BOOK_ORDER[col];
+            if (!VI_BOOKS_EMIT.has(book)) continue;
+            const aAm = away.lines[col];
+            const hAm = home.lines[col];
+            if (!aAm || !hAm) continue;
+            const aP = americanToProbability(aAm);
+            const hP = americanToProbability(hAm);
+            if (aP == null || hP == null) continue;
+
+            // Two-outcome devig — normalize sum to 1.
+            const sum = aP + hP;
+            const aDevig = sum > 0 ? aP / sum : null;
+            const hDevig = sum > 0 ? hP / sum : null;
+
+            const src = `vi_${book}`;
+            const label = VI_BOOK_LABELS[book] || book;
+            const matchup = `${away.abbr} @ ${home.abbr}`;
+            out.push(flat({
+                id:       `${src}:${awayTri}v${homeTri}:ml`,
+                source:   src,
+                title:    `${label} — ${matchup} Moneyline`,
+                question_type: "moneyline",
+                status:   "open",
+                start_time: null,        // VI grid is today's slate only
+                home_tricode: homeTri,
+                away_tricode: awayTri,
+                home_team:    home.abbr,
+                away_team:    away.abbr,
+                outcomes: [
+                    {
+                        id:   `${src}:${awayTri}v${homeTri}:away`,
+                        name: away.abbr,
+                        probability: aP,
+                        probability_devig: aDevig,
+                        american: aAm,
+                        price:    aP > 0 ? 1 / aP : undefined,
+                    },
+                    {
+                        id:   `${src}:${awayTri}v${homeTri}:home`,
+                        name: home.abbr,
+                        probability: hP,
+                        probability_devig: hDevig,
+                        american: hAm,
+                        price:    hP > 0 ? 1 / hP : undefined,
+                    },
+                ],
+                raw_market_id:       `${awayTri}v${homeTri}`,
+                source_event_id:     `${awayTri}v${homeTri}`,
+                source_event_title:  matchup,
+                book_count:    1,
+                books_present: [book],
+                is_main_line:  true,
+            }));
+        }
+    }
+    return out;
 }
