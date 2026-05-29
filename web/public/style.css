@@ -4628,6 +4628,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .msrc-name-smarkets   { background: rgba(20, 184, 166, 0.18);  color: #5EEAD4; }
 .msrc-name-sxbet      { background: rgba(168, 85, 247, 0.18);  color: #D8B4FE; }
 .msrc-name-thescore   { background: rgba(249, 115, 22, 0.18);  color: #FED7AA; }
+.msrc-name-espn_dk    { background: rgba(220, 38, 38, 0.22);   color: #FECACA; }
 .msrc-quote {
     display: inline-flex;
     align-items: baseline;

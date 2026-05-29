@@ -862,6 +862,7 @@ export async function listAllMlbMarkets(env) {
         ["smarkets",   listSmarketsMlbMarkets()],
         ["sxbet",      listSxBetMlbMarkets()],
         ["thescore",   listTheScoreMlbMarkets()],
+        ["espn_dk",    listEspnDraftKingsMlbMarkets()],
     ];
     const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
@@ -1595,6 +1596,7 @@ function probabilityToAmerican(p) {
 
 const SX_BET_BASE = "https://api.sx.bet";
 const THESCORE_BASE = "https://api.thescore.com";
+const ESPN_CORE_BASE = "https://sports.core.api.espn.com/v2/sports/baseball/leagues/mlb";
 
 async function listSxBetMlbMarkets() {
     let markets;
@@ -1889,6 +1891,204 @@ async function listTheScoreMlbMarkets() {
                 book_count: 1,
                 books_present: ["thescore"],
                 handicap: threshold,
+                is_main_line: true,
+            }));
+        }
+    }
+    return out;
+}
+
+
+// ── ESPN core API → DraftKings adapter (no auth) ──────────────────
+//
+// ESPN's public core API exposes EVERY MLB game's odds with provider
+// = DraftKings (priority 1). No auth, no key, no Akamai. Endpoint:
+//   GET /v2/sports/baseball/leagues/mlb/events?dates=YYYYMMDD
+//     → list of events with { $ref: '.../events/{id}?...' }
+//   GET /v2/sports/baseball/leagues/mlb/events/{id}/competitions/{id}/odds
+//     → items[].provider.name=DraftKings,
+//        awayTeamOdds.current.moneyLine.american,
+//        homeTeamOdds.current.moneyLine.american,
+//        overUnder, overOdds, underOdds, spread
+//
+// Cost: 1 events call + ~10 odds calls (capped) = 11 subrequests.
+
+async function listEspnDraftKingsMlbMarkets() {
+    // Today + tomorrow in ET so we cover the full slate.
+    const nowMs = Date.now();
+    const yyyymmdd = (offset) => {
+        const d = new Date(nowMs + offset * 86400 * 1000);
+        const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+        }).formatToParts(d);
+        const y = parts.find((p) => p.type === "year").value;
+        const m = parts.find((p) => p.type === "month").value;
+        const dy= parts.find((p) => p.type === "day").value;
+        return `${y}${m}${dy}`;
+    };
+    const dates = `${yyyymmdd(0)}-${yyyymmdd(1)}`;
+    let eventsList;
+    try {
+        eventsList = await fetchJson(
+            `${ESPN_CORE_BASE}/events?dates=${dates}&limit=40`,
+            { cacheTtl: 120 },
+        );
+    } catch {
+        return [];
+    }
+    const items = eventsList?.items || [];
+    if (!items.length) return [];
+
+    // Each item has $ref → extract event id from the URL.
+    const eventIds = items.map((it) => {
+        const ref = it.$ref || "";
+        const m = ref.match(/\/events\/(\d+)/);
+        return m ? m[1] : null;
+    }).filter(Boolean).slice(0, 10);   // cap for CF subrequest budget
+
+    if (!eventIds.length) return [];
+
+    // Two parallel fetches per event: event details (for teams + start
+    // time) and competition odds. To save subrequests, fetch BOTH off
+    // the event detail when possible (event endpoint has shortName +
+    // date + competitions[0].$ref but odds need a separate call).
+    const eventData = await Promise.allSettled(
+        eventIds.map((id) => Promise.all([
+            fetchJson(`${ESPN_CORE_BASE}/events/${id}`, { cacheTtl: 60 }).catch(() => null),
+            fetchJson(`${ESPN_CORE_BASE}/events/${id}/competitions/${id}/odds?limit=5`, { cacheTtl: 30 }).catch(() => null),
+        ])),
+    );
+
+    const out = [];
+    for (const r of eventData) {
+        if (r.status !== "fulfilled") continue;
+        const [event, oddsResp] = r.value;
+        if (!event || !oddsResp) continue;
+        const items = oddsResp?.items || [];
+        // Prefer DraftKings entry; fall back to first provider.
+        const dk = items.find((it) => (it.provider?.name || "").toLowerCase() === "draftkings") || items[0];
+        if (!dk) continue;
+
+        // event.shortName e.g. "ATL @ CIN" → away / home tricode
+        const sn = event.shortName || event.name || "";
+        const tricodeMatch = sn.match(/^([A-Z]{2,4})\s+@\s+([A-Z]{2,4})/);
+        if (!tricodeMatch) continue;
+        const awayTri = teamTricode(tricodeMatch[1]) || tricodeMatch[1];
+        const homeTri = teamTricode(tricodeMatch[2]) || tricodeMatch[2];
+
+        const homeMlAm = dk.homeTeamOdds?.current?.moneyLine?.american
+                      || dk.homeTeamOdds?.moneyLine;
+        const awayMlAm = dk.awayTeamOdds?.current?.moneyLine?.american
+                      || dk.awayTeamOdds?.moneyLine;
+        const eventUrl = `https://www.espn.com/mlb/odds`;
+        const startIso = event.date ? new Date(event.date).toISOString() : null;
+
+        // Moneyline
+        if (homeMlAm != null && awayMlAm != null) {
+            const homeAmNum = typeof homeMlAm === "string" ? Number(homeMlAm.replace(/[^\d+-]/g, "")) : Number(homeMlAm);
+            const awayAmNum = typeof awayMlAm === "string" ? Number(awayMlAm.replace(/[^\d+-]/g, "")) : Number(awayMlAm);
+            const homeDec = americanToDecimal(homeAmNum);
+            const awayDec = americanToDecimal(awayAmNum);
+            const outcomes = [
+                {
+                    id: `espn_dk:${event.id}:ml:home`,
+                    name: homeTri,
+                    american: homeAmNum > 0 ? `+${homeAmNum}` : `${homeAmNum}`,
+                    price: homeDec,
+                    probability: homeDec && homeDec > 1 ? 1 / homeDec : undefined,
+                },
+                {
+                    id: `espn_dk:${event.id}:ml:away`,
+                    name: awayTri,
+                    american: awayAmNum > 0 ? `+${awayAmNum}` : `${awayAmNum}`,
+                    price: awayDec,
+                    probability: awayDec && awayDec > 1 ? 1 / awayDec : undefined,
+                },
+            ];
+            if (outcomes[0].probability != null && outcomes[1].probability != null) {
+                const sum = outcomes[0].probability + outcomes[1].probability;
+                if (sum > 0) {
+                    for (const o of outcomes) o.probability_devig = o.probability / sum;
+                }
+            }
+            out.push(flat({
+                id: `espn_dk:${event.id}:ml`,
+                source: "espn_dk",
+                title: `${awayTri} @ ${homeTri} · Moneyline (DraftKings)`,
+                description: "Via ESPN",
+                url: eventUrl,
+                outcomes,
+                question_type: "moneyline",
+                status: "open",
+                start_time: startIso,
+                close_time: null,
+                home_tricode: homeTri,
+                away_tricode: awayTri,
+                home_team: homeTri,
+                away_team: awayTri,
+                liquidity_usd: undefined,
+                volume_usd: undefined,
+                raw_market_id: `${event.id}:ml`,
+                source_event_id: String(event.id),
+                source_event_title: sn,
+                book_count: 1,
+                books_present: ["draftkings"],
+                is_main_line: true,
+            }));
+        }
+
+        // Total (overUnder)
+        const total = Number(dk.overUnder);
+        const overAm  = Number(dk.overOdds);
+        const underAm = Number(dk.underOdds);
+        if (Number.isFinite(total) && Number.isFinite(overAm) && Number.isFinite(underAm)) {
+            const overDec  = americanToDecimal(overAm);
+            const underDec = americanToDecimal(underAm);
+            const totalOutcomes = [
+                {
+                    id: `espn_dk:${event.id}:tot:over`,
+                    name: `Over ${total}`,
+                    american: overAm > 0 ? `+${overAm}` : `${overAm}`,
+                    price: overDec,
+                    probability: overDec && overDec > 1 ? 1 / overDec : undefined,
+                    point: total,
+                },
+                {
+                    id: `espn_dk:${event.id}:tot:under`,
+                    name: `Under ${total}`,
+                    american: underAm > 0 ? `+${underAm}` : `${underAm}`,
+                    price: underDec,
+                    probability: underDec && underDec > 1 ? 1 / underDec : undefined,
+                    point: total,
+                },
+            ];
+            const sum = (totalOutcomes[0].probability || 0) + (totalOutcomes[1].probability || 0);
+            if (sum > 0) {
+                for (const o of totalOutcomes) o.probability_devig = o.probability / sum;
+            }
+            out.push(flat({
+                id: `espn_dk:${event.id}:tot`,
+                source: "espn_dk",
+                title: `${awayTri} @ ${homeTri} · Total ${total} (DraftKings)`,
+                description: "Via ESPN",
+                url: eventUrl,
+                outcomes: totalOutcomes,
+                question_type: "total",
+                status: "open",
+                start_time: startIso,
+                close_time: null,
+                home_tricode: homeTri,
+                away_tricode: awayTri,
+                home_team: homeTri,
+                away_team: awayTri,
+                liquidity_usd: undefined,
+                volume_usd: undefined,
+                raw_market_id: `${event.id}:tot`,
+                source_event_id: String(event.id),
+                source_event_title: sn,
+                book_count: 1,
+                books_present: ["draftkings"],
+                handicap: total,
                 is_main_line: true,
             }));
         }
