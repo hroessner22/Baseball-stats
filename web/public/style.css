@@ -2898,15 +2898,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
        grid columns sprawl on ultra-wide displays and leave a giant
        empty band to the LEFT of the field. Centered so the layout
        breathes on every screen size. */
-    max-width: 1600px;
+    max-width: 1800px;
     margin: 0 auto;
     width: 100%;
 }
 @media (min-width: 820px) {
     .game-pane {
-        grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+        /* Field area is the centerpiece — give it a slightly bigger
+           share than the WE/market panel so the stadium silhouette
+           dominates the live view. */
+        grid-template-columns: minmax(0, 11fr) minmax(0, 8fr);
         justify-items: stretch;
-        gap: 48px;
+        gap: 36px;
     }
 }
 
@@ -2943,12 +2946,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     /* Only games with a live this-inning strip get the 2-column rail.
        Final / Preview games keep the single-column field-canvas so
        the centered field doesn't get pushed to the right of a blank
-       sidebar slot. */
+       sidebar slot. Narrative column kept tight (220-260px) so the
+       field gets the rest of the column to stretch into. */
     .field-pane.has-narrative {
         display: grid;
-        grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+        grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
         align-items: start;
-        gap: 24px;
+        gap: 20px;
     }
     .field-pane.has-narrative .field-narrative {
         position: sticky;
@@ -3434,9 +3438,32 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     display: flex;
     flex-direction: column;
     gap: 14px;
-    max-width: 420px;
+    /* Was hard-capped at 420px which left the right column with a
+       narrow card stacked in the middle and 240+ px of dead space
+       beside it (visible as "scroll to see everything" since cards
+       could only ever stack). Bumped so the right column actually
+       uses its real width. */
+    max-width: 580px;
     margin: 0 auto;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* Side-by-side grid for sub-cards INSIDE the headline card. Used
+   to pair the projected-WE slot and the end-of-game forecast slot
+   so they share a horizontal row instead of forcing the user to
+   scroll past both stacked vertically. */
+.card .card-side-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+}
+.card .card-side-grid > div { min-width: 0; }
+@media (min-width: 1100px) {
+    .card .card-side-grid {
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+    }
+    .card .card-side-grid > div:empty { display: none; }
 }
 
 .card .subject {

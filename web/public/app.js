@@ -3467,8 +3467,16 @@ function cardPane(g) {
 
           ${(g.status !== "Final" && g.team_adjustment) ? renderTeamStrength(g) : ""}
 
-          <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
-          <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
+          <!-- Pair the projected-WE and end-of-game forecast slots
+               into a side-by-side row at wide widths. Both are short
+               info cards in their own right; stacking them was the
+               biggest single source of vertical scroll on the right
+               panel. CSS .card-side-grid does the 2-col grid only
+               at viewports wide enough for them to read cleanly. -->
+          <div class="card-side-grid">
+            <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
+            <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
+          </div>
           <div id="market-consensus-slot">${cachedMarketConsensusSlot}</div>
 
           <div class="evidence">
