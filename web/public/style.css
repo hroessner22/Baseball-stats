@@ -4629,6 +4629,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .msrc-name-sxbet      { background: rgba(168, 85, 247, 0.18);  color: #D8B4FE; }
 .msrc-name-thescore   { background: rgba(249, 115, 22, 0.18);  color: #FED7AA; }
 .msrc-name-espn_dk    { background: rgba(220, 38, 38, 0.22);   color: #FECACA; }
+/* VegasInsider grid — each book on the page gets its own chip. Brand
+   accents loosely match the operator (DK orange, FD blue, MGM gold,
+   Caesars maroon, Bet365 green, HardRock gold, Fanatics teal, Rivers
+   navy) so the firehose stays scannable across 8 retail US books. */
+.msrc-name-vi_draftkings   { background: rgba(53, 169, 80, 0.20);  color: #86EFAC; }
+.msrc-name-vi_fanduel      { background: rgba(37, 99, 235, 0.22);  color: #93C5FD; }
+.msrc-name-vi_betmgm       { background: rgba(212, 175, 55, 0.22); color: #FDE68A; }
+.msrc-name-vi_caesars      { background: rgba(139, 30, 63, 0.30);  color: #FCA5A5; }
+.msrc-name-vi_bet365       { background: rgba(22, 163, 74, 0.22);  color: #BBF7D0; }
+.msrc-name-vi_hardrock     { background: rgba(202, 138, 4, 0.22);  color: #FDE68A; }
+.msrc-name-vi_fanatics     { background: rgba(14, 116, 144, 0.22); color: #A5F3FC; }
+.msrc-name-vi_riverscasino { background: rgba(30, 64, 175, 0.28);  color: #BFDBFE; }
 .msrc-quote {
     display: inline-flex;
     align-items: baseline;
