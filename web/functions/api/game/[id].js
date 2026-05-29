@@ -230,6 +230,7 @@ function buildGame(d, teamAdj) {
             away: teamAdj.away ? compactTeamStrength(teamAdj.away) : null,
         } : null,
         venue: gameData.venue?.name || null,
+        venue_id: gameData.venue?.id ?? null,    // for stadium-specific field rendering
         start_time: gameData.datetime?.dateTime || null,
         this_inning: thisInningPlays,
     };
