@@ -3098,8 +3098,14 @@ function fieldPane(g) {
     // closed at home so the seating rings still wrap around.
     const fallbackWall = "M 60,270 Q 250,40 440,270";
 
+    // "This inning" play-by-play only exists for Live games — when
+    // empty we drop the whole left rail so the field-canvas centers
+    // by itself rather than leaving a blank narrow column.
+    const inningStrip = renderThisInning(g);
     return `
-      <div class="field-pane" style="--we-intensity:${intensity}">
+      <div class="field-pane ${inningStrip ? "has-narrative" : ""}" style="--we-intensity:${intensity}">
+        ${inningStrip ? `<aside class="field-narrative">${inningStrip}</aside>` : ""}
+        <div class="field-canvas">
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
           <defs>
             <radialGradient id="grass-radial" cx="0.5" cy="0.92" r="0.85">
@@ -3266,7 +3272,7 @@ function fieldPane(g) {
         ${situationStrip(g)}
         ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
         ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
-        ${renderThisInning(g)}
+        </div>
       </div>
     `;
 }

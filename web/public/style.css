@@ -2894,6 +2894,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 36px;
     justify-items: center;
     align-items: start;
+    /* Cap the whole live view at a comfortable max — without this the
+       grid columns sprawl on ultra-wide displays and leave a giant
+       empty band to the LEFT of the field. Centered so the layout
+       breathes on every screen size. */
+    max-width: 1600px;
+    margin: 0 auto;
+    width: 100%;
 }
 @media (min-width: 820px) {
     .game-pane {
@@ -2912,10 +2919,56 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 18px;
     width: 100%;
 }
+.field-pane .field-canvas {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    order: 1;
+}
+.field-pane .field-narrative {
+    width: 100%;
+    order: 2;     /* below the canvas at narrow widths (same as before) */
+}
+.field-pane .field-narrative .this-inning { margin: 0; }
+
+/* Two-column live view: the "this-inning" play-by-play promotes from
+   below-the-field to a left rail beside the field, and the field SVG
+   stops getting capped at 500px so the stadium silhouette fills the
+   center column. Empty space on the LEFT of the field becomes the
+   live narrative the user is actually following — what just happened
+   this frame. */
+@media (min-width: 1200px) {
+    /* Only games with a live this-inning strip get the 2-column rail.
+       Final / Preview games keep the single-column field-canvas so
+       the centered field doesn't get pushed to the right of a blank
+       sidebar slot. */
+    .field-pane.has-narrative {
+        display: grid;
+        grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+        align-items: start;
+        gap: 24px;
+    }
+    .field-pane.has-narrative .field-narrative {
+        position: sticky;
+        top: 60px;
+        width: auto;
+        grid-column: 1;
+        order: unset;
+    }
+    .field-pane.has-narrative .field-canvas {
+        width: 100%;
+        grid-column: 2;
+        order: unset;
+    }
+}
 
 .field {
     width: 100%;
-    max-width: 500px;
+    /* No max-width cap — the field grows to fill its column so the
+       stadium silhouette gets the visual weight it deserves instead
+       of leaving 250px of dark space on each side of a 500px square. */
     aspect-ratio: 1;
     display: block;
     filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.5));
