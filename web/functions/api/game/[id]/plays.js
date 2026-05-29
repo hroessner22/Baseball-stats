@@ -6,7 +6,45 @@
 // matchup so the client can pair this with /api/matchup to show
 // "predicted before the PA vs. what actually happened".
 //
+// We also compute the WE swing each PA produced — the home team's
+// win-probability change from the state BEFORE the PA to the state
+// AFTER it. Computed by walking allPlays in MLB-feed order and
+// tracking (inning, half, outs, bases, score) through each event,
+// then looking the before/after state up in WE_TABLE_V2. Surfaced on
+// each Gamecast PA card as "+3.4pp HOU" / "-1.2pp HOU".
+//
 // Cached 10 seconds at the edge, same as /api/game/{id}.
+
+import { WE_TABLE_V2 } from "../../games/_we_table_v2.js";
+import { WE_TABLE }    from "../../games/_we_table.js";
+
+const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+function lookupWE(inning, half, outs, bases, homeLead) {
+    if (inning == null || !half) return null;
+    const innC  = clip(inning, 1, 9);
+    const leadC = clip(homeLead, -10, 10);
+    const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
+    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
+    // Half-level fallback — covers states the v2 table doesn't index.
+    if (half === "top" && inning === 1 && outs === 0 && bases === 0) return 0.54;
+    const k1 = `${innC}|${half}|${leadC}`;
+    if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
+    return null;
+}
+
+// Compute the bases bitmask from a play's runners[] array's END
+// positions — what's on base AFTER the play resolves. 1=1B, 2=2B, 4=3B.
+function basesAfterFromRunners(runners) {
+    let mask = 0;
+    for (const r of runners || []) {
+        const end = r.movement?.end;
+        if (end === "1B") mask |= 1;
+        if (end === "2B") mask |= 2;
+        if (end === "3B") mask |= 4;
+    }
+    return mask;
+}
 
 const NON_PA_EVENT_TYPES = new Set([
     "caught_stealing_2b", "caught_stealing_3b", "caught_stealing_home",
@@ -142,6 +180,35 @@ function parseTeams(data) {
 
 function parsePlays(data) {
     const allPlays = data?.liveData?.plays?.allPlays || [];
+
+    // First pass: walk every event (PA and non-PA) in feed order,
+    // tracking (inning, half, outs, bases, scores) so each play has a
+    // state BEFORE and state AFTER. The non-PA events (stolen bases,
+    // wild pitches, etc.) still mutate state and matter for the next
+    // PA's WE lookup — we just don't emit them as rows.
+    const states = new Array(allPlays.length);
+    let s = { inning: 1, half: "top", outs: 0, bases: 0, away: 0, home: 0 };
+    for (let i = 0; i < allPlays.length; i++) {
+        const p = allPlays[i];
+        const r = p.result || {};
+        const about = p.about || {};
+        const inning = about.inning ?? s.inning;
+        const half = about.isTopInning ? "top" : "bottom";
+
+        // New half-inning: outs reset, bases clear, inning/half flip.
+        if (inning !== s.inning || half !== s.half) {
+            s = { inning, half, outs: 0, bases: 0, away: s.away, home: s.home };
+        }
+        states[i] = { before: { ...s } };
+
+        // Apply this event's effect.
+        if (r.awayScore != null) s.away = r.awayScore;
+        if (r.homeScore != null) s.home = r.homeScore;
+        s.bases = basesAfterFromRunners(p.runners);
+        if (p.count?.outs != null) s.outs = p.count.outs;
+        states[i].after = { ...s };
+    }
+
     const out = [];
     for (let i = 0; i < allPlays.length; i++) {
         const p = allPlays[i];
@@ -165,6 +232,14 @@ function parsePlays(data) {
             ? { away: r.awayScore, home: r.homeScore }
             : null;
 
+        // WE swing from BEFORE the PA to AFTER. Home-team perspective —
+        // positive = home gained ground, negative = away gained ground.
+        const sb = states[i].before;
+        const sa = states[i].after;
+        const weBefore = lookupWE(sb.inning, sb.half, sb.outs, sb.bases, sb.home - sb.away);
+        const weAfter  = lookupWE(sa.inning, sa.half, sa.outs, sa.bases, sa.home - sa.away);
+        const weDelta  = (weBefore != null && weAfter != null) ? (weAfter - weBefore) : null;
+
         out.push({
             play_index: i,
             inning: about.inning,
@@ -184,7 +259,13 @@ function parsePlays(data) {
             outcome:       OUTCOME_MAP[eventType] || null,
             outcome_event: r.event || eventType || "?",
             description:   r.description || "",
-            pitches: parsePitches(p.playEvents || []),
+            pitches:       parsePitches(p.playEvents || []),
+            // Home-team WE before/after the PA and the swing it
+            // produced. Null when the state isn't covered by the WE
+            // table (extra innings, etc.).
+            we_home_before: weBefore,
+            we_home_after:  weAfter,
+            we_delta_home:  weDelta,
         });
     }
     // Most recent first — the gamecast scrolls top-down through "what

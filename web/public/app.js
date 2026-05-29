@@ -2639,7 +2639,7 @@ async function refreshGamecast(gameId) {
         }));
         if (gameId !== activeGameId) return;
 
-        const html = renderGamecast(recent, predictionMap);
+        const html = renderGamecast(recent, predictionMap, data.teams);
         cachedGamecastHTML = html;
         const pane = document.getElementById("gamecast-pane");
         if (pane) pane.innerHTML = html;
@@ -2652,23 +2652,42 @@ async function refreshGamecast(gameId) {
     }
 }
 
-function renderGamecast(plays, predictionMap) {
+function renderGamecast(plays, predictionMap, teams) {
     if (!plays.length) {
         return `<div class="empty">No plays yet — first pitch is on its way.</div>`;
     }
     return `
       <div class="gamecast-list">
-        ${plays.map((p) => renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`])).join("")}
+        ${plays.map((p) => renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`], teams)).join("")}
       </div>
     `;
 }
 
-function renderPABlock(play, prediction) {
+function renderPABlock(play, prediction, teams) {
     const inn = `${play.half === "top" ? "▲" : "▼"} ${ordinalSuffix(play.inning)}`;
     const score = play.score_after
         ? `${play.score_after.away}-${play.score_after.home}`
         : "";
     const outcomeBadge = renderPAOutcomeBadge(play, prediction);
+
+    // WE swing chip — labeled with the team that GAINED win probability
+    // on this PA. Sign of we_delta_home tells us which team won the PA:
+    // positive → home gained; negative → away gained. Either way the
+    // chip displays as "{winning team} +X.Xpp WE" in green so the
+    // user immediately knows who came out ahead on the swing. Hidden
+    // below 0.05pp (rounding noise).
+    const weDelta = play.we_delta_home;
+    let weDeltaChip = "";
+    if (weDelta != null && Math.abs(weDelta) >= 0.0005 && teams) {
+        const winnerAbbr = weDelta >= 0
+            ? (teams.home?.abbr || "HOME")
+            : (teams.away?.abbr || "AWAY");
+        const isBatterWin = (play.half === "bottom") === (weDelta >= 0);
+        weDeltaChip = `<span class="pa-we-delta ${isBatterWin ? "pa-we-pos" : "pa-we-neg"}"
+              title="${winnerAbbr} gained ${Math.abs(weDelta * 100).toFixed(1)}pp of win probability on this PA">
+            ${winnerAbbr} +${Math.abs(weDelta * 100).toFixed(1)}pp WE
+        </span>`;
+    }
 
     const predictedBlock = prediction?.available
         ? renderPredictedDistribution(prediction.predicted, play.outcome)
@@ -2692,6 +2711,7 @@ function renderPABlock(play, prediction) {
             <span class="dim">(${play.pitcher.hand}HP)</span>
           </span>
           ${score ? `<span class="pa-score">${score}</span>` : ""}
+          ${weDeltaChip}
           ${outcomeBadge}
         </header>
         <div class="pa-body">
@@ -3102,9 +3122,20 @@ function fieldPane(g) {
     // empty we drop the whole left rail so the field-canvas centers
     // by itself rather than leaving a blank narrow column.
     const inningStrip = renderThisInning(g);
+    // AT BAT + PITCHING cards live in the LEFT rail above the
+    // play-by-play so they're always above-the-fold (the field SVG
+    // grew enough that stacking them below was pushing the matchup
+    // out of view at 1080p).
+    const matchupCompact = (g.batter || g.pitcher)
+        ? `<div class="matchup-pair matchup-pair-rail">
+             ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
+             ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
+           </div>`
+        : "";
+    const railContent = matchupCompact + inningStrip;
     return `
-      <div class="field-pane ${inningStrip ? "has-narrative" : ""}" style="--we-intensity:${intensity}">
-        ${inningStrip ? `<aside class="field-narrative">${inningStrip}</aside>` : ""}
+      <div class="field-pane ${railContent ? "has-narrative" : ""}" style="--we-intensity:${intensity}">
+        ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
         <div class="field-canvas">
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
           <defs>
@@ -3270,9 +3301,43 @@ function fieldPane(g) {
             : ""}
         ${stateBanner}
         ${situationStrip(g)}
-        ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
-        ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
+        ${renderCurrentPitches(g.current_pitches)}
         </div>
+      </div>
+    `;
+}
+
+// Renders the "PITCHES THIS AT-BAT" strip on the Live View — same shape
+// the Gamecast uses per PA, but for the IN-PROGRESS one. Surfaces the
+// pitch sequence as it comes in so the user doesn't need to flip to
+// Gamecast just to see what the at-bat has been like.
+function renderCurrentPitches(pitches) {
+    if (!Array.isArray(pitches) || !pitches.length) return "";
+    const rows = pitches.map((p, i) => {
+        const cls =
+            p.result_code === "B" ? "ball" :
+            (p.result_code === "C" || p.result_code === "S") ? "strike" :
+            (p.result_code === "F" || p.result_code === "T") ? "foul" :
+            (p.result_code === "X" || p.result_code === "E") ? "in-play" :
+            "";
+        const velo = p.velo != null ? `${p.velo}<span class="dim">mph</span>` : "—";
+        const count = p.count_after
+            ? `${p.count_after.balls}-${p.count_after.strikes}`
+            : "";
+        return `
+          <div class="cp-row ${cls}">
+            <span class="cp-num">${i + 1}</span>
+            <span class="cp-type">${shortenPitchType(p.type)}</span>
+            <span class="cp-velo">${velo}</span>
+            <span class="cp-result">${escapeHTML(p.result || "")}</span>
+            <span class="cp-count">${count}</span>
+          </div>
+        `;
+    }).join("");
+    return `
+      <div class="current-pitches">
+        <div class="cp-head">▾ This at-bat · ${pitches.length} pitch${pitches.length === 1 ? "" : "es"}</div>
+        ${rows}
       </div>
     `;
 }

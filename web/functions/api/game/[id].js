@@ -206,6 +206,25 @@ function buildGame(d, teamAdj) {
             }))
         : [];
 
+    // Pitch sequence for the IN-PROGRESS PA — same shape the Gamecast
+    // uses for completed PAs, but pulled from currentPlay.playEvents so
+    // the Live View can show "this at-bat · 3 pitches" as it unfolds.
+    const currentPitches = (currentPlay.playEvents || [])
+        .filter((e) => e.type === "pitch")
+        .map((e) => ({
+            number:      e.pitchNumber || null,
+            type:        e.details?.type?.description || "Unknown",
+            type_code:   e.details?.type?.code || null,
+            velo:        e.pitchData?.startSpeed != null
+                ? Math.round(e.pitchData.startSpeed * 10) / 10
+                : null,
+            result:      e.details?.call?.description || e.details?.description || "?",
+            result_code: e.details?.call?.code || null,
+            count_after: e.count
+                ? { balls: e.count.balls, strikes: e.count.strikes }
+                : null,
+        }));
+
     return {
         game_pk: gameData.game?.pk,
         status,
@@ -218,6 +237,7 @@ function buildGame(d, teamAdj) {
         inning, half, outs, balls, strikes,
         runners,
         batter, pitcher,
+        current_pitches: currentPitches,
         // win_expectancy = state-based + team-strength adjustment.
         // state_we is the raw "average teams" empirical lookup, kept
         // alongside so the UI can show "AZ 53% (+3pp from team form)".
