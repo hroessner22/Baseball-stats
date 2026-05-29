@@ -861,6 +861,7 @@ export async function listAllMlbMarkets(env) {
         ["pinnacle",   listPinnacleMlbMarkets()],
         ["smarkets",   listSmarketsMlbMarkets()],
         ["sxbet",      listSxBetMlbMarkets()],
+        ["thescore",   listTheScoreMlbMarkets()],
     ];
     const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
@@ -1593,6 +1594,7 @@ function probabilityToAmerican(p) {
 // outcomeTwo (home/team2).
 
 const SX_BET_BASE = "https://api.sx.bet";
+const THESCORE_BASE = "https://api.thescore.com";
 
 async function listSxBetMlbMarkets() {
     let markets;
@@ -1706,6 +1708,190 @@ async function listSxBetMlbMarkets() {
             book_count: 1,
             books_present: ["sxbet"],
         }));
+    }
+    return out;
+}
+
+
+// ── theScore adapter (sports media public API, no auth) ──────────
+//
+// theScore's news/scoreboard backend (api.thescore.com) is a public
+// JSON API — same one their iOS / Android / web app reads from. They
+// embed Sportradar (Betradar) moneyline + total in every MLB event's
+// `timestamped_odds[]` array. No auth, no key, no Akamai.
+//
+// Flow:
+//   1. /mlb/schedule → list of dates with event_ids[]
+//   2. Filter to today + tomorrow (ET calendar).
+//   3. Cap to 10 events, fetch /mlb/events/{id} in parallel.
+//   4. Each event has `timestamped_odds[]` array sorted by
+//      `created_at`. Take the LAST entry — most recent line.
+//   5. Emit one moneyline market + one total market per event.
+//
+// Total subrequests: 1 + 10 = 11, fits Cloudflare budget.
+
+async function listTheScoreMlbMarkets() {
+    let schedule;
+    try {
+        schedule = await fetchJson(`${THESCORE_BASE}/mlb/schedule`, { cacheTtl: 300 });
+    } catch {
+        return [];
+    }
+    const days = schedule?.current_season || [];
+    if (!days.length) return [];
+
+    // Pick today + next-day buckets in ET. theScore IDs days as YYYY-MM-DD.
+    const nowMs = Date.now();
+    const dayLabel = (offset) => {
+        const d = new Date(nowMs + offset * 86400 * 1000);
+        const parts = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+        }).formatToParts(d);
+        const y = parts.find((p) => p.type === "year").value;
+        const m = parts.find((p) => p.type === "month").value;
+        const dy= parts.find((p) => p.type === "day").value;
+        return `${y}-${m}-${dy}`;
+    };
+    const wanted = new Set([dayLabel(0), dayLabel(1)]);
+    const eventIds = [];
+    for (const day of days) {
+        if (wanted.has(day.id)) {
+            for (const id of (day.event_ids || [])) eventIds.push(id);
+        }
+    }
+    if (!eventIds.length) return [];
+
+    const capped = eventIds.slice(0, 10);
+    const fullEvents = await Promise.allSettled(
+        capped.map((id) => fetchJson(`${THESCORE_BASE}/mlb/events/${id}`, { cacheTtl: 30 })
+            .catch(() => null)),
+    );
+
+    const out = [];
+    for (const r of fullEvents) {
+        if (r.status !== "fulfilled" || !r.value) continue;
+        const ev = r.value;
+        const homeName = ev.home_team?.full_name;
+        const awayName = ev.away_team?.full_name;
+        const homeTri  = teamTricode(ev.home_team?.abbreviation) || teamTricode(homeName);
+        const awayTri  = teamTricode(ev.away_team?.abbreviation) || teamTricode(awayName);
+        const startIso = ev.game_date ? new Date(ev.game_date).toISOString() : null;
+        const tso = Array.isArray(ev.timestamped_odds) ? ev.timestamped_odds : [];
+        if (!tso.length) continue;
+        // Last entry is the most recent.
+        const latest = tso[tso.length - 1];
+        const mlAwayAm = Number(latest.money_line_away);
+        const mlHomeAm = Number(latest.money_line_home);
+        if (!Number.isFinite(mlAwayAm) || !Number.isFinite(mlHomeAm)) continue;
+
+        const eventUrl = `https://www.thescore.com/mlb/events/${ev.id}`;
+
+        // Moneyline
+        const mlHomeDec = americanToDecimal(mlHomeAm);
+        const mlAwayDec = americanToDecimal(mlAwayAm);
+        const mlOutcomes = [
+            {
+                id: `thescore:${ev.id}:ml:home`,
+                name: homeName,
+                american: mlHomeAm > 0 ? `+${mlHomeAm}` : `${mlHomeAm}`,
+                price: mlHomeDec,
+                probability: mlHomeDec && mlHomeDec > 1 ? 1 / mlHomeDec : undefined,
+            },
+            {
+                id: `thescore:${ev.id}:ml:away`,
+                name: awayName,
+                american: mlAwayAm > 0 ? `+${mlAwayAm}` : `${mlAwayAm}`,
+                price: mlAwayDec,
+                probability: mlAwayDec && mlAwayDec > 1 ? 1 / mlAwayDec : undefined,
+            },
+        ];
+        if (mlOutcomes[0].probability != null && mlOutcomes[1].probability != null) {
+            const sum = mlOutcomes[0].probability + mlOutcomes[1].probability;
+            if (sum > 0) {
+                for (const o of mlOutcomes) o.probability_devig = o.probability / sum;
+            }
+        }
+        out.push(flat({
+            id: `thescore:${ev.id}:ml`,
+            source: "thescore",
+            title: `${awayName} @ ${homeName} · Moneyline`,
+            description: "",
+            url: eventUrl,
+            outcomes: mlOutcomes,
+            question_type: "moneyline",
+            status: "open",
+            start_time: startIso,
+            close_time: null,
+            home_tricode: homeTri,
+            away_tricode: awayTri,
+            home_team: homeName,
+            away_team: awayName,
+            liquidity_usd: undefined,
+            volume_usd: undefined,
+            raw_market_id: `${ev.id}:ml`,
+            source_event_id: String(ev.id),
+            source_event_title: `${awayName} @ ${homeName}`,
+            book_count: 1,
+            books_present: ["thescore"],
+            is_main_line: true,
+        }));
+
+        // Total — theScore stores it as "7.5", "7.5o25", "7.5u30" etc.
+        // The number prefix is the threshold; ignored suffix is the
+        // exact close-time indicator. Standard juice -110/-110 assumed.
+        const totalRaw = String(latest.total || "");
+        const totalMatch = totalRaw.match(/^(\d+(?:\.\d+)?)/);
+        if (totalMatch) {
+            const threshold = Number(totalMatch[1]);
+            const totalOutcomes = [
+                {
+                    id: `thescore:${ev.id}:tot:over`,
+                    name: `Over ${threshold}`,
+                    american: "-110",
+                    price: americanToDecimal(-110),
+                    probability: 1 / americanToDecimal(-110),
+                    point: threshold,
+                },
+                {
+                    id: `thescore:${ev.id}:tot:under`,
+                    name: `Under ${threshold}`,
+                    american: "-110",
+                    price: americanToDecimal(-110),
+                    probability: 1 / americanToDecimal(-110),
+                    point: threshold,
+                },
+            ];
+            // De-vig.
+            const sum = totalOutcomes[0].probability + totalOutcomes[1].probability;
+            if (sum > 0) {
+                for (const o of totalOutcomes) o.probability_devig = o.probability / sum;
+            }
+            out.push(flat({
+                id: `thescore:${ev.id}:tot`,
+                source: "thescore",
+                title: `${awayName} @ ${homeName} · Total Runs ${threshold}`,
+                description: "",
+                url: eventUrl,
+                outcomes: totalOutcomes,
+                question_type: "total",
+                status: "open",
+                start_time: startIso,
+                close_time: null,
+                home_tricode: homeTri,
+                away_tricode: awayTri,
+                home_team: homeName,
+                away_team: awayName,
+                liquidity_usd: undefined,
+                volume_usd: undefined,
+                raw_market_id: `${ev.id}:tot`,
+                source_event_id: String(ev.id),
+                source_event_title: `${awayName} @ ${homeName}`,
+                book_count: 1,
+                books_present: ["thescore"],
+                handicap: threshold,
+                is_main_line: true,
+            }));
+        }
     }
     return out;
 }
