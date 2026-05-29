@@ -2923,10 +2923,54 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     overflow: hidden;
 }
 
+/* Stadium bowl backdrop — replaces the transparent SVG background
+   with a dark-concrete radial gradient so the field sits inside a
+   "ballpark" rather than floating on the page color. */
+.field .stadium-bowl {
+    fill: url(#stadium-bowl);
+}
+
+/* Seating decks behind the outfield wall and along the foul lines.
+   Three concentric rings — lower → upper → outer concourse — get
+   progressively darker so the bowl reads as depth from above. */
+.field .stadium-concourse {
+    fill: #131A2A;
+    stroke: rgba(255, 255, 255, 0.04);
+    stroke-width: 0.5;
+}
+.field .stadium-upper {
+    fill: #1C2436;
+    stroke: rgba(255, 255, 255, 0.06);
+    stroke-width: 0.5;
+}
+.field .stadium-lower {
+    fill: #2B3450;
+    stroke: rgba(255, 255, 255, 0.08);
+    stroke-width: 0.5;
+}
+
+/* Foul-territory dirt — warm tan band between the foul lines and
+   the lower bowl, including the catcher's-box area behind home plate. */
+.field .foul-dirt {
+    fill: #8A6A40;
+    opacity: 0.78;
+}
+
 .field .outfield-grass {
     fill: url(#grass-radial);
     stroke: var(--border);
     stroke-width: 1;
+}
+
+/* Outfield mowing pattern — alternating slightly-darker concentric
+   arcs centered on home plate. Five circle strokes spaced ~60 SVG
+   units apart, clipped to the fair-territory wall path so they
+   ONLY show as bands in the grass. */
+.field .grass-stripes circle {
+    fill: none;
+    stroke: rgba(0, 0, 0, 0.09);
+    stroke-width: 28;
+    pointer-events: none;
 }
 .field .warning-track {
     fill: var(--dirt-dark);
@@ -2970,6 +3014,85 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .field .foul-pole {
     fill: #FCD34D;
+}
+
+/* Dugouts along the 1B and 3B baselines — dark recessed rectangles
+   parallel to the foul lines, just on the foul side. The "home" team
+   dugout is the 1B side by MLB convention (visiting team on 3B). */
+.field .dugout rect {
+    fill: #0A0F1C;
+    stroke: rgba(255, 255, 255, 0.18);
+    stroke-width: 0.6;
+}
+.field .dugout-home rect {
+    fill: #11192C;          /* faint warm tint for home dugout */
+}
+
+/* Bullpens — pitchers' mounds in foul territory beyond each baseline.
+   Drawn as small dirt rectangles with a rounded shape to suggest the
+   bullpen mound area without cluttering the field. */
+.field .bullpen rect {
+    fill: var(--dirt);
+    stroke: var(--dirt-dark);
+    stroke-width: 0.5;
+    opacity: 0.85;
+}
+
+/* Center-field scoreboard — sits just outside the deepest CF wall.
+   Mirrors what every park has there: away/inning/home, big numerals,
+   thin dividers. Dark panel, bright text. */
+.field .cf-scoreboard .sb-bg {
+    fill: #050810;
+    stroke: rgba(255, 220, 120, 0.18);
+    stroke-width: 0.6;
+}
+.field .cf-scoreboard .sb-divider {
+    stroke: rgba(255, 220, 120, 0.22);
+    stroke-width: 0.6;
+}
+.field .cf-scoreboard .sb-team {
+    fill: #FCD34D;
+    font-family: 'Inter', sans-serif;
+    font-size: 7.5px;
+    font-weight: 800;
+    letter-spacing: 0.10em;
+}
+.field .cf-scoreboard .sb-runs {
+    fill: #FFFFFF;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+.field .cf-scoreboard .sb-inning {
+    fill: #FFFFFF;
+    font-family: 'Inter', sans-serif;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+.field .cf-scoreboard .sb-status {
+    fill: rgba(255, 255, 255, 0.55);
+    font-family: 'Inter', sans-serif;
+    font-size: 5.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+}
+
+/* Stadium light towers in the four corners. Each is a small mast
+   with a glowing head — yellower / brighter during live games to
+   suggest the lights are on. */
+.field .light-tower .lt-bracket {
+    fill: #2A3142;
+}
+.field .light-tower .lt-head {
+    fill: #FCD34D;
+    opacity: 0.65;
+    filter: drop-shadow(0 0 4px rgba(252, 211, 77, 0.5));
+}
+.field-pane[data-we-intensity] .light-tower .lt-head {
+    opacity: 0.95;
+    filter: drop-shadow(0 0 7px rgba(252, 211, 77, 0.75));
 }
 
 /* Park-specific warning track — drawn as a thick darker stroke inset

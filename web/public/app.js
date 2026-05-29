@@ -2903,6 +2903,7 @@ function fieldPane(g) {
     // exposes the helpers as window globals (loaded before app.js).
     const park       = (typeof resolvePark === "function") ? resolvePark(g) : null;
     const wallPath   = park && parkWallPath(park,        { closeAtHome: true });
+    const wallStroke = park && parkWallPath(park,        { closeAtHome: false });
     const trackPath  = park && parkWarningTrackPath(park, 12);
     const foul       = park && parkFoulPoles(park);
     const flavorChips = park && parkFlavorChips ? parkFlavorChips(park) : [];
@@ -2911,6 +2912,159 @@ function fieldPane(g) {
     // points so the silhouette is unambiguous (Coors's 424 RC, Fenway's
     // 302 RL, Yankees's 314 RL all read at a glance).
     const distMarks = park ? POINT_LABELS_FOR_PARK(park) : [];
+
+    // Stadium layers — drawn BEHIND the field surface to give the
+    // top-down view a "you're at the ballpark" feel rather than a flat
+    // diagram.
+    //
+    //   Lower bowl  : the bleachers immediately behind the outfield wall
+    //                 and along the foul lines (lighter, closer to field)
+    //   Upper deck  : second tier of seating offset further out (darker)
+    //   Concourse   : outer-edge silhouette / stadium perimeter (darkest)
+    //
+    // Each is a path offset outward from the wall, plus a "behind home
+    // plate" cap connecting the foul poles via the SVG bottom so the
+    // bowl wraps all the way around the field rather than stopping at
+    // the foul poles. closeAtHome=false gives us the open arc we need.
+    const lowerBowl = park && parkOffsetWallPath(park, 28, { closeAtHome: false });
+    const upperDeck = park && parkOffsetWallPath(park, 56, { closeAtHome: false });
+    const concourse = park && parkOffsetWallPath(park, 92, { closeAtHome: false });
+
+    // The "behind home plate" segment closes each bowl by sweeping
+    // along the bottom of the SVG from one foul pole's offset point
+    // back to the other's. Computed once and reused at each tier.
+    const closeBowl = (offsetFt) => {
+        if (!park || !foul) return "";
+        const L = foul.left;
+        const R = foul.right;
+        // Walk along the foul line direction from each pole past the
+        // pole by `offsetFt` so the seating wraps the pole correctly.
+        const len = (dx, dy) => Math.hypot(dx, dy);
+        const lDx = L.x - 250, lDy = L.y - 460;
+        const rDx = R.x - 250, rDy = R.y - 460;
+        const lLen = len(lDx, lDy) || 1;
+        const rLen = len(rDx, rDy) || 1;
+        const lOut = { x: L.x + (lDx / lLen) * offsetFt, y: L.y + (lDy / lLen) * offsetFt };
+        const rOut = { x: R.x + (rDx / rLen) * offsetFt, y: R.y + (rDy / rLen) * offsetFt };
+        // Cubic Bezier sweep through the bottom of the SVG behind home plate
+        return ` L ${rOut.x.toFixed(1)},${rOut.y.toFixed(1)} `
+             + `C ${rOut.x.toFixed(1)},520 ${(250 + 0).toFixed(1)},540 250,540 `
+             + `C ${(250 - 0).toFixed(1)},540 ${lOut.x.toFixed(1)},520 ${lOut.x.toFixed(1)},${lOut.y.toFixed(1)} `
+             + `Z`;
+    };
+
+    // Foul territory dirt: the warm-tan band sitting between the foul
+    // lines and the lower bowl. Drawn as one path that hugs the inside
+    // of the foul lines back to home plate. Looks like real dirt foul
+    // territory in a top-down stadium view.
+    const foulDirt = (() => {
+        if (!park || !foul) return "";
+        const L = foul.left, R = foul.right;
+        // Offset perpendicular to each foul line by 24 units so the
+        // tan band has visible thickness next to the chalk line.
+        const off = 22;
+        const lPerp = { x: L.x - off * 0.707, y: L.y + off * 0.707 };
+        const rPerp = { x: R.x + off * 0.707, y: R.y + off * 0.707 };
+        return `M 250,460 L ${L.x.toFixed(1)},${L.y.toFixed(1)} `
+             + `L ${lPerp.x.toFixed(1)},${lPerp.y.toFixed(1)} `
+             + `Q 120,505 250,508 Q 380,505 ${rPerp.x.toFixed(1)},${rPerp.y.toFixed(1)} `
+             + `L ${R.x.toFixed(1)},${R.y.toFixed(1)} Z`;
+    })();
+
+    // Dugout cutouts along the 1B and 3B baselines just outside the
+    // foul lines. ~45 units long, rotated to be parallel to each
+    // baseline. Anchored at the midpoint of each baseline (45 ft from
+    // home, 45 ft from the bag).
+    //
+    // Geometry: the 1B foul line goes from (250,460) to RF pole. The
+    // dugout sits ~14 units to the right of (perpendicular to) that
+    // line, centered halfway between home and 1B.
+    const dugouts = (() => {
+        // 1B base is at (390, 320). Home at (250, 460). Midpoint = (320, 390).
+        // 3B base is at (110, 320). Midpoint = (180, 390).
+        // Both rotated 45° about their midpoints so the rectangle sits
+        // along the baseline.
+        const w = 56, h = 10;
+        return `
+          <g class="dugout dugout-home" transform="translate(327 414) rotate(-45)">
+            <rect x="${-w/2}" y="${-h/2}" width="${w}" height="${h}" rx="2"/>
+          </g>
+          <g class="dugout dugout-away" transform="translate(173 414) rotate(45)">
+            <rect x="${-w/2}" y="${-h/2}" width="${w}" height="${h}" rx="2"/>
+          </g>
+        `;
+    })();
+
+    // Bullpens — small pitchers' mounds tucked beyond the foul line at
+    // the far end of each baseline (modeling the standard MLB layout
+    // where bullpens flank the OF side of foul territory).
+    const bullpens = (() => {
+        if (!park || !foul) return "";
+        // Halfway between each foul-pole and home, shifted outward.
+        const L = foul.left, R = foul.right;
+        const lMid = { x: (250 + L.x) / 2 - 18, y: (460 + L.y) / 2 + 18 };
+        const rMid = { x: (250 + R.x) / 2 + 18, y: (460 + R.y) / 2 + 18 };
+        return `
+          <g class="bullpen bullpen-l" transform="translate(${lMid.x.toFixed(1)} ${lMid.y.toFixed(1)}) rotate(45)">
+            <rect x="-22" y="-7" width="44" height="14" rx="3"/>
+          </g>
+          <g class="bullpen bullpen-r" transform="translate(${rMid.x.toFixed(1)} ${rMid.y.toFixed(1)}) rotate(-45)">
+            <rect x="-22" y="-7" width="44" height="14" rx="3"/>
+          </g>
+        `;
+    })();
+
+    // Outfield scoreboard at deepest CF. Sits just outside the wall in
+    // the patch where every park has its main scoreboard (between the
+    // batter's-eye and the outfield seating). Shows away/home score and
+    // inning when live.
+    const homeTri = g.teams?.home?.abbr || "HOM";
+    const awayTri = g.teams?.away?.abbr || "AWY";
+    const homeR   = g.score?.home ?? "—";
+    const awayR   = g.score?.away ?? "—";
+    const innStr  = g.inning && g.half
+        ? `${g.half === "top" ? "▲" : "▼"} ${ordinalSuffix(g.inning)}`
+        : g.status === "Final" ? "FINAL" : "";
+    // Position the scoreboard 8 units outside the CF wall, capped at
+    // y ≥ 12 so it stays visible even at the deepest parks (Coors).
+    const cMark = park ? POINT_LABELS_FOR_PARK(park).find((p) => p.anchor === "middle") : null;
+    const sbY = cMark ? Math.max(12, cMark.y - 36) : 26;
+    const scoreboard = `
+      <g class="cf-scoreboard" transform="translate(250 ${sbY})">
+        <rect class="sb-bg" x="-68" y="-14" width="136" height="28" rx="3"/>
+        <line class="sb-divider" x1="-30" y1="-12" x2="-30" y2="12"/>
+        <line class="sb-divider" x1="30"  y1="-12" x2="30"  y2="12"/>
+        <text class="sb-team" x="-49" y="-3" text-anchor="middle">${escapeHTML(awayTri)}</text>
+        <text class="sb-runs" x="-49" y="10" text-anchor="middle">${awayR}</text>
+        <text class="sb-inning" x="0" y="-2" text-anchor="middle">${escapeHTML(innStr || "—")}</text>
+        <text class="sb-status" x="0" y="10" text-anchor="middle">${escapeHTML((g.status || "").toUpperCase())}</text>
+        <text class="sb-team" x="49" y="-3" text-anchor="middle">${escapeHTML(homeTri)}</text>
+        <text class="sb-runs" x="49" y="10" text-anchor="middle">${homeR}</text>
+      </g>
+    `;
+
+    // Stadium light towers in the four corners (rough positions chosen
+    // to suggest standard MLB park lighting: behind 3B, behind LF, behind
+    // CF, behind RF). Each is a small bracket with a glowing head; the
+    // glow brightens on live games as a subtle "lights are on" cue.
+    const lightTowers = `
+      <g class="light-tower lt-1" transform="translate(40 60)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+      <g class="light-tower lt-2" transform="translate(460 60)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+      <g class="light-tower lt-3" transform="translate(20 280)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+      <g class="light-tower lt-4" transform="translate(480 280)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+    `;
 
     // Overlay labels on the SVG itself so the field is informative
     // without needing the matchup rows below. Pitcher last name near
@@ -2939,6 +3093,11 @@ function fieldPane(g) {
            </g>`
         : "";
 
+    // Default-fan fallback when we don't have park geometry (rare):
+    // a generic outfield shape used by all three offset bowls and
+    // closed at home so the seating rings still wrap around.
+    const fallbackWall = "M 60,270 Q 250,40 440,270";
+
     return `
       <div class="field-pane" style="--we-intensity:${intensity}">
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
@@ -2948,23 +3107,71 @@ function fieldPane(g) {
               <stop offset="60%"  stop-color="#3F6B2A"/>
               <stop offset="100%" stop-color="#355A23"/>
             </radialGradient>
+            <!-- Stadium "concrete bowl" backdrop. Radial gradient from
+                 a hint of grass at home plate out to dark blue-grey
+                 stadium concrete at the corners, so the SVG no longer
+                 sits on the page background with nothing around the
+                 field. The bowl effect reads as a true ballpark. -->
+            <radialGradient id="stadium-bowl" cx="0.5" cy="0.92" r="1.05">
+              <stop offset="0%"   stop-color="#1F2A3D"/>
+              <stop offset="55%"  stop-color="#162033"/>
+              <stop offset="100%" stop-color="#0B1220"/>
+            </radialGradient>
+            <!-- Grass mowing stripes — alternating slightly-darker
+                 concentric arcs centered on home plate. Clipped to the
+                 fair-territory wall path so they only render inside the
+                 grass, never bleeding into foul/seating territory. -->
+            <clipPath id="fair-clip">
+              <path d="${wallPath || "M 250,460 L 440,270 Q 250,40 60,270 Z"}"/>
+            </clipPath>
+            <!-- Light-tower "lit bulb" glow filter -->
+            <filter id="light-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2.4"/>
+            </filter>
           </defs>
 
-          <!-- Fair territory grass — accurate park silhouette when we
-               know the venue, generic fan otherwise. Each park's posted
-               LL/L/LC/C/RC/R/RL reference distances are connected with
-               a Catmull-Rom curve so the outline matches Coors's deep
-               gaps, Yankees's short porch, Fenway's Green Monster, etc. -->
+          <!-- L1: stadium bowl gradient (replaces transparent SVG bg) -->
+          <rect class="stadium-bowl" x="0" y="0" width="500" height="500"/>
+
+          <!-- L2: outer concourse — darkest seating ring (top deck +
+               far perimeter). evenodd punches the wall shape out of a
+               full-SVG rect so the ring is just the area between the
+               wall and the SVG bounds, then this layer fills it. -->
+          ${concourse ? `<path class="stadium-concourse"
+                d="${concourse}${closeBowl(92)}"/>` : ""}
+          <!-- L3: upper deck — middle seating ring -->
+          ${upperDeck ? `<path class="stadium-upper"
+                d="${upperDeck}${closeBowl(56)}"/>` : ""}
+          <!-- L4: lower bowl — bleachers immediately behind the wall -->
+          ${lowerBowl ? `<path class="stadium-lower"
+                d="${lowerBowl}${closeBowl(28)}"/>` : ""}
+
+          <!-- L5: foul-territory dirt — tan band between the foul
+               lines and the lower bowl, including the area behind
+               home plate where the catcher's box sits. -->
+          ${foulDirt ? `<path class="foul-dirt" d="${foulDirt}"/>` : ""}
+
+          <!-- L6: fair-territory grass (each park's exact silhouette) -->
           <path class="outfield-grass"
                 d="${wallPath || "M 250,460 L 440,270 Q 250,40 60,270 Z"}"/>
 
-          <!-- Warning track (dirt ring inset 12 ft inside the wall) -->
+          <!-- L7: grass mowing pattern — five concentric darker arcs
+               centered on home plate, clipped to fair territory so
+               they look like real outfield mowing stripes. -->
+          <g class="grass-stripes" clip-path="url(#fair-clip)">
+            <circle cx="250" cy="460" r="80"  />
+            <circle cx="250" cy="460" r="140" />
+            <circle cx="250" cy="460" r="200" />
+            <circle cx="250" cy="460" r="260" />
+            <circle cx="250" cy="460" r="320" />
+          </g>
+
+          <!-- L8: warning track (dirt ring inset 12 ft inside the wall) -->
           ${trackPath
               ? `<path class="warning-track-park" d="${trackPath}"/>`
               : `<path class="warning-track" d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>`}
 
-          <!-- Foul lines (chalk) anchored at home, terminating at the
-               park's posted foul-pole distances. -->
+          <!-- L9: foul lines (chalk) -->
           <line class="foul-line" x1="250" y1="460"
                 x2="${foul ? foul.left.x.toFixed(1)  : 60}"
                 y2="${foul ? foul.left.y.toFixed(1)  : 270}"/>
@@ -2972,7 +3179,13 @@ function fieldPane(g) {
                 x2="${foul ? foul.right.x.toFixed(1) : 440}"
                 y2="${foul ? foul.right.y.toFixed(1) : 270}"/>
 
-          <!-- Foul poles at the actual posted LL / RL distances -->
+          <!-- L10: dugouts along the 1B and 3B baselines -->
+          ${dugouts}
+
+          <!-- L11: bullpens beyond the foul-line midpoints -->
+          ${bullpens}
+
+          <!-- L12: foul poles -->
           <rect class="foul-pole"
                 x="${foul ? (foul.left.x  - 2.5).toFixed(1)  : 58}"
                 y="${foul ? (foul.left.y  - 7).toFixed(1)    : 263}"
@@ -2982,31 +3195,38 @@ function fieldPane(g) {
                 y="${foul ? (foul.right.y - 7).toFixed(1)    : 263}"
                 width="5" height="14"/>
 
-          <!-- Distance markers — small numerals at the posted points
-               so each silhouette is unambiguously the park it is. -->
+          <!-- L13: distance markers along the wall -->
           ${distMarks.map((m) =>
               `<text class="field-dist" x="${m.x.toFixed(1)}" y="${m.y.toFixed(1)}" text-anchor="${m.anchor}">${m.d}</text>`
           ).join("")}
 
-          <!-- Park name strip across the very top of the field -->
-          ${parkLabel ? `<text class="field-park-name" x="250" y="22" text-anchor="middle">${escapeHTML(parkLabel)}</text>` : ""}
-
+          <!-- L14: park-specific landmarks (Monster, ivy, porch, cove) -->
           ${landmarkOverlay(park)}
 
-          <!-- Basepaths (dirt diamond outline) -->
+          <!-- L15: outfield scoreboard at deep CF — broadcasts the
+               score and inning the way real park scoreboards do. -->
+          ${scoreboard}
+
+          <!-- L16: stadium light towers at the four corners -->
+          ${lightTowers}
+
+          <!-- L17: park name strip at the very top -->
+          ${parkLabel ? `<text class="field-park-name" x="250" y="${sbY - 22}" text-anchor="middle">${escapeHTML(parkLabel)}</text>` : ""}
+
+          <!-- L18: basepaths (infield dirt diamond) -->
           <path class="basepath" d="M 250,455 L 388,318 L 250,180 L 112,318 Z"/>
 
-          <!-- Pitcher's mound + rubber -->
+          <!-- L19: pitcher's mound + rubber -->
           <circle class="mound" cx="250" cy="355" r="22"/>
           <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
 
-          <!-- Pitcher overlay (broadcast-style: surname near the mound) -->
+          <!-- L20: pitcher overlay near the mound -->
           ${pitcherSurname
               ? `<text class="field-pitcher-name" x="250" y="395" text-anchor="middle">${escapeHTML(pitcherSurname)}</text>
                  <text class="field-pitcher-hand" x="250" y="408" text-anchor="middle">${g.pitcher?.throws ? `${g.pitcher.throws}HP` : ""}</text>`
               : ""}
 
-          <!-- Bases -->
+          <!-- L21: bases -->
           <polygon class="base home"
                    points="244,458 256,458 256,464 250,470 244,464"/>
           <g transform="translate(390 320) rotate(45)">
@@ -3022,16 +3242,17 @@ function fieldPane(g) {
                   x="-7" y="-7" width="14" height="14"/>
           </g>
 
-          <!-- Batter overlay near home plate -->
+          <!-- L22: batter overlay at home plate -->
           ${batterSurname
               ? `<text class="field-batter-name" x="250" y="492" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
               : ""}
 
-          <!-- Runner names (legible against grass via text stroke) -->
+          <!-- L23: runner names on occupied bases -->
           ${runnerLabel("first",  412, 326, "start")}
           ${runnerLabel("second", 250, 166, "middle")}
           ${runnerLabel("third",  88,  326, "end")}
 
+          <!-- L24: count + outs broadcast chip -->
           ${countChip}
         </svg>
         ${flavorChips && flavorChips.length
