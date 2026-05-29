@@ -922,7 +922,7 @@ async function listBovadaMlbMarkets() {
     // (shared across all adapters in listAllMlbMarkets fan-out). The
     // 5-min edge cache means concurrent viewers see the same hit so
     // we don't lose coverage in practice — just delayed by one cycle.
-    events = events.slice(0, 10);
+    events = events.slice(0, 6);
 
     // Per-event fan-out to get the full market book (props included).
     const fullEvents = await Promise.allSettled(
@@ -1260,7 +1260,7 @@ async function listPinnacleMlbMarkets() {
 
     // For each top-level (parent==null) matchup, hit the straight
     // markets endpoint to get moneyline / total / spread prices.
-    const eligible = matchups.filter((m) => !m.parent && m.participants?.length >= 2).slice(0, 10);
+    const eligible = matchups.filter((m) => !m.parent && m.participants?.length >= 2).slice(0, 6);
     const results = await Promise.allSettled(
         eligible.map(async (ev) => {
             const id = ev.id;
@@ -1431,7 +1431,7 @@ async function listSmarketsMlbMarkets() {
         Object.defineProperty(out, "_dbg", { value: dbg, enumerable: false });
         return out;
     }
-    events = events.slice(0, 10);  // cap for Cloudflare 50-subreq budget shared across all adapters
+    events = events.slice(0, 6);  // cap for Cloudflare 50-subreq budget shared across all adapters
     dbg.events_capped = events.length;
 
     // 1. Per-event markets fan-out (~16 reqs).
@@ -1763,7 +1763,7 @@ async function listTheScoreMlbMarkets() {
     }
     if (!eventIds.length) return [];
 
-    const capped = eventIds.slice(0, 10);
+    const capped = eventIds.slice(0, 6);
     const fullEvents = await Promise.allSettled(
         capped.map((id) => fetchJson(`${THESCORE_BASE}/mlb/events/${id}`, { cacheTtl: 30 })
             .catch(() => null)),
@@ -1944,7 +1944,7 @@ async function listEspnDraftKingsMlbMarkets() {
         const ref = it.$ref || "";
         const m = ref.match(/\/events\/(\d+)/);
         return m ? m[1] : null;
-    }).filter(Boolean).slice(0, 10);   // cap for CF subrequest budget
+    }).filter(Boolean).slice(0, 5);   // cap for CF subrequest budget
 
     if (!eventIds.length) return [];
 
