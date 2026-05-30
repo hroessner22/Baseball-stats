@@ -410,9 +410,22 @@ function parseKalshiGameTicker(ticker) {
 
 // Deterministically split a concatenated two-team tricode pair. Tries
 // every valid (2 or 3) + (2 or 3) split and returns the first where
-// BOTH halves are recognized MLB tricodes. Returns null if no split
-// works — caller should drop the market.
-const MLB_TRICODE_SET = new Set(MLB_TEAMS.map(([tri]) => tri));
+// BOTH halves are recognized MLB tricodes — or known aliases (CWS for
+// White Sox, ATH for Athletics, etc.). Both halves get canonicalized
+// to MLB-Stats abbrs (CHW, OAK, ...) before return so downstream
+// team-pair matching works against the MLB feed.
+//
+// Returns null if no split works — caller should drop the market.
+const MLB_TRICODE_SET = new Set();
+for (const [tri, _name, aliases] of MLB_TEAMS) {
+    MLB_TRICODE_SET.add(tri);
+    for (const a of aliases || []) {
+        const up = String(a).toUpperCase();
+        if (up.length >= 2 && up.length <= 4 && /^[A-Z]+$/.test(up)) {
+            MLB_TRICODE_SET.add(up);
+        }
+    }
+}
 function splitMlbTeamPair(pair) {
     if (!pair || pair.length < 4 || pair.length > 6) return null;
     // Order matters: try 3+3 (most common), then 2+3, 3+2, 2+2.
@@ -424,7 +437,12 @@ function splitMlbTeamPair(pair) {
         const t1 = pair.slice(0, a);
         const t2 = pair.slice(a, a + b);
         if (MLB_TRICODE_SET.has(t1) && MLB_TRICODE_SET.has(t2)) {
-            return { t1, t2 };
+            // Canonicalize via teamTricode so "CWS" becomes "CHW",
+            // matching the MLB Stats API abbreviation.
+            return {
+                t1: teamTricode(t1) || t1,
+                t2: teamTricode(t2) || t2,
+            };
         }
     }
     return null;
