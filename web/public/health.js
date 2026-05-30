@@ -20,6 +20,8 @@ const RECOVERY_RETRY_MS = 5_000;   // when broken, poll faster so recovery is sn
 let lastHealth        = null;     // last full response from /api/health
 let lastMarketsOk     = null;     // true/false/null, used to detect transitions
 let inFlight          = false;
+let degradedSince     = null;     // timestamp when health first went non-OK
+let degradedActionsApplied = false;
 
 async function checkHealth(opts = {}) {
     if (inFlight) return;
@@ -33,6 +35,7 @@ async function checkHealth(opts = {}) {
         lastHealth = data;
         lastMarketsOk = now;
         renderIndicator();
+        applyDegradedAdaptations(data);
 
         // Auto-recovery: markets just came back from failing.
         // Trigger a dashboard refresh so the user immediately sees
@@ -65,6 +68,67 @@ async function checkHealth(opts = {}) {
 }
 
 let scheduleTimer = null;
+
+// Autonomous adaptation when the health checker goes yellow / red.
+// User asked: "when this happens and the checker is yellow, make
+// changes." Concretely:
+//   - Slow the markets-dashboard auto-refresh from 10s → 30s while
+//     degraded, so we stop hammering an already-struggling endpoint.
+//   - Show a banner at the top of the markets view so the user knows
+//     we're in throttle mode.
+//   - When health flips back to OK, restore the normal cadence and
+//     remove the banner.
+function applyDegradedAdaptations(health) {
+    const isOk = health?.ok === true;
+    if (!isOk && !degradedActionsApplied) {
+        degradedActionsApplied = true;
+        degradedSince = Date.now();
+        // Slow the dashboard auto-refresh by replacing the existing
+        // interval handle. app.js stores it as marketsDashboardTimer.
+        try {
+            if (root.marketsDashboardTimer) clearInterval(root.marketsDashboardTimer);
+            if (typeof root.refreshMarketsDashboard === "function") {
+                root.marketsDashboardTimer = setInterval(root.refreshMarketsDashboard, 30_000);
+            }
+        } catch { /* best-effort */ }
+        showDegradedBanner();
+    } else if (isOk && degradedActionsApplied) {
+        degradedActionsApplied = false;
+        // Restore the normal 10s cadence.
+        try {
+            if (root.marketsDashboardTimer) clearInterval(root.marketsDashboardTimer);
+            if (typeof root.refreshMarketsDashboard === "function") {
+                root.marketsDashboardTimer = setInterval(root.refreshMarketsDashboard, 10_000);
+            }
+        } catch { /* best-effort */ }
+        hideDegradedBanner();
+        degradedSince = null;
+    }
+}
+
+function showDegradedBanner() {
+    let banner = document.querySelector(".health-degraded-banner");
+    if (!banner) {
+        banner = document.createElement("div");
+        banner.className = "health-degraded-banner";
+        document.body.appendChild(banner);
+    }
+    const failed = Object.entries(lastHealth?.checks || {})
+        .filter(([_, c]) => !c.ok)
+        .map(([n]) => n);
+    banner.innerHTML = `
+      <span class="hdb-dot"></span>
+      <span class="hdb-text">
+        Degraded: <strong>${failed.join(", ") || "system slow"}</strong>.
+        Slowed auto-refresh to 30s while we recover.
+      </span>
+      <button class="hdb-dismiss" onclick="this.parentElement.remove()">×</button>
+    `;
+}
+
+function hideDegradedBanner() {
+    document.querySelector(".health-degraded-banner")?.remove();
+}
 
 function renderIndicator() {
     let host = document.querySelector(".health-indicator");

@@ -845,6 +845,11 @@ function showMarketsDashboard() {
     renderEmpty(marketsView, "Pulling every public MLB market…", "");
     refreshMarketsDashboard();
     marketsDashboardTimer = setInterval(refreshMarketsDashboard, MARKETS_REFRESH_MS);
+    // Expose the handle so health.js can replace it with a slower
+    // cadence when the checker goes yellow (autonomous throttle).
+    if (typeof window !== "undefined") {
+        window.marketsDashboardTimer = marketsDashboardTimer;
+    }
 }
 
 // Hard "show only Kalshi" mode. Harris is in NY where Bovada is

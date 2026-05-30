@@ -7451,3 +7451,53 @@ button.md-game-outcome:active { transform: translateY(1px); }
     font-family: ui-monospace, "SF Mono", Consolas, monospace;
 }
 
+/* Degraded banner — pinned to top of viewport when health checker
+   detects a service is failing. Auto-shown / hidden by health.js
+   based on /api/health response. */
+.health-degraded-banner {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 952;
+    background: rgba(252, 211, 77, 0.14);
+    border: 1px solid rgba(252, 211, 77, 0.4);
+    color: #FCD34D;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 90vw;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    animation: hdb-slide-in 280ms ease-out;
+}
+.health-degraded-banner .hdb-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #FCD34D;
+    box-shadow: 0 0 8px rgba(252, 211, 77, 0.7);
+    animation: health-pulse 1.6s ease-in-out infinite;
+    flex-shrink: 0;
+}
+.health-degraded-banner .hdb-text strong { color: #FEF3C7; }
+.health-degraded-banner .hdb-dismiss {
+    background: transparent;
+    border: none;
+    color: #FCD34D;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.7;
+}
+.health-degraded-banner .hdb-dismiss:hover { opacity: 1; }
+@keyframes hdb-slide-in {
+    from { opacity: 0; transform: translate(-50%, -20px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+

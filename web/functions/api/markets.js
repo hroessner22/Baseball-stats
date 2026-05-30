@@ -85,11 +85,20 @@ export async function onRequest(context) {
 // slate" view. Also dedupes by (team_pair × question × source) so
 // the same team-pair moneyline doesn't appear 3x (doubleheaders,
 // next-day series).
+// Tighter game-day filter for the slate dashboard. Drops player_prop
+// and team_prop entirely — those are 80%+ of the wire bytes once
+// we started pulling every Kalshi per-game prop series (HR / KS /
+// HIT / TB / spreads / totals / first-5 / etc.), and they're only
+// needed on the per-game Markets tab anyway (served by
+// /api/game/{id}/markets which scopes to a single game). The
+// slate-wide endpoint only needs moneyline + spread + total to
+// render the dashboard cards.
 function filterToGameDay(markets) {
     const now = Date.now();
+    const DASH_TYPES = new Set(["moneyline", "spread", "total"]);
     const kept = markets.filter((m) => {
         if (GAME_DAY_EXCLUDE.has(m.question_type)) return false;
-        if (!GAME_DAY_TYPES.has(m.question_type))   return false;
+        if (!DASH_TYPES.has(m.question_type))   return false;
         if (m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - now);
             if (dt > GAME_DAY_WINDOW_MS) return false;
