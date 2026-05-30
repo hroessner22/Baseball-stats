@@ -1824,14 +1824,33 @@ function renderTeamView(tricode, standings, markets, games) {
     );
     const todayGameBlock = todayGame ? renderTeamTodayGame(todayGame, tricode) : "";
 
-    const wsMarkets   = teamFutures.filter((m) => /world series/i.test(m.title || ""));
-    const lcsMarkets  = teamFutures.filter((m) => /championship series/i.test(m.title || ""));
-    const divMarkets  = teamFutures.filter((m) => /(al|nl) (east|west|central)|division/i.test(m.title || ""));
-    const winsMarkets = teamFutures.filter((m) => /(more|fewer|at least|over) .* games|win total|regular season/i.test(m.title || ""));
-    const otherFut    = teamFutures.filter((m) =>
-        !wsMarkets.includes(m) && !lcsMarkets.includes(m)
-        && !divMarkets.includes(m) && !winsMarkets.includes(m)
-    );
+    // Categorize team season futures by Kalshi series. Each Kalshi
+    // series carries its own ticker prefix, which is much more
+    // reliable than title regex (their titles vary: 'Pro Baseball
+    // Championship' vs 'World Series' vs 'American League Champion').
+    // The raw_market_id is the ticker; we match on its KX...- prefix.
+    const tickerStartsWith = (m, prefix) => (m.raw_market_id || "").toUpperCase().startsWith(prefix);
+    const championship = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLB-"));
+    const alPennant    = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBAL-"));
+    const nlPennant    = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBNL-"));
+    const division     = teamFutures.filter((m) =>
+        /^KXMLB(AL|NL)(EAST|CENT|WEST)-/i.test(m.raw_market_id || ""));
+    const playoffs     = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBPLAYOFFS-"));
+    const bestRecord   = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBBESTRECORD-"));
+    const worstRecord  = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBWORSTRECORD-"));
+    // Anything else gets a catch-all section — surfaces new Kalshi
+    // series the moment they show up without code changes.
+    const categorized = new Set([
+        ...championship, ...alPennant, ...nlPennant, ...division,
+        ...playoffs, ...bestRecord, ...worstRecord,
+    ]);
+    const otherFut = teamFutures.filter((m) => !categorized.has(m));
 
     const noMarkets =
         teamFutures.length === 0 && playerSeasonFutures.length === 0;
@@ -1843,7 +1862,14 @@ function renderTeamView(tricode, standings, markets, games) {
         ${noMarkets
             ? `<div class="empty">No Kalshi season futures currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
             : `
-              ${renderTeamFuturesSection(wsMarkets, lcsMarkets, divMarkets, winsMarkets, otherFut, tricode)}
+              ${renderTeamFutureSection("World Series · Pro Baseball Champion",  championship,  tricode)}
+              ${renderTeamFutureSection("AL Pennant · American League Champion", alPennant,     tricode)}
+              ${renderTeamFutureSection("NL Pennant · National League Champion", nlPennant,     tricode)}
+              ${renderTeamFutureSection("Division title",                        division,      tricode)}
+              ${renderTeamFutureSection("Playoff qualifier",                     playoffs,      tricode)}
+              ${renderTeamFutureSection("Best regular-season record",            bestRecord,    tricode)}
+              ${renderTeamFutureSection("Worst regular-season record",           worstRecord,   tricode)}
+              ${renderTeamFutureSection("Other team futures",                    otherFut,      tricode)}
               ${renderTeamPlayerFuturesSection(playerSeasonFutures, teamName)}
             `}
         <footer class="team-footnote">
@@ -1864,18 +1890,6 @@ function renderTeamPlayerFuturesSection(props, teamName) {
         <h3 class="team-section-title">Player season futures · ${escapeHTMLAttr(teamName)} roster</h3>
         ${renderPlayerPropsByStat(props)}
       </section>
-    `;
-}
-
-// Season futures (WS / LCS / Division / Wins / Other) — vertical
-// stack, just stripped of non-Kalshi sources by the upstream filter.
-function renderTeamFuturesSection(ws, lcs, div, wins, other, tricode) {
-    return `
-      ${renderTeamFutureSection("World Series 2026",         ws,    tricode)}
-      ${renderTeamFutureSection("League Championship Series", lcs,  tricode)}
-      ${renderTeamFutureSection("Division title",             div,  tricode)}
-      ${renderTeamFutureSection("Regular-season wins",        wins, tricode)}
-      ${renderTeamFutureSection("Other team futures",         other, tricode)}
     `;
 }
 
@@ -4946,7 +4960,43 @@ function renderGameLinesTab(d) {
 // PLAYER_STAT_TABS below — group markets by this and render each
 // group under its own sub-tab so the user isn't scrolling through
 // HR / strikeout / hits / TB all mixed together.
+//
+// Two universes of markets land here:
+//   - PER-GAME props (KXMLBHR/KS/HIT/TB/HRR ...) — titled
+//     "Player Name: N+ stat?". Categorized by stat keyword in title.
+//   - SEASON FUTURES (KXMLBAL/NLMVP, KXMLBAL/NLCY, KXLEADERMLB* ...) —
+//     titled "Will Player win the AL MVP?" etc. The title doesn't
+//     contain the stat keyword reliably ("Will Aaron Judge be the
+//     2026 AL MVP?" has no 'HR' / 'hit' substring), so we use the
+//     market's Kalshi series ticker — much more reliable signal.
 function getPlayerStatType(market) {
+    const ticker = (market.raw_market_id || "").toUpperCase();
+    // Season futures — match by Kalshi series ticker first.
+    if (/^KXMLB(AL|NL)MVP-/.test(ticker))     return "award_mvp";
+    if (/^KXMLB(AL|NL)CY-/.test(ticker))      return "award_cy_young";
+    if (/^KXMLB(AL|NL)ROTY-/.test(ticker))    return "award_rookie";
+    if (/^KXMLB(AL|NL)MOTY-/.test(ticker))    return "award_manager";
+    if (/^KXMLB(AL|NL)RELOTY-/.test(ticker))  return "award_reliever";
+    if (/^KXMLB(AL|NL)CPOTY-/.test(ticker))   return "award_comeback";
+    if (/^KXMLB(AL|NL)HAARON-/.test(ticker))  return "award_haaron";
+    if (/^KXMLBEOTY-/.test(ticker))           return "award_exec";
+    if (/^KXLEADERMLBHR-/.test(ticker))       return "leader_hr";
+    if (/^KXLEADERMLBRBI-/.test(ticker))      return "leader_rbi";
+    if (/^KXLEADERMLBAVG-/.test(ticker))      return "leader_avg";
+    if (/^KXLEADERMLBHITS-/.test(ticker))     return "leader_hits";
+    if (/^KXLEADERMLBRUNS-/.test(ticker))     return "leader_runs";
+    if (/^KXLEADERMLBDOUBLES-/.test(ticker))  return "leader_doubles";
+    if (/^KXLEADERMLBTRIPLES-/.test(ticker))  return "leader_triples";
+    if (/^KXLEADERMLBSTEALS-/.test(ticker))   return "leader_steals";
+    if (/^KXLEADERMLBOPS-/.test(ticker))      return "leader_ops";
+    if (/^KXLEADERMLBWAR-/.test(ticker))      return "leader_war";
+    if (/^KXLEADERMLBKS-/.test(ticker))       return "leader_pitcher_k";
+    if (/^KXLEADERMLBWINS-/.test(ticker))     return "leader_pitcher_wins";
+    if (/^KXLEADERMLBERA-/.test(ticker))      return "leader_era";
+    if (/^KXMLBPITCHEROTM-/.test(ticker))     return "pitcher_otm";
+
+    // Per-game props — title-keyword classification (legacy path,
+    // used by the per-game Markets pane).
     const t = (market.title || "").toLowerCase();
     if (/strikeouts?\b|\bk['']?s?\b|so total/.test(t))     return "strikeouts";
     if (/home runs?\b|\bhrs?\b/.test(t))                   return "home_runs";
@@ -4959,18 +5009,45 @@ function getPlayerStatType(market) {
     return "other_player";
 }
 
-// Display config for each player-stat sub-tab — title shown on the
-// chip + the side of the matchup it applies to (just informational).
+// Display config for each player-stat sub-tab. Order = order shown
+// in the nav row. Renderer drops any tab whose bucket is empty for
+// the current market list, so empty categories never appear.
 const PLAYER_STAT_TABS = [
-    { key: "home_runs",    label: "Home Runs" },
-    { key: "hits",         label: "Hits" },
-    { key: "strikeouts",   label: "Strikeouts" },
-    { key: "total_bases",  label: "Total Bases" },
-    { key: "combo_hrrbi",  label: "H+R+RBI" },
-    { key: "walks",        label: "Walks" },
-    { key: "earned_runs",  label: "Earned Runs" },
-    { key: "pitcher_win",  label: "Pitcher Win" },
-    { key: "other_player", label: "Other" },
+    // ── Per-game props ──
+    { key: "home_runs",            label: "Home Runs" },
+    { key: "hits",                 label: "Hits" },
+    { key: "strikeouts",           label: "Strikeouts" },
+    { key: "total_bases",          label: "Total Bases" },
+    { key: "combo_hrrbi",          label: "H+R+RBI" },
+    { key: "walks",                label: "Walks" },
+    { key: "earned_runs",          label: "Earned Runs" },
+    { key: "pitcher_win",          label: "Pitcher Win" },
+    // ── Season-future awards ──
+    { key: "award_mvp",            label: "MVP" },
+    { key: "award_cy_young",       label: "Cy Young" },
+    { key: "award_rookie",         label: "Rookie of Year" },
+    { key: "award_manager",        label: "Manager of Year" },
+    { key: "award_reliever",       label: "Reliever of Year" },
+    { key: "award_comeback",       label: "Comeback Player" },
+    { key: "award_haaron",         label: "Hank Aaron" },
+    { key: "award_exec",           label: "Executive of Year" },
+    // ── Season-future leaders ──
+    { key: "leader_hr",            label: "HR Leader" },
+    { key: "leader_rbi",           label: "RBI Leader" },
+    { key: "leader_avg",           label: "AVG Leader" },
+    { key: "leader_hits",          label: "Hits Leader" },
+    { key: "leader_runs",          label: "Runs Leader" },
+    { key: "leader_doubles",       label: "Doubles Leader" },
+    { key: "leader_triples",       label: "Triples Leader" },
+    { key: "leader_steals",        label: "Steals Leader" },
+    { key: "leader_ops",           label: "OPS Leader" },
+    { key: "leader_war",           label: "WAR Leader" },
+    { key: "leader_pitcher_k",     label: "K Leader" },
+    { key: "leader_pitcher_wins",  label: "Wins Leader" },
+    { key: "leader_era",           label: "Lowest ERA" },
+    { key: "pitcher_otm",          label: "Pitcher of Month" },
+    // ── Catch-all ──
+    { key: "other_player",         label: "Other" },
 ];
 
 function renderPlayerPropsTab(d) {
