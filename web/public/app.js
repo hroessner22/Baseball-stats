@@ -847,6 +847,44 @@ function showMarketsDashboard() {
     marketsDashboardTimer = setInterval(refreshMarketsDashboard, MARKETS_REFRESH_MS);
 }
 
+// Hard "show only Kalshi" mode. Harris is in NY where Bovada is
+// geo-blocked and Polymarket isn't cleanly accessible, so showing
+// non-Kalshi prices is misleading (the user can't act on them).
+// When ON, every market view filters the upstream data to Kalshi-only
+// before render, and the per-game Kalshi cards hydrate live prices
+// from /markets/{ticker}/orderbook (since /markets returns nulls).
+// Flip to false later if we want a multi-source view back.
+const KALSHI_ONLY_MODE = true;
+
+// Strip every non-Kalshi market from a markets-endpoint response
+// shape ({ markets: { moneyline: [], spread: [], ... }, all: [],
+// sources_present: [], market_count, per_source: [] }). Mutates in
+// place so callers don't have to rewire the references they hold.
+function filterToKalshi(data) {
+    if (!KALSHI_ONLY_MODE || !data) return data;
+    const isKalshi = (m) => m && m.source === "kalshi";
+    if (data.markets) {
+        for (const k of Object.keys(data.markets)) {
+            data.markets[k] = (data.markets[k] || []).filter(isKalshi);
+        }
+    }
+    if (data.all)             data.all = data.all.filter(isKalshi);
+    if (data.per_source)      data.per_source = data.per_source.filter((r) => r.source === "kalshi");
+    if (data.sources_present) data.sources_present = data.sources_present.filter((s) => s === "kalshi");
+    if (data.all)             data.market_count = data.all.length;
+    // Dashboard-specific header fields. Without these the chip strip
+    // at the top still advertises "bovada 716, pinnacle 278, …" even
+    // though none of those render anywhere — confusing.
+    if (data.sources)         data.sources = (data.sources || []).filter((s) => s === "kalshi");
+    if (data.counts_by_source) {
+        data.counts_by_source = { kalshi: data.counts_by_source.kalshi || 0 };
+    }
+    if (data.total != null && data.counts_by_source) {
+        data.total = data.counts_by_source.kalshi || 0;
+    }
+    return data;
+}
+
 // /api/markets is flaky on Cloudflare Pages Functions — empirically
 // ~15% of requests 503 because the fan-out to 11 upstream adapters
 // occasionally exceeds the CPU/memory headroom on certain edge nodes.
@@ -895,7 +933,9 @@ async function refreshMarketsDashboard() {
             if (key) gameLookup[key] = { pk: g.game_pk, status: g.status };
         }
         data._game_lookup = gameLookup;
+        filterToKalshi(data);
         marketsView.innerHTML = renderMarketsDashboard(data);
+        hydrateKalshiBookCells();
         // The dashboard render replaces the entire innerHTML which
         // wipes the Kalshi "My Bets" panel back to its loading shell.
         // Immediately repopulate so the user doesn't stare at
@@ -1267,6 +1307,30 @@ function recomputeMdPayout(calc) {
 function onMdOutcomePick(btn) {
     const card = btn.closest(".md-game-card");
     if (!card) return;
+
+    // Kalshi-only mode: skip the inline bet calculator and open the
+    // Kalshi bet modal directly with the clicked side prefilled.
+    // The bet modal has the take/post toggle + live orderbook fetch
+    // already; the calculator was a middle step we no longer need.
+    if (KALSHI_ONLY_MODE && window.Kalshi && window.Kalshi.openBetModal) {
+        const gameKey = card.getAttribute("data-game-key");
+        const game = (window._mdGames || {})[gameKey];
+        const kind = btn.getAttribute("data-kind") || "moneyline";
+        const wantName = btn.getAttribute("data-name") || "";
+        const kalshiMl = (game?.markets?.[kind] || []).find((x) => x.source === "kalshi");
+        if (!kalshiMl) {
+            window.Kalshi.toast("No Kalshi market for that side", "err");
+            return;
+        }
+        const outcome = (kalshiMl.outcomes || []).find((o) =>
+            (o.name || "").toLowerCase() === wantName.toLowerCase()
+        ) || kalshiMl.outcomes?.[0];
+        if (outcome) {
+            window.Kalshi.openBetModal(kalshiMl, outcome);
+        }
+        return;
+    }
+
     const calc = card.querySelector("[data-md-calc]");
     if (!calc) return;
     const side = calc.querySelector("[data-md-side]");
@@ -1401,6 +1465,36 @@ function bestOutcomesAcrossSources(markets, kind) {
 // the card shows two clean rows instead of N source-stacked duplicates.
 function renderMdMiniMarket(markets, kind) {
     const outcomes = bestOutcomesAcrossSources(markets, kind);
+
+    // Kalshi-only mode: Kalshi's /markets pipeline gives null prices,
+    // so bestOutcomesAcrossSources returns nothing. But the named
+    // outcomes are still on the market object — render them as buttons
+    // marked for hydration from /markets/{ticker}/orderbook, same
+    // pattern the per-game Markets tab uses.
+    if (KALSHI_ONLY_MODE && !outcomes.length) {
+        const kalshi = (markets || []).find((m) => m.source === "kalshi");
+        if (kalshi && (kalshi.outcomes || []).length) {
+            return kalshi.outcomes.slice(0, 2).map((o) => {
+                const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+                const ticker = idMatch ? idMatch[1] : "";
+                return `
+                  <button class="md-game-outcome"
+                          data-md-pick="1"
+                          data-kalshi-ob-cell
+                          data-ticker="${escapeHTMLAttr(ticker)}"
+                          data-name="${escapeHTMLAttr(o.name || "")}"
+                          data-kind="${escapeHTMLAttr(kind)}">
+                    <span class="md-game-out-name">${escapeHTML(o.name || "")}</span>
+                    <span class="md-game-out-odds">
+                      <span class="mab-cell-loading">…</span>
+                    </span>
+                  </button>
+                `;
+            }).join("");
+        }
+        return `<div class="md-game-empty">no kalshi market</div>`;
+    }
+
     if (!outcomes.length) return `<div class="md-game-empty">no quote</div>`;
     // Two-outcome markets only — sort by probability desc so favored
     // side is first (matches sportsbook convention).
@@ -4223,6 +4317,7 @@ async function hydrateMarkets(gameId) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
+        filterToKalshi(data);
         // Also update the cached consensus pill — even when viewers
         // are on the Markets tab, the Live View card behind it should
         // reflect the same numbers when they tab back.
@@ -4262,6 +4357,7 @@ async function hydrateMarketConsensusPill(gameId) {
         if (!res.ok) return;
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
+        filterToKalshi(data);
         cachedMarketConsensusSlot = renderMarketConsensusPill(data);
         cachedMarketConsensusPk = gameId;
         const slot = document.getElementById("market-consensus-slot");
@@ -4953,13 +5049,15 @@ async function hydrateKalshiBookCells() {
             const ob = await window.Kalshi.getOrderbook(ticker);
             const oddsHtml = orderbookToOddsHtml(ob);
             cellList.forEach((cell) => {
-                const oddsEl = cell.querySelector(".mab-cell-odds");
+                // .mab-cell-odds = "Every book we pull from" panel
+                // .md-game-out-odds = markets dashboard outcome buttons
+                const oddsEl = cell.querySelector(".mab-cell-odds, .md-game-out-odds");
                 if (oddsEl) oddsEl.innerHTML = oddsHtml;
                 cell.setAttribute("data-hydrated", "1");
             });
         } catch {
             cellList.forEach((cell) => {
-                const oddsEl = cell.querySelector(".mab-cell-odds");
+                const oddsEl = cell.querySelector(".mab-cell-odds, .md-game-out-odds");
                 if (oddsEl) oddsEl.innerHTML = `<span class="mab-cell-empty">—</span>`;
                 cell.setAttribute("data-hydrated", "1");
             });
@@ -4970,11 +5068,13 @@ async function hydrateKalshiBookCells() {
 // Reduce a normalized orderbook ({ yes:[[cents,qty]], no:[[cents,qty]] })
 // to a single best-YES-ask quote rendered as American odds + implied %.
 // Returns "<span>no offers</span>" when neither side has resting orders.
+// Output uses BOTH class-name conventions (mab-cell-am/pct +
+// md-game-out-am/pct) so the same HTML styles in either the "Every
+// book we pull from" panel OR the markets-dashboard outcome buttons.
 function orderbookToOddsHtml(ob) {
     if (!ob) return `<span class="mab-cell-empty">no offers</span>`;
     const noBook = ob.no || [];
     if (!noBook.length) return `<span class="mab-cell-empty">no offers</span>`;
-    // NO bids sorted ascending. Highest NO bid = lowest YES ask.
     const bestNoBid = noBook[noBook.length - 1];
     const noBidCents = Number(bestNoBid[0]);
     if (!Number.isFinite(noBidCents) || noBidCents < 1 || noBidCents > 99) {
@@ -4983,8 +5083,8 @@ function orderbookToOddsHtml(ob) {
     const askCents = 100 - noBidCents;
     const american = centsToAmerican(askCents);
     return `
-      ${american ? `<span class="mab-cell-am">${american}</span>` : ""}
-      <span class="mab-cell-pct">${askCents}%</span>
+      ${american ? `<span class="mab-cell-am md-game-out-am">${american}</span>` : ""}
+      <span class="mab-cell-pct md-game-out-pct">${askCents}%</span>
     `;
 }
 
