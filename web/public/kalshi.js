@@ -283,7 +283,28 @@ async function placeOrder(opts) {
 
 async function cancelOrder(orderId) {
     if (!orderId) throw new Error("orderId required");
-    return callKalshi("DELETE", `/trade-api/v2/portfolio/orders/${encodeURIComponent(orderId)}`);
+    // Send the DELETE and capture whatever Kalshi returns so the
+    // caller can surface useful detail to the user (rather than the
+    // generic "Order cancelled" we showed before, which could be a
+    // lie if Kalshi accepted the request but didn't actually cancel).
+    const res = await callKalshi(
+        "DELETE",
+        `/trade-api/v2/portfolio/orders/${encodeURIComponent(orderId)}`,
+    );
+    // Verify by re-fetching the order. Kalshi sometimes accepts DELETE
+    // but reports the order in a different terminal state (filled,
+    // expired, etc.) by the time we look. Surfacing that to the user
+    // is more honest than a green "cancelled" toast that doesn't match
+    // what they see on kalshi.com.
+    let finalStatus = null;
+    try {
+        const verify = await callKalshi(
+            "GET",
+            `/trade-api/v2/portfolio/orders/${encodeURIComponent(orderId)}`,
+        );
+        finalStatus = verify?.order?.status || null;
+    } catch { /* verification is best-effort */ }
+    return { cancel: res, finalStatus };
 }
 
 async function getOpenOrders() {
@@ -955,13 +976,28 @@ function attachDelegates() {
             e.preventDefault();
             const orderId = cancelBtn.getAttribute("data-kalshi-cancel");
             if (!orderId) return;
+            // Quick confirm so a fat-finger doesn't pull a resting
+            // bid the user actually wanted to keep.
+            if (!confirm("Cancel this order on Kalshi?")) return;
             cancelBtn.disabled = true;
             cancelBtn.textContent = "Cancelling…";
             try {
-                await cancelOrder(orderId);
-                toast("Order cancelled", "ok");
+                const result = await cancelOrder(orderId);
                 cachedBalanceCents = null;
                 cachedBalanceFetchedAt = 0;
+                const status = result.finalStatus;
+                if (status === "canceled" || status === "cancelled") {
+                    toast("Order cancelled on Kalshi ✓", "ok");
+                } else if (status === "executed" || status === "filled") {
+                    toast("Too late — order had already filled.", "err");
+                } else if (status === null) {
+                    // Couldn't verify; treat as best-effort success.
+                    toast("Cancel submitted (status unconfirmed)", "ok");
+                } else {
+                    // Kalshi accepted DELETE but order isn't in a
+                    // cancelled state — show exactly what they say.
+                    toast(`Cancel may not have worked — Kalshi status: ${status}`, "err");
+                }
                 refreshMyBets();
             } catch (err) {
                 toast(`Cancel failed: ${err.message || err}`, "err");
