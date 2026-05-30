@@ -5272,20 +5272,6 @@ function centsToAmerican(cents) {
 
 function renderMarketsSection(title, rows) {
     if (!rows || !rows.length) return "";
-    // Partition priced (any outcome has probability) vs unpriced.
-    //
-    // Old behavior: when no priced rows exist, render just ONE unpriced
-    //   row "so the user sees we tried". That made sense when Kalshi
-    //   was a "no quote yet" fallback alongside Bovada/Polymarket.
-    //
-    // New behavior (Kalshi-only mode + orderbook hydration): every
-    //   Kalshi player_prop is "unpriced" in the markets pipeline because
-    //   real prices come from /orderbook hydration after render. So the
-    //   slice-to-one cap drops 119 markets down to 1. Show them ALL —
-    //   hydrateKalshiBookCells fills in each card's prices.
-    //
-    // We still prefer priced over unpriced when both exist (sportsbook
-    //   rows surface first, Kalshi-only-hydration rows below).
     const priced = rows.filter((m) =>
         (m.outcomes || []).some((o) => o.probability != null)
     );
@@ -5301,7 +5287,17 @@ function renderMarketsSection(title, rows) {
         const bh = b?.handicap != null ? Math.abs(b.handicap) : Infinity;
         return ah - bh;
     });
-    const rendered = list.map(renderMarketRow).filter((s) => s.length > 0);
+
+    // Group same-question markets that differ only by threshold into
+    // condensed cards with a threshold selector. "Kumar Rocker 2+, 3+,
+    // 4+, ... 8+ strikeouts" becomes ONE card with 7 chips. User taps
+    // a chip → odds + Buy buttons swap to that threshold's market.
+    // Markets that don't group (no threshold pattern) render normally.
+    const groups = groupMarketsByQuestion(list);
+    const rendered = Array.from(groups.values()).map((markets) => {
+        if (markets.length === 1) return renderMarketRow(markets[0]);
+        return renderCondensedPropCard(markets);
+    }).filter((s) => s.length > 0);
     if (!rendered.length) return "";
     return `
       <section class="markets-section">
@@ -5311,6 +5307,155 @@ function renderMarketsSection(title, rows) {
         </div>
       </section>
     `;
+}
+
+// ── Threshold-grouped prop condensation ─────────────────────────
+//
+// Many Kalshi markets are the same question at different thresholds:
+//   "Kumar Rocker: 2+ strikeouts?" / "3+ strikeouts?" / "4+ strikeouts?"
+//   "Detroit wins by over 1.5 runs?" / "2.5 runs?" / "3.5 runs?"
+//   "Game Total over 7?" / "over 8?" / "over 9?"
+// Rendering one card per threshold floods the page with near-identical
+// rows. Group them by question identity and render one card with a
+// threshold selector chip row.
+
+function getPropGroupKey(market) {
+    const title = (market.title || "").trim();
+    const src = market.source || "?";
+    // Player prop: "Player Name: N+ stat?"
+    let m = title.match(/^(.+?):\s*\d+(?:\.\d+)?\+?\s+(.+?)\??$/);
+    if (m) return `${src}|player|${m[1].toLowerCase()}|${m[2].toLowerCase()}`;
+    // Team spread: "Team wins by over N runs?"
+    m = title.match(/^(.+?)\s+wins\s+by\s+over\s+\d+(?:\.\d+)?\s+(.+?)\??$/i);
+    if (m) return `${src}|spread|${m[1].toLowerCase()}|${m[2].toLowerCase()}`;
+    // Game total (same title for every threshold; threshold lives in
+    // ticker tail): "Detroit vs Chicago WS Total Runs?"
+    if (/total runs?/i.test(title)) {
+        return `${src}|total|${title.toLowerCase().replace(/\?$/, "")}`;
+    }
+    // First-5 / RFI / other team_prop: leave ungrouped for now.
+    return null;
+}
+
+function getPropGroupLabel(market) {
+    const title = (market.title || "").trim();
+    let m = title.match(/^(.+?):\s*\d+(?:\.\d+)?\+?\s+(.+?)\??$/);
+    if (m) return `${m[1]} · ${m[2]}`;
+    m = title.match(/^(.+?)\s+wins\s+by\s+over\s+\d+(?:\.\d+)?\s+(.+?)\??$/i);
+    if (m) return `${m[1]} wins · ${m[2]}`;
+    if (/total runs?/i.test(title)) return title.replace(/\?$/, "");
+    return title;
+}
+
+function getPropThreshold(market) {
+    const title = market.title || "";
+    // "N+" in title (player props)
+    let m = title.match(/(\d+(?:\.\d+)?)\+/);
+    if (m) return parseFloat(m[1]);
+    // "over N" (spreads / totals)
+    m = title.match(/over\s+(\d+(?:\.\d+)?)/i);
+    if (m) return parseFloat(m[1]);
+    // Numeric ticker suffix (totals: KXMLBTOTAL-...-9)
+    const ticker = market.raw_market_id || "";
+    m = ticker.match(/-(\d+(?:\.\d+)?)$/);
+    if (m) return parseFloat(m[1]);
+    return 0;
+}
+
+function formatPropThreshold(t) {
+    if (Number.isInteger(t)) return `${t}+`;
+    return `${t}`;
+}
+
+function groupMarketsByQuestion(markets) {
+    const groups = new Map();
+    let ungroupedIdx = 0;
+    for (const m of markets) {
+        const key = getPropGroupKey(m) || `_ungroupable_${ungroupedIdx++}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(m);
+    }
+    return groups;
+}
+
+// Counter for unique card ids; we stash market arrays on window
+// keyed by card id so the click handler can re-render the active
+// pane without re-fetching anything.
+let _propCardSeq = 0;
+function renderCondensedPropCard(markets) {
+    markets = markets.slice().sort((a, b) => getPropThreshold(a) - getPropThreshold(b));
+    const cardId = `pc${++_propCardSeq}`;
+    if (typeof window !== "undefined") {
+        window._propCards = window._propCards || {};
+        window._propCards[cardId] = markets;
+    }
+    // Default to the median threshold — that's usually the "main" line.
+    const defaultIdx = Math.floor(markets.length / 2);
+    const label = getPropGroupLabel(markets[0]);
+    const src = markets[0].source || "?";
+
+    const chips = markets.map((m, i) => `
+      <button class="prop-chip ${i === defaultIdx ? "active" : ""}"
+              data-prop-pick="${cardId}:${i}"
+              title="${escapeHTMLAttr(m.title || "")}">
+        ${formatPropThreshold(getPropThreshold(m))}
+      </button>
+    `).join("");
+
+    return `
+      <article class="market-row condensed-prop" data-source="${src}"
+               data-prop-card-id="${cardId}">
+        <header class="market-row-head">
+          <span class="market-source market-source-${src}">${src}</span>
+          <span class="market-title">${escapeHTML(label)}</span>
+          <span class="prop-count-chip">${markets.length} thresholds</span>
+        </header>
+        <div class="prop-chip-row">${chips}</div>
+        <div class="prop-active-pane" data-prop-pane>
+          ${renderPropPane(markets[defaultIdx])}
+        </div>
+      </article>
+    `;
+}
+
+function renderPropPane(market) {
+    const outcomes = (market.outcomes || []).slice().sort((a, b) =>
+        (b.probability || 0) - (a.probability || 0));
+    const isKalshi = market.source === "kalshi";
+    return `
+      <div class="market-outcomes">
+        ${outcomes.map((o) => renderMarketOutcome(o, market)).join("")}
+      </div>
+      ${(isKalshi && typeof window !== "undefined" && window.Kalshi)
+          ? window.Kalshi.renderBetButtons(market) : ""}
+    `;
+}
+
+// Click delegation for threshold-chip selection. Each chip is keyed
+// by "{cardId}:{index}" and the card's market list lives in
+// window._propCards[cardId]. Selecting swaps the active pane HTML
+// and re-runs orderbook hydration for the new ticker.
+if (typeof window !== "undefined") {
+    document.addEventListener("click", (e) => {
+        const chip = e.target.closest("[data-prop-pick]");
+        if (!chip) return;
+        const [cardId, idxStr] = chip.getAttribute("data-prop-pick").split(":");
+        const idx = parseInt(idxStr, 10);
+        const markets = window._propCards?.[cardId];
+        if (!markets || !markets[idx]) return;
+        e.preventDefault();
+        const card = chip.closest(`[data-prop-card-id="${cardId}"]`);
+        if (!card) return;
+        card.querySelectorAll(".prop-chip").forEach((c) =>
+            c.classList.toggle("active", c === chip));
+        const pane = card.querySelector("[data-prop-pane]");
+        if (pane) {
+            pane.innerHTML = renderPropPane(markets[idx]);
+            if (typeof hydrateKalshiBookCells === "function") {
+                hydrateKalshiBookCells();
+            }
+        }
+    });
 }
 
 // Sportsbook-style market row.
