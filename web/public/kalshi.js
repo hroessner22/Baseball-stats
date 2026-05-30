@@ -1040,17 +1040,18 @@ function ensureGlobalStakeWidget() {
     syncGlobalStakeWidgetVisibility();
 }
 
-// Show whenever there's at least one Kalshi Buy button on screen.
-// That covers the per-game Markets pane, the team page's player/team
-// prop sections, and any future bet-rendering view without needing
-// to enumerate container IDs. MutationObserver re-runs this on any
-// DOM change, so the widget appears/disappears as the user navigates.
+// Show whenever there's at least one ANY-kind bet affordance on
+// screen — covers .ks-bet-btn (per-game pane + team page) AND
+// .md-game-outcome (slate dashboard's clickable price buttons,
+// which route through openBetModal seeded with the global stake).
+// MutationObserver re-runs this on any DOM change, so the widget
+// appears/disappears as the user navigates.
 function syncGlobalStakeWidgetVisibility() {
     if (typeof document === "undefined") return;
     const widget = document.getElementById("global-stake-widget");
     if (!widget) return;
-    const hasBetButton = !!document.querySelector(".ks-bet-btn");
-    widget.classList.toggle("is-visible", hasBetButton);
+    const hasBetSurface = !!document.querySelector(".ks-bet-btn, .md-game-outcome");
+    widget.classList.toggle("is-visible", hasBetSurface);
 }
 
 // Recompute every visible Buy button's payout against the current

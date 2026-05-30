@@ -1501,6 +1501,86 @@ function bestOutcomesAcrossSources(markets, kind) {
     return Object.values(byName);
 }
 
+// Compact one-line label for a Kalshi outcome in the slate dashboard.
+// The 3-column game card is narrow (~150px per market kind) so
+// rendering the raw Kalshi title ("Pirates wins by over 1.5 runs")
+// would truncate to "Pirates wins...". Boil each market shape down
+// to its sportsbook-style token:
+//   moneyline      → team tricode ("PIT", "NYY")
+//   spread/run line → "PIT -1.5"
+//   total           → "O 8.5" / "U 8.5"
+// Falls back to the original outcome name if no pattern matches.
+function compactKalshiLabel(outcome, market, side, kind) {
+    const title = market.title || outcome.name || "";
+    if (kind === "moneyline") {
+        // Outcome name is usually the team city or nickname; the
+        // ticker tail has the tricode if we need a fallback.
+        const tickerMatch = String(market.raw_market_id || "").match(/-([A-Z]{2,4})$/);
+        if (tickerMatch) return tickerMatch[1];
+        return outcome.name || side.toUpperCase();
+    }
+    if (kind === "spread") {
+        // "Spread: Texas Rangers (-1.5)" or "Texas wins by over 1.5 runs"
+        let m = title.match(/Spread:\s*([\w. ]+?)\s*\(([-+]?\d+(?:\.\d+)?)\)/i);
+        if (m) {
+            const tri = teamToTricode(m[1].trim()) || m[1].trim();
+            const num = parseFloat(m[2]);
+            const sign = num > 0 ? "+" : "";
+            const flipped = side === "no" ? -num : num;
+            const fSign = flipped > 0 ? "+" : "";
+            return side === "no"
+                ? `${tri} ${fSign}${flipped}`
+                : `${tri} ${sign}${num}`;
+        }
+        m = title.match(/^(.+?)\s+wins\s+by\s+over\s+(\d+(?:\.\d+)?)\s+runs?/i);
+        if (m) {
+            const tri = teamToTricode(m[1].trim()) || m[1].trim().split(/\s+/)[0];
+            const num = parseFloat(m[2]);
+            return side === "no" ? `${tri} +${num}` : `${tri} -${num}`;
+        }
+    }
+    if (kind === "total") {
+        // "Texas Rangers vs. KC Royals: O/U 8.5" or "Over 8.5 runs"
+        let m = title.match(/O\/U\s+(\d+(?:\.\d+)?)/i);
+        if (!m) m = title.match(/over\s+(\d+(?:\.\d+)?)\s+runs?/i);
+        if (m) {
+            const n = parseFloat(m[1]);
+            return side === "no" ? `U ${n}` : `O ${n}`;
+        }
+    }
+    // Catch-all: trim to 20 chars so the row fits the column.
+    const fallback = outcome.name || "";
+    return fallback.length > 22 ? fallback.slice(0, 20) + "…" : fallback;
+}
+
+// Map a Kalshi team-name string to its MLB tricode. Mirrors the
+// server-side KALSHI_DESC_TO_TRI table — kept short here since we
+// only use it for the compact dashboard label.
+const _CITY_TO_TRI = {
+    "Arizona": "ARI", "Atlanta": "ATL", "Baltimore": "BAL", "Boston": "BOS",
+    "Chicago C": "CHC", "Cubs": "CHC", "Chicago WS": "CWS", "White Sox": "CWS",
+    "Cincinnati": "CIN", "Cleveland": "CLE", "Colorado": "COL", "Detroit": "DET",
+    "Houston": "HOU", "Kansas City": "KC", "Los Angeles A": "LAA", "Angels": "LAA",
+    "Los Angeles D": "LAD", "Dodgers": "LAD", "Miami": "MIA", "Milwaukee": "MIL",
+    "Minnesota": "MIN", "New York M": "NYM", "Mets": "NYM", "New York Y": "NYY",
+    "Yankees": "NYY", "Pirates": "PIT", "Pittsburgh": "PIT", "Texas": "TEX",
+    "Rangers": "TEX", "Texas Rangers": "TEX", "Royals": "KC", "San Diego": "SD",
+    "San Francisco": "SF", "Giants": "SF", "St. Louis": "STL", "Cardinals": "STL",
+    "Seattle": "SEA", "Mariners": "SEA", "Tampa Bay": "TB", "Rays": "TB",
+    "Toronto": "TOR", "Blue Jays": "TOR", "Washington": "WSH", "Nationals": "WSH",
+    "Philadelphia": "PHI", "Phillies": "PHI", "A's": "ATH", "Athletics": "ATH",
+    "Twins": "MIN",
+};
+function teamToTricode(name) {
+    if (!name) return null;
+    const clean = name.replace(/\s+/g, " ").trim();
+    if (_CITY_TO_TRI[clean]) return _CITY_TO_TRI[clean];
+    for (const [k, v] of Object.entries(_CITY_TO_TRI)) {
+        if (clean.toLowerCase().includes(k.toLowerCase())) return v;
+    }
+    return null;
+}
+
 // Two-outcome mini-line inside a dashboard game card. Picks the best
 // price per outcome across every source for that question type, so
 // the card shows two clean rows instead of N source-stacked duplicates.
@@ -1513,27 +1593,60 @@ function renderMdMiniMarket(markets, kind) {
     // marked for hydration from /markets/{ticker}/orderbook, same
     // pattern the per-game Markets tab uses.
     if (KALSHI_ONLY_MODE && !outcomes.length) {
-        const kalshi = (markets || []).find((m) => m.source === "kalshi");
-        if (kalshi && (kalshi.outcomes || []).length) {
-            return kalshi.outcomes.slice(0, 2).map((o) => {
-                const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
-                const ticker = idMatch ? idMatch[1] : "";
-                return `
-                  <button class="md-game-outcome"
-                          data-md-pick="1"
-                          data-kalshi-ob-cell
-                          data-ticker="${escapeHTMLAttr(ticker)}"
-                          data-name="${escapeHTMLAttr(o.name || "")}"
-                          data-kind="${escapeHTMLAttr(kind)}">
-                    <span class="md-game-out-name">${escapeHTML(o.name || "")}</span>
-                    <span class="md-game-out-odds">
-                      <span class="mab-cell-loading">…</span>
-                    </span>
-                  </button>
-                `;
-            }).join("");
+        const kalshiMkts = (markets || []).filter((m) => m.source === "kalshi");
+        if (!kalshiMkts.length) {
+            return `<div class="md-game-empty">no kalshi market</div>`;
         }
-        return `<div class="md-game-empty">no kalshi market</div>`;
+        // Build up to TWO compact rows. For moneyline + run line +
+        // total, Kalshi typically lists each side as its own ticker
+        // (KXMLBSPREAD-...-PIT, KXMLBSPREAD-...-MIN). Prefer pulling
+        // the YES of two DIFFERENT tickers — that gives the user two
+        // distinct lines ("Pirates -1.5" / "Twins +1.5") instead of
+        // YES + NO of the same ticker (which both display as
+        // "Pirates wins by over 1.5 runs").
+        const rows = [];
+        const seenTickers = new Set();
+        for (const m of kalshiMkts) {
+            for (const o of (m.outcomes || [])) {
+                const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+                if (!idMatch) continue;
+                const ticker = idMatch[1];
+                const side   = idMatch[2].toLowerCase();
+                if (seenTickers.has(ticker)) continue;
+                if (side !== "yes") continue;       // prefer the YES side per ticker
+                seenTickers.add(ticker);
+                rows.push({ outcome: o, ticker, side, market: m });
+                if (rows.length === 2) break;
+            }
+            if (rows.length === 2) break;
+        }
+        // Fallback: if we only got ONE ticker (no inverse market
+        // exists), pad the second row with the NO side of that same
+        // ticker — labeled as NO so it's not a duplicate.
+        if (rows.length === 1) {
+            const m = rows[0].market;
+            const noOutcome = (m.outcomes || []).find((o) => /:no$/i.test(o.id || ""));
+            if (noOutcome) {
+                rows.push({ outcome: noOutcome, ticker: rows[0].ticker, side: "no", market: m });
+            }
+        }
+        return rows.map((r) => {
+            const label = compactKalshiLabel(r.outcome, r.market, r.side, kind);
+            return `
+              <button class="md-game-outcome"
+                      data-md-pick="1"
+                      data-kalshi-ob-cell
+                      data-ticker="${escapeHTMLAttr(r.ticker)}"
+                      data-name="${escapeHTMLAttr(r.outcome.name || "")}"
+                      data-kind="${escapeHTMLAttr(kind)}"
+                      title="${escapeHTMLAttr(r.market.title || r.outcome.name || "")}">
+                <span class="md-game-out-name">${escapeHTML(label)}</span>
+                <span class="md-game-out-odds">
+                  <span class="mab-cell-loading">…</span>
+                </span>
+              </button>
+            `;
+        }).join("");
     }
 
     if (!outcomes.length) return `<div class="md-game-empty">no quote</div>`;
