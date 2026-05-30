@@ -706,14 +706,32 @@ function postPAState(state, outcome) {
     return { inning, half, outs, bases: new_bases, home_lead, batting_team };
 }
 
+// See games/today.js for the dampening rationale. Keep in sync.
+const DAMPEN_PER_RUN = 0.25;
+const HARD_FLOOR_TRAILING = 0.0001;
 function lookupWE(inning, half, outs, bases, homeLead) {
     const innC  = clip(inning, 1, 9);
     const leadC = clip(homeLead, LEAD_CLIP[0], LEAD_CLIP[1]);
     const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
-    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
-    const k1 = `${innC}|${half}|${leadC}`;
-    if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
-    return null;
+    let wpHome = WE_TABLE_V2[k2];
+    if (wpHome === undefined) {
+        const k1 = `${innC}|${half}|${leadC}`;
+        wpHome = WE_TABLE[k1];
+    }
+    if (wpHome === undefined) return null;
+    const excess = Math.abs(homeLead) - Math.abs(LEAD_CLIP[1]);
+    if (excess > 0) {
+        const dampen = Math.pow(DAMPEN_PER_RUN, excess);
+        if (homeLead > LEAD_CLIP[1]) {
+            let awayWP = (1 - wpHome) * dampen;
+            if (awayWP < HARD_FLOOR_TRAILING) awayWP = HARD_FLOOR_TRAILING;
+            wpHome = 1 - awayWP;
+        } else if (homeLead < LEAD_CLIP[0]) {
+            wpHome = wpHome * dampen;
+            if (wpHome < HARD_FLOOR_TRAILING) wpHome = HARD_FLOOR_TRAILING;
+        }
+    }
+    return wpHome;
 }
 
 
