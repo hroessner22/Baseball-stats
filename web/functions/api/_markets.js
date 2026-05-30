@@ -331,10 +331,59 @@ async function listPolymarketMlbMarkets() {
 const KALSHI_SERIES = [
     // Per-game moneyline
     { ticker: "KXMLBGAME",        type: "game" },
-    // Season futures
-    { ticker: "KXLEADERMLBHR",    type: "future_player" }, // HR leader
-    { ticker: "KXMLBRBI",         type: "future_player" }, // RBI leader (player season)
-    { ticker: "KXMLBPITCHEROTM",  type: "future_player" }, // pitcher of the month
+
+    // ── Team season futures (per-team binary markets) ─────────────
+    // Each market is "Will {team} win {category}?" with the team
+    // tricode as the LAST hyphen-segment of the market ticker
+    // (e.g. KXMLBALEAST-26-NYY). extractTeamTricodeFromKalshiTicker
+    // walks the ticker from the right and matches against
+    // MLB_TRICODE_SET to attach home_tricode.
+    { ticker: "KXMLB",            type: "future_team" }, // World Series champion
+    { ticker: "KXMLBAL",          type: "future_team" }, // AL pennant
+    { ticker: "KXMLBNL",          type: "future_team" }, // NL pennant
+    { ticker: "KXMLBALEAST",      type: "future_team" }, // AL East division
+    { ticker: "KXMLBALCENT",      type: "future_team" }, // AL Central division
+    { ticker: "KXMLBALWEST",      type: "future_team" }, // AL West division
+    { ticker: "KXMLBNLEAST",      type: "future_team" }, // NL East division
+    { ticker: "KXMLBNLCENT",      type: "future_team" }, // NL Central division
+    { ticker: "KXMLBNLWEST",      type: "future_team" }, // NL West division
+    { ticker: "KXMLBPLAYOFFS",    type: "future_team" }, // Will {team} make the playoffs
+    { ticker: "KXMLBBESTRECORD",  type: "future_team" }, // Best regular-season record
+    { ticker: "KXMLBWORSTRECORD", type: "future_team" }, // Worst regular-season record
+
+    // ── Player season futures (awards + leaderboards) ─────────────
+    // Each market is "Will {player} win/lead?" — team attribution
+    // via extractKalshiDescTeam reading the subtitle, same as the
+    // existing KXLEADERMLBHR / KXMLBRBI flow.
+    { ticker: "KXLEADERMLBHR",      type: "future_player" }, // HR leader
+    { ticker: "KXLEADERMLBRBI",     type: "future_player" }, // RBI leader
+    { ticker: "KXLEADERMLBAVG",     type: "future_player" }, // Batting average leader
+    { ticker: "KXLEADERMLBHITS",    type: "future_player" }, // Hits leader
+    { ticker: "KXLEADERMLBRUNS",    type: "future_player" }, // Runs leader
+    { ticker: "KXLEADERMLBDOUBLES", type: "future_player" }, // Doubles leader
+    { ticker: "KXLEADERMLBTRIPLES", type: "future_player" }, // Triples leader
+    { ticker: "KXLEADERMLBSTEALS",  type: "future_player" }, // Stolen bases leader
+    { ticker: "KXLEADERMLBOPS",     type: "future_player" }, // OPS leader
+    { ticker: "KXLEADERMLBWAR",     type: "future_player" }, // WAR leader
+    { ticker: "KXLEADERMLBKS",      type: "future_player" }, // Strikeouts leader (pitcher)
+    { ticker: "KXLEADERMLBWINS",    type: "future_player" }, // Wins leader (pitcher)
+    { ticker: "KXLEADERMLBERA",     type: "future_player" }, // Lowest ERA (pitcher)
+    { ticker: "KXMLBALMVP",         type: "future_player" }, // AL MVP
+    { ticker: "KXMLBNLMVP",         type: "future_player" }, // NL MVP
+    { ticker: "KXMLBALCY",          type: "future_player" }, // AL Cy Young
+    { ticker: "KXMLBNLCY",          type: "future_player" }, // NL Cy Young
+    { ticker: "KXMLBALROTY",        type: "future_player" }, // AL Rookie of the Year
+    { ticker: "KXMLBNLROTY",        type: "future_player" }, // NL Rookie of the Year
+    { ticker: "KXMLBALMOTY",        type: "future_player" }, // AL Manager of the Year
+    { ticker: "KXMLBNLMOTY",        type: "future_player" }, // NL Manager of the Year
+    { ticker: "KXMLBALRELOTY",      type: "future_player" }, // AL Reliever of the Year
+    { ticker: "KXMLBNLRELOTY",      type: "future_player" }, // NL Reliever of the Year
+    { ticker: "KXMLBALCPOTY",       type: "future_player" }, // AL Comeback Player of the Year
+    { ticker: "KXMLBNLCPOTY",       type: "future_player" }, // NL Comeback Player of the Year
+    { ticker: "KXMLBALHAARON",      type: "future_player" }, // AL Hank Aaron Award
+    { ticker: "KXMLBNLHAARON",      type: "future_player" }, // NL Hank Aaron Award
+    { ticker: "KXMLBPITCHEROTM",    type: "future_player" }, // Pitcher of the Month
+
     // Per-game player props (titled "Will X get Y+ stat?")
     { ticker: "KXMLBHR",          type: "per_game_player" }, // home runs in game
     { ticker: "KXMLBKS",          type: "per_game_player" }, // pitcher strikeouts in game
@@ -611,6 +660,23 @@ function extractKalshiDescTeam(desc) {
     return null;
 }
 
+// Per-team season-futures markets carry the team tricode as the LAST
+// hyphen-segment of the market ticker — KXMLB-26-NYY (World Series),
+// KXMLBALEAST-26-NYY (AL East), KXMLBPLAYOFFS-26-NYY, etc. Walk the
+// ticker right-to-left and accept the first segment that resolves
+// against MLB_TRICODE_SET, then canonicalize via aliases (CWS→CWS,
+// ATH→OAK on the schedule API side). Returns null when no segment
+// matches — that's fine, the market just won't surface on team pages.
+function extractTeamTricodeFromKalshiTicker(ticker) {
+    if (!ticker) return null;
+    const parts = String(ticker).split("-");
+    for (let i = parts.length - 1; i >= 0; i--) {
+        const tok = parts[i].toUpperCase();
+        if (MLB_TRICODE_SET.has(tok)) return tok;
+    }
+    return null;
+}
+
 function toKalshiSingleMarket(m, type) {
     const yb = Number(m.yes_bid);
     const ya = Number(m.yes_ask);
@@ -629,6 +695,13 @@ function toKalshiSingleMarket(m, type) {
     let derivedHome = null;
     if (type === "future_player") {
         derivedHome = extractKalshiDescTeam(m.subtitle || "");
+    } else if (type === "future_team") {
+        // Per-team binary markets (KXMLB-26-NYY, KXMLBALEAST-26-NYY, …)
+        // carry the team tricode in the ticker tail. Subtitle fallback
+        // catches any series that names the team in the subtitle
+        // instead (e.g. some manager / executive futures).
+        derivedHome = extractTeamTricodeFromKalshiTicker(m.ticker)
+                   || extractKalshiDescTeam(m.subtitle || "");
     }
     return flat({
         id: `kalshi:${m.ticker}`,
