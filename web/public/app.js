@@ -4236,6 +4236,12 @@ async function hydrateMarkets(gameId) {
         pane.innerHTML = html;
         cachedMarketsHTML = html;
         cachedMarketsPk = gameId;
+        // Kalshi's /markets endpoint returns null bids/asks on most
+        // MLB markets but /markets/{ticker}/orderbook has real
+        // liquidity. Hydrate the Kalshi cards in the "Every book we
+        // pull from" panel from the orderbook so the user sees live
+        // prices instead of "no quote yet".
+        hydrateKalshiBookCells();
     } catch (e) {
         const pane = document.getElementById("markets-pane");
         if (pane && !cachedMarketsHTML) {
@@ -4877,7 +4883,33 @@ function renderMabRow(label, market) {
         return `<div class="mab-row mab-row-empty"><span class="mab-row-label">${label}</span><span class="mab-row-empty-msg">not quoted</span></div>`;
     }
     const outcomes = (market.outcomes || []).slice().sort((a, b) => (b.probability || 0) - (a.probability || 0));
-    if (!outcomes.some((o) => o.probability != null || o.american != null)) {
+    const noPrices = !outcomes.some((o) => o.probability != null || o.american != null);
+
+    // Kalshi special case: their /markets endpoint returns null yes/no
+    // bids+asks on MLB markets, but /markets/{ticker}/orderbook has
+    // live prices. Render placeholder cells with the full per-side
+    // ticker stamped on data-attrs so hydrateKalshiBookCells() (run
+    // after innerHTML set) can fill in the real bid/ask asynchronously.
+    if (noPrices && market.source === "kalshi" && outcomes.length) {
+        const cells = outcomes.slice(0, 3).map((o) => {
+            const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+            const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+            return `
+              <span class="mab-cell" data-kalshi-ob-cell data-ticker="${escapeHTMLAttr(ticker)}">
+                <span class="mab-cell-name">${escapeHTML(o.name || "")}</span>
+                <span class="mab-cell-odds"><span class="mab-cell-loading">…</span></span>
+              </span>
+            `;
+        }).join("");
+        return `
+          <div class="mab-row">
+            <span class="mab-row-label">${label}</span>
+            <div class="mab-row-cells">${cells}</div>
+          </div>
+        `;
+    }
+
+    if (noPrices) {
         return `<div class="mab-row mab-row-empty"><span class="mab-row-label">${label}</span><span class="mab-row-empty-msg">no quote yet</span></div>`;
     }
     const cells = outcomes.slice(0, 3).map((o) => {
@@ -4898,6 +4930,77 @@ function renderMabRow(label, market) {
         <div class="mab-row-cells">${cells}</div>
       </div>
     `;
+}
+
+// Hydrate any "no quote yet" Kalshi cells in the DOM by fetching the
+// live orderbook for each ticker (in parallel, de-duped). Computes the
+// best YES ask = 100 - highest NO bid, converts to American odds, and
+// fills in the cell. Called after innerHTML set in hydrateMarkets.
+async function hydrateKalshiBookCells() {
+    if (!window.Kalshi || !window.Kalshi.getOrderbook) return;
+    const cells = document.querySelectorAll("[data-kalshi-ob-cell]:not([data-hydrated])");
+    if (!cells.length) return;
+    // De-dupe tickers so we don't hit /orderbook twice for the same one.
+    const byTicker = new Map();
+    cells.forEach((cell) => {
+        const t = cell.getAttribute("data-ticker");
+        if (!t) return;
+        if (!byTicker.has(t)) byTicker.set(t, []);
+        byTicker.get(t).push(cell);
+    });
+    await Promise.all(Array.from(byTicker.entries()).map(async ([ticker, cellList]) => {
+        try {
+            const ob = await window.Kalshi.getOrderbook(ticker);
+            const oddsHtml = orderbookToOddsHtml(ob);
+            cellList.forEach((cell) => {
+                const oddsEl = cell.querySelector(".mab-cell-odds");
+                if (oddsEl) oddsEl.innerHTML = oddsHtml;
+                cell.setAttribute("data-hydrated", "1");
+            });
+        } catch {
+            cellList.forEach((cell) => {
+                const oddsEl = cell.querySelector(".mab-cell-odds");
+                if (oddsEl) oddsEl.innerHTML = `<span class="mab-cell-empty">—</span>`;
+                cell.setAttribute("data-hydrated", "1");
+            });
+        }
+    }));
+}
+
+// Reduce a normalized orderbook ({ yes:[[cents,qty]], no:[[cents,qty]] })
+// to a single best-YES-ask quote rendered as American odds + implied %.
+// Returns "<span>no offers</span>" when neither side has resting orders.
+function orderbookToOddsHtml(ob) {
+    if (!ob) return `<span class="mab-cell-empty">no offers</span>`;
+    const noBook = ob.no || [];
+    if (!noBook.length) return `<span class="mab-cell-empty">no offers</span>`;
+    // NO bids sorted ascending. Highest NO bid = lowest YES ask.
+    const bestNoBid = noBook[noBook.length - 1];
+    const noBidCents = Number(bestNoBid[0]);
+    if (!Number.isFinite(noBidCents) || noBidCents < 1 || noBidCents > 99) {
+        return `<span class="mab-cell-empty">no offers</span>`;
+    }
+    const askCents = 100 - noBidCents;
+    const american = centsToAmerican(askCents);
+    return `
+      ${american ? `<span class="mab-cell-am">${american}</span>` : ""}
+      <span class="mab-cell-pct">${askCents}%</span>
+    `;
+}
+
+// 1-99¢ → American odds string. 50¢ → "+100" (even money), 75¢ → "-300",
+// 25¢ → "+300". Used to align Kalshi quotes with the sportsbook
+// American-odds format the rest of the panel shows.
+function centsToAmerican(cents) {
+    const n = Number(cents);
+    if (!Number.isFinite(n) || n <= 0 || n >= 100) return null;
+    const p = n / 100;
+    if (p >= 0.5) {
+        const v = Math.round(p * 100 / (1 - p));
+        return `-${v}`;
+    }
+    const v = Math.round(100 * (1 - p) / p);
+    return `+${v}`;
 }
 
 function renderMarketsSection(title, rows) {

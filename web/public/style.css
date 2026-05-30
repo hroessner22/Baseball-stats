@@ -5244,6 +5244,21 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mab-row-empty { color: var(--text-faint); }
 .mab-row-empty-msg { font-size: 10px; font-style: italic; }
+.mab-cell-loading {
+    color: var(--text-faint);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    animation: mab-pulse 1.4s ease-in-out infinite;
+}
+.mab-cell-empty {
+    color: var(--text-faint);
+    font-size: 10px;
+    font-style: italic;
+}
+@keyframes mab-pulse {
+    0%, 100% { opacity: 0.3; }
+    50%      { opacity: 0.9; }
+}
 .mab-link {
     font-size: 10px;
     font-weight: 700;
