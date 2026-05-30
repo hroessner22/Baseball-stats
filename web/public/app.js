@@ -1953,12 +1953,17 @@ function renderOddsApiHint() {
 
 function renderTeamFutureSection(title, rows, tricode) {
     if (!rows || !rows.length) return "";
+    // Use the same full market renderer the per-game pane uses —
+    // each row gets YES/NO outcomes with American odds + implied %,
+    // plus the Kalshi orderbook hydrator fills in live prices and
+    // the global stake widget drives the per-button win amount.
+    // renderMarketsSection handles single-market sections cleanly
+    // (skips the condensed-card grouping since the titles don't
+    // ladder together).
     return `
       <section class="team-section">
         <h3 class="team-section-title">${escapeHTMLAttr(title)}</h3>
-        <div class="team-section-rows">
-          ${rows.map((m) => renderTeamMarketRow(m, tricode)).join("")}
-        </div>
+        ${renderMarketsSection("", rows)}
       </section>
     `;
 }
