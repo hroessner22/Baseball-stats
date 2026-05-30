@@ -390,14 +390,18 @@ const KALSHI_SERIES = [
     { ticker: "KXMLBHIT",         type: "per_game_player" }, // hits in game
     { ticker: "KXMLBTB",          type: "per_game_player" }, // total bases in game
     { ticker: "KXMLBHRR",         type: "per_game_player" }, // hits+runs+RBIs combo
-    // Per-game team props
-    { ticker: "KXMLBSPREAD",      type: "per_game_team" },   // run line
-    { ticker: "KXMLBTOTAL",       type: "per_game_team" },   // total runs O/U
-    { ticker: "KXMLBTEAMTOTAL",   type: "per_game_team" },   // team total runs
-    { ticker: "KXMLBF5",          type: "per_game_team" },   // first 5 innings winner
-    { ticker: "KXMLBF5SPREAD",    type: "per_game_team" },   // first 5 spread
-    { ticker: "KXMLBF5TOTAL",     type: "per_game_team" },   // first 5 total
-    { ticker: "KXMLBRFI",         type: "per_game_team" },   // run in 1st inning
+    // Per-game team props. Granular types so the slate dashboard
+    // can match KXMLBSPREAD → 'spread' column and KXMLBTOTAL →
+    // 'total' column. Without the split they all came through as
+    // question_type 'team_prop' and the dashboard's Run Line and
+    // Total cells showed 'no kalshi market' on every game.
+    { ticker: "KXMLBSPREAD",      type: "per_game_spread" },  // run line
+    { ticker: "KXMLBTOTAL",       type: "per_game_total" },   // total runs O/U
+    { ticker: "KXMLBTEAMTOTAL",   type: "per_game_team" },    // team total runs
+    { ticker: "KXMLBF5",          type: "per_game_team" },    // first 5 innings winner
+    { ticker: "KXMLBF5SPREAD",    type: "per_game_team" },    // first 5 spread
+    { ticker: "KXMLBF5TOTAL",     type: "per_game_team" },    // first 5 total
+    { ticker: "KXMLBRFI",         type: "per_game_team" },    // run in 1st inning
 ];
 
 async function listKalshiMlbMarkets() {
@@ -421,7 +425,12 @@ async function listKalshiMlbMarkets() {
         try {
             if (s.type === "game") {
                 all.push(...foldKalshiGameMarkets(mkts));
-            } else if (s.type === "per_game_player" || s.type === "per_game_team") {
+            } else if (
+                s.type === "per_game_player" ||
+                s.type === "per_game_team"   ||
+                s.type === "per_game_spread" ||
+                s.type === "per_game_total"
+            ) {
                 // Per-game series carry the game date + team pair in
                 // the ticker so we can attach home/away tricodes at
                 // parse time, no roster cross-reference needed.
@@ -739,6 +748,8 @@ function toKalshiSingleMarket(m, type) {
         question_type:
             type === "future_player" || type === "per_game_player" ? "player_prop"
             : type === "future_team" ? "future"
+            : type === "per_game_spread" ? "spread"
+            : type === "per_game_total" ? "total"
             : type === "per_game_team" ? "team_prop"
             : classifyQuestion(title),
         status: m.status === "active" ? "open" : (m.status || "unknown"),
