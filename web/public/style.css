@@ -2933,25 +2933,34 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
         justify-items: stretch;
         gap: 36px;
     }
-    /* Independent scroll: the field area (left) sticks to the top of
-       the game-view's scrollable region while the WE/market panel
-       (right) scrolls past. So the field, "what's happened this
-       inning" rail, and AT BAT/PITCHING cards stay visible while the
-       user explores all the model+market detail on the right. */
-    .game-pane > .field-pane {
-        position: sticky;
-        top: 0;
+    /* Asymmetric scroll, per user spec:
+         - Scrolling over the RIGHT panel scrolls ONLY the right panel,
+           the field/rail stay put.
+         - Scrolling over the LEFT (field area) scrolls the whole
+           game-view as normal — so you can still get to the bottom
+           of the page (footer / about / etc.) by scrolling the field.
+       Implementation: the field column is just normal flow. The
+       card-pane (right) caps its own height to the viewport and
+       enables internal vertical scroll, so wheel events delivered
+       over it pump its internal scroll. overscroll-behavior: contain
+       stops a fast right-side scroll from escaping into the page
+       once the card-pane bottoms out. */
+    .game-pane > .card-pane {
         align-self: start;
-        max-height: calc(100vh - 16px);
+        max-height: calc(100vh - 140px);
         overflow-y: auto;
+        overscroll-behavior: contain;
         scrollbar-width: thin;
         scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+        /* tiny right gutter so the scrollbar doesn't clip card content */
+        padding-right: 6px;
     }
-    .game-pane > .field-pane::-webkit-scrollbar { width: 8px; }
-    .game-pane > .field-pane::-webkit-scrollbar-thumb {
+    .game-pane > .card-pane::-webkit-scrollbar { width: 8px; }
+    .game-pane > .card-pane::-webkit-scrollbar-thumb {
         background: rgba(255, 255, 255, 0.18);
         border-radius: 4px;
     }
+    .game-pane > .card-pane::-webkit-scrollbar-track { background: transparent; }
 }
 
 /* ── FIELD ────────────────────────────────────────────────────── */
