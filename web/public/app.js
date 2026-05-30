@@ -1790,105 +1790,78 @@ function renderTeamView(tricode, standings, markets, games) {
     `;
 
     const all = markets?.all || [];
-    const teamMarkets = all.filter((m) =>
-        m.home_tricode === tricode || m.away_tricode === tricode
+    // Team page = FUTURES ONLY. Anything tied to a specific game
+    // (moneyline / total / spread / per-game team prop / per-game
+    // player prop) lives under that game in the per-game Markets
+    // pane — even before first pitch. This page is the
+    // season-context view: WS / LCS / Division / Win totals / and
+    // player season futures (HR leader, RBI leader, …).
+    //
+    // Identification rules:
+    //   - question_type === "future"  → unambiguous, always a season market.
+    //   - player_prop with EXACTLY ONE tricode set (the player's team,
+    //     attached by extractKalshiDescTeam in the Kalshi adapter) →
+    //     a player season future. Per-game player props have BOTH
+    //     home_tricode AND away_tricode populated by
+    //     parseKalshiPerGameTicker, so this check cleanly excludes them.
+    const teamFutures = all.filter((m) =>
+        m.question_type === "future"
+        && (m.home_tricode === tricode || m.away_tricode === tricode)
     );
-    const futures = teamMarkets.filter((m) => m.question_type === "future");
+    const playerSeasonFutures = (markets?.markets?.player_prop || []).filter((m) => {
+        const isTeamMatch = m.home_tricode === tricode || m.away_tricode === tricode;
+        if (!isTeamMatch) return false;
+        // Per-game props have BOTH tricodes set — those belong under
+        // the game, not here.
+        const perGame = !!(m.home_tricode && m.away_tricode);
+        return !perGame;
+    });
 
-    // Game lines (moneyline, spread, total) for THIS team's tonight
-    // game — surfaced above futures because they're the most actionable.
-    const gameLines = teamMarkets.filter((m) =>
-        m.question_type === "moneyline"
-        || m.question_type === "spread"
-        || m.question_type === "total"
-    );
-
-    // Per-game TEAM props (run line / game total / team total / first
-    // 5 / 1st-inning) that Kalshi tagged with this team's tricode.
-    const teamProps = teamMarkets.filter((m) => m.question_type === "team_prop");
-
-    // Today's scheduled game for this team, if any. Used to link the
-    // game lines to our model's WE and a CTA to "open the live tracker".
+    // Today's scheduled game card — the bridge from this season-context
+    // view to the game-day Markets pane. Click it for tonight's lines.
     const todayGame = (games?.games || []).find((g) =>
         g.home === tricode || g.away === tricode
     );
-
     const todayGameBlock = todayGame ? renderTeamTodayGame(todayGame, tricode) : "";
 
-    const wsMarkets   = futures.filter((m) => /world series/i.test(m.title || ""));
-    const lcsMarkets  = futures.filter((m) => /championship series/i.test(m.title || ""));
-    const divMarkets  = futures.filter((m) => /(al|nl) (east|west|central)|division/i.test(m.title || ""));
-    const winsMarkets = futures.filter((m) => /(more|fewer|at least|over) .* games|win total|regular season/i.test(m.title || ""));
-    const otherFut    = futures.filter((m) =>
+    const wsMarkets   = teamFutures.filter((m) => /world series/i.test(m.title || ""));
+    const lcsMarkets  = teamFutures.filter((m) => /championship series/i.test(m.title || ""));
+    const divMarkets  = teamFutures.filter((m) => /(al|nl) (east|west|central)|division/i.test(m.title || ""));
+    const winsMarkets = teamFutures.filter((m) => /(more|fewer|at least|over) .* games|win total|regular season/i.test(m.title || ""));
+    const otherFut    = teamFutures.filter((m) =>
         !wsMarkets.includes(m) && !lcsMarkets.includes(m)
         && !divMarkets.includes(m) && !winsMarkets.includes(m)
     );
 
-    const allProps = (markets?.markets?.player_prop) || [];
-    const teamNameLc = teamName.toLowerCase();
-    const teamPlayerProps = allProps.filter((m) => {
-        if (m.home_tricode === tricode || m.away_tricode === tricode) return true;
-        const t = (m.title || "").toLowerCase();
-        return t.includes(teamNameLc);
-    });
-
     const noMarkets =
-        gameLines.length === 0 && futures.length === 0
-        && teamPlayerProps.length === 0 && teamProps.length === 0;
+        teamFutures.length === 0 && playerSeasonFutures.length === 0;
 
     return `
       <div class="team-doc">
         ${header}
         ${todayGameBlock}
         ${noMarkets
-            ? `<div class="empty">No Kalshi markets currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
+            ? `<div class="empty">No Kalshi season futures currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
             : `
-              ${renderTeamGameLinesSection(gameLines, tricode)}
-              ${renderTeamTeamPropsSection(teamProps)}
-              ${renderTeamPlayerPropsSection(teamPlayerProps, teamName)}
               ${renderTeamFuturesSection(wsMarkets, lcsMarkets, divMarkets, winsMarkets, otherFut, tricode)}
+              ${renderTeamPlayerFuturesSection(playerSeasonFutures, teamName)}
             `}
         <footer class="team-footnote">
-          Lines refresh every 30s. Pulled from Kalshi.
+          Season futures only — game-day lines (moneyline, total, spread, per-game props) live under the game itself.
         </footer>
       </div>
     `;
 }
 
-// Game-day moneyline / total / spread for the team's tonight game.
-// Three small sub-sections inside one parent — they're not laddered
-// the way player/team props are, so flat rows are right here.
-function renderTeamGameLinesSection(gameLines, tricode) {
-    if (!gameLines.length) return "";
-    const moneylines = gameLines.filter((m) => m.question_type === "moneyline");
-    const totals     = gameLines.filter((m) => m.question_type === "total");
-    const spreads    = gameLines.filter((m) => m.question_type === "spread");
-    return `
-      ${renderTeamFutureSection("Game-day moneyline", moneylines, tricode)}
-      ${renderTeamFutureSection("Total runs O/U",      totals,     tricode)}
-      ${renderTeamFutureSection("Run-line spread",     spreads,    tricode)}
-    `;
-}
-
-// Per-game team props (run line / game total / team total / first 5 /
-// 1st-inning) — uses the same sub-tabs the per-game Markets pane uses.
-function renderTeamTeamPropsSection(teamProps) {
-    if (!teamProps.length) return "";
-    return `
-      <section class="team-section" data-prop-tabs-scope>
-        <h3 class="team-section-title">Team props · tonight's game</h3>
-        ${renderTeamPropsByKind(teamProps)}
-      </section>
-    `;
-}
-
-// Player props — uses the same stat-type sub-tabs (Home Runs / Hits /
-// Strikeouts / …) + condensed threshold cards as the per-game pane.
-function renderTeamPlayerPropsSection(props, teamName) {
+// Player SEASON futures (HR leader / RBI leader / Pitcher of the
+// Month / …) tagged to this team's roster via Kalshi subtitle parsing.
+// Uses the same stat-type sub-tabs the per-game pane uses since
+// the grouping (Home Runs / Hits / Strikeouts / …) carries over.
+function renderTeamPlayerFuturesSection(props, teamName) {
     if (!props.length) return "";
     return `
       <section class="team-section" data-prop-tabs-scope>
-        <h3 class="team-section-title">Player props · ${escapeHTMLAttr(teamName)} roster</h3>
+        <h3 class="team-section-title">Player season futures · ${escapeHTMLAttr(teamName)} roster</h3>
         ${renderPlayerPropsByStat(props)}
       </section>
     `;
