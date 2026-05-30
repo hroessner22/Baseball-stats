@@ -81,20 +81,44 @@ function isConnected() { return !!(getKeyId() && getPem()); }
 
 // ── RSA-PSS signing (WebCrypto) ─────────────────────────────────
 
-// Convert a PEM-encoded RSA private key (PKCS#8) into a non-extractable
-// WebCrypto CryptoKey usable for RSA-PSS-SHA256 signing. The browser
-// holds the key in memory; even our own code can't read it back.
+// Convert a PEM-encoded RSA private key into a non-extractable WebCrypto
+// CryptoKey for RSA-PSS-SHA256 signing.
+//
+// WebCrypto's importKey only natively accepts PKCS#8 ("BEGIN PRIVATE KEY").
+// Kalshi (and OpenSSL by default) gives keys in PKCS#1 ("BEGIN RSA PRIVATE
+// KEY") — same underlying RSA material, different ASN.1 wrapper. We
+// detect the format and wrap PKCS#1 bytes in a PKCS#8 envelope before
+// handing to WebCrypto.
+//
+// Encrypted keys ("BEGIN ENCRYPTED PRIVATE KEY") need a passphrase and
+// aren't supported here — user should download an unencrypted key from
+// Kalshi.
 async function importPrivateKey(pem) {
     if (cachedPrivateKey && cachedPrivateKeyPem === pem) return cachedPrivateKey;
+
+    const isPkcs1 = /BEGIN RSA PRIVATE KEY/.test(pem);
+    const isPkcs8 = /BEGIN PRIVATE KEY/.test(pem);
+    const isEncrypted = /BEGIN ENCRYPTED PRIVATE KEY/.test(pem);
+
+    if (isEncrypted) {
+        throw new Error("Encrypted private keys aren't supported — download an unencrypted .pem from Kalshi.");
+    }
+    if (!isPkcs1 && !isPkcs8) {
+        throw new Error("PEM must start with -----BEGIN RSA PRIVATE KEY----- or -----BEGIN PRIVATE KEY-----");
+    }
+
     const cleaned = pem
         .replace(/-----BEGIN [A-Z ]+-----/g, "")
         .replace(/-----END [A-Z ]+-----/g, "")
         .replace(/\s+/g, "");
-    if (!cleaned) throw new Error("Empty PEM");
-    const binary = base64ToBytes(cleaned);
+    if (!cleaned) throw new Error("Empty PEM body");
+
+    const innerBytes = base64ToBytes(cleaned);
+    const pkcs8Bytes = isPkcs1 ? wrapPkcs1AsPkcs8(innerBytes) : innerBytes;
+
     const key = await crypto.subtle.importKey(
         "pkcs8",
-        binary.buffer,
+        pkcs8Bytes.buffer,
         { name: "RSA-PSS", hash: "SHA-256" },
         false,          // not extractable
         ["sign"],
@@ -102,6 +126,55 @@ async function importPrivateKey(pem) {
     cachedPrivateKey = key;
     cachedPrivateKeyPem = pem;
     return key;
+}
+
+// Wrap a PKCS#1 RSAPrivateKey blob in a PKCS#8 PrivateKeyInfo envelope
+// so WebCrypto can ingest it. Hand-built ASN.1 DER — the only thing
+// that changes between keys is the inner length encoding, so we do
+// short/medium/long length forms inline.
+//
+// PKCS#8 PrivateKeyInfo ::= SEQUENCE {
+//   version                   INTEGER (0),
+//   privateKeyAlgorithm       AlgorithmIdentifier (rsaEncryption + NULL),
+//   privateKey                OCTET STRING (the PKCS#1 bytes)
+// }
+function wrapPkcs1AsPkcs8(pkcs1Bytes) {
+    const PKCS1_LEN = pkcs1Bytes.length;
+    // AlgorithmIdentifier for rsaEncryption (OID 1.2.840.113549.1.1.1):
+    //   30 0D 06 09 2A 86 48 86 F7 0D 01 01 01 05 00
+    const ALGO_ID = new Uint8Array([
+        0x30, 0x0D,
+        0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01,
+        0x05, 0x00,
+    ]);
+    const VERSION = new Uint8Array([0x02, 0x01, 0x00]);
+    const octetHeader = derLength(0x04, PKCS1_LEN);
+    const innerLen = VERSION.length + ALGO_ID.length + octetHeader.length + PKCS1_LEN;
+    const outerHeader = derLength(0x30, innerLen);
+
+    const out = new Uint8Array(outerHeader.length + innerLen);
+    let off = 0;
+    out.set(outerHeader, off);   off += outerHeader.length;
+    out.set(VERSION, off);       off += VERSION.length;
+    out.set(ALGO_ID, off);       off += ALGO_ID.length;
+    out.set(octetHeader, off);   off += octetHeader.length;
+    out.set(pkcs1Bytes, off);
+    return out;
+}
+
+// Build an ASN.1 DER `tag + length` prefix for a payload of `len` bytes.
+// Handles short (<128), 1-byte, and 2-byte length forms — enough for any
+// 2048/4096-bit RSA key. Larger keys would need 3+ byte forms; keep
+// guarded.
+function derLength(tag, len) {
+    if (len < 0x80) {
+        return new Uint8Array([tag, len]);
+    } else if (len < 0x100) {
+        return new Uint8Array([tag, 0x81, len]);
+    } else if (len < 0x10000) {
+        return new Uint8Array([tag, 0x82, (len >> 8) & 0xff, len & 0xff]);
+    }
+    throw new Error("PEM payload too large to encode");
 }
 
 function base64ToBytes(b64) {
