@@ -4535,6 +4535,11 @@ async function hydrateMarkets(gameId) {
         pane.innerHTML = html;
         cachedMarketsHTML = html;
         cachedMarketsPk = gameId;
+        // Restore each card's typed stake BEFORE the orderbook hydrator
+        // runs — the hydrator reads the input value to recompute payouts,
+        // so the saved stake has to be in place first or it'll quote
+        // against $0.50 by mistake on the first refresh.
+        restoreBetStakes();
         // Kalshi's /markets endpoint returns null bids/asks on most
         // MLB markets but /markets/{ticker}/orderbook has real
         // liquidity. Hydrate the Kalshi cards in the "Every book we
@@ -5625,6 +5630,48 @@ function renderPropPane(market) {
     `;
 }
 
+// ── Per-card bet-stake persistence ─────────────────────────────────
+//
+// Without this, the 8s markets re-render (and every chip click
+// re-render) blows the user's typed stake back to the $0.50
+// default. We save the stake on input under the parent card's
+// data-prop-group-key (same key that already persists chip picks)
+// and restore it after each render. Synthetic 'input' event after
+// restore re-runs kalshi.js's recompute so the payouts reflect the
+// restored stake.
+//
+// In-memory only — no localStorage. Same lifecycle as the chip pick.
+
+document.addEventListener("input", (e) => {
+    const input = e.target.closest("[data-bet-stake]");
+    if (!input) return;
+    const card = input.closest("[data-prop-group-key]");
+    if (!card) return;
+    const key = card.getAttribute("data-prop-group-key");
+    if (!key) return;
+    window._propStakes = window._propStakes || {};
+    window._propStakes[key] = input.value;
+});
+
+function restoreBetStakes() {
+    if (typeof document === "undefined" || !window._propStakes) return;
+    const inputs = document.querySelectorAll("[data-bet-stake]");
+    inputs.forEach((input) => {
+        const card = input.closest("[data-prop-group-key]");
+        if (!card) return;
+        const key = card.getAttribute("data-prop-group-key");
+        if (!key) return;
+        const saved = window._propStakes[key];
+        if (saved == null || saved === "") return;
+        if (input.value === saved) return;
+        input.value = saved;
+        // Bubbles to the kalshi.js stake-input listener so the payout
+        // captions on this row recompute against the restored stake +
+        // whatever price was set during render.
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+}
+
 // ── Model-props sidecar (lives next to the live Kalshi quote) ──────
 //
 // We fetch /api/game/{id}/model-props once per game open (60s edge
@@ -5827,6 +5874,9 @@ if (typeof window !== "undefined") {
         const pane = card.querySelector("[data-prop-pane]");
         if (pane) {
             pane.innerHTML = renderPropPane(markets[idx]);
+            // Restore the saved stake on this card's fresh bet row
+            // before hydration recalculates payouts.
+            restoreBetStakes();
             if (typeof hydrateKalshiBookCells === "function") {
                 hydrateKalshiBookCells();
             }
