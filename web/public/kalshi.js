@@ -402,9 +402,17 @@ function openBetModal(market, outcome) {
         openConnectModal();
         return;
     }
-    const ticker = market.raw_market_id || market.id?.split(":").pop() || "";
-    const sideMatch = String(outcome.id || "").match(/:(yes|no)$/i);
-    const side = (sideMatch ? sideMatch[1] : "yes").toLowerCase();
+    // Per-team Kalshi tickers (KXMLBGAME-...-TEX vs KXMLBGAME-...-KC)
+    // were folded into a single display market in foldKalshiGameMarkets,
+    // with the FULL per-side ticker preserved as the prefix of each
+    // outcome.id. So the ticker we POST against lives in outcome.id, NOT
+    // market.raw_market_id (which is only the shared key without the
+    // team suffix and yields Kalshi "market not found").
+    const idMatch = String(outcome.id || "").match(/^(.*):(yes|no)$/i);
+    const ticker = idMatch
+        ? idMatch[1]
+        : (market.raw_market_id || "");
+    const side = (idMatch ? idMatch[2] : "yes").toLowerCase();
     const probPercent = outcome.probability != null
         ? Math.max(1, Math.min(99, Math.round(outcome.probability * 100)))
         : 50;
@@ -537,15 +545,19 @@ function renderBetButtons(market) {
     return `
       <div class="ks-bet-row">
         ${outs.map((o) => {
-            const sideMatch = String(o.id || "").match(/:(yes|no)$/i);
-            const side = (sideMatch ? sideMatch[1] : "yes").toLowerCase();
+            const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+            const side = (idMatch ? idMatch[2] : "yes").toLowerCase();
+            // Per-outcome full Kalshi ticker (KXMLBGAME-...-{TEAM}),
+            // NOT the folded shared key — Kalshi rejects the latter
+            // with "market not found".
+            const fullTicker = idMatch ? idMatch[1] : (market.raw_market_id || "");
             const cents = o.probability != null
                 ? Math.max(1, Math.min(99, Math.round(o.probability * 100)))
                 : 50;
             return `
               <button class="ks-bet-btn ks-bet-${side}"
                       data-kalshi-bet="1"
-                      data-ticker="${escapeHtmlAttr(market.raw_market_id || "")}"
+                      data-ticker="${escapeHtmlAttr(fullTicker)}"
                       data-market-id="${escapeHtmlAttr(market.id || "")}"
                       data-market-title="${escapeHtmlAttr(market.title || "")}"
                       data-outcome-id="${escapeHtmlAttr(o.id || "")}"
