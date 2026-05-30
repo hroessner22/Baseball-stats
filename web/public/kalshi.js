@@ -935,6 +935,15 @@ function renderAllBetButtons() {
 function renderBetButtons(market) {
     if (market.source !== "kalshi") return "";
     const outs = (market.outcomes || []).slice(0, 2);
+    // Detect "two outcomes on the SAME Kalshi ticker" (YES + NO of
+    // one binary market) vs "two separate Kalshi tickers" (moneyline
+    // where each team is its own market). Drives button label format
+    // below — see comment inside the buttons map.
+    const tickerBases = outs.map((o) => {
+        const m = String(o.id || "").match(/^(.*):(yes|no)$/i);
+        return m ? m[1] : (market.raw_market_id || "");
+    });
+    const sameTickerBinary = outs.length === 2 && tickerBases[0] && tickerBases[0] === tickerBases[1];
     // Stable per-(player+stat) stake key so the user's typed stake
     // survives every re-render path: 8s markets poll, chip click in
     // a condensed prop card, switching stat-type sub-tab. We can't
@@ -980,6 +989,17 @@ function renderBetButtons(market) {
                   ? null
                   : (side === "yes" ? yesCents : 100 - yesCents);
               const payoutText = formatPayout(defaultStake, priceCents);
+              // Button label needs context when the two outcomes are
+              // SEPARATE Kalshi markets (moneyline: KXMLBGAME-...-TEX
+              // YES vs KXMLBGAME-...-KC YES — both 'yes' side, only
+              // the team name differentiates them). For binary
+              // markets where outcomes are YES + NO on the SAME
+              // ticker (player props), keep the short YES/NO label
+              // since the card header already carries the player +
+              // threshold context.
+              const action = sameTickerBinary
+                  ? `Buy ${side.toUpperCase()}`
+                  : `Buy ${o.name || side.toUpperCase()}`;
               return `
                 <button class="ks-bet-btn ks-bet-${side}"
                         data-kalshi-bet="1"
@@ -991,7 +1011,7 @@ function renderBetButtons(market) {
                         data-outcome-prob="${o.probability != null ? o.probability : ""}"
                         data-side="${side}"
                         data-price-cents="${priceCents != null ? priceCents : ""}">
-                  <span class="ks-bet-btn-action">Buy ${side.toUpperCase()}</span>
+                  <span class="ks-bet-btn-action">${escapeHtml(action)}</span>
                   <span class="ks-bet-btn-win" data-bet-payout>${payoutText}</span>
                 </button>
               `;

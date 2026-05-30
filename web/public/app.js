@@ -4532,14 +4532,24 @@ async function hydrateMarkets(gameId) {
         const pane = document.getElementById("markets-pane");
         if (!pane) return;
         const html = renderMarkets(data);
-        pane.innerHTML = html;
-        cachedMarketsHTML = html;
-        cachedMarketsPk = gameId;
-        // Restore each card's typed stake BEFORE the orderbook hydrator
-        // runs — the hydrator reads the input value to recompute payouts,
-        // so the saved stake has to be in place first or it'll quote
-        // against $0.50 by mistake on the first refresh.
-        restoreBetStakes();
+        // Don't blow the pane away while the user is mid-edit in a
+        // stake input — innerHTML destroys the focused element, drops
+        // the cursor, and resets the value (even with our save/restore
+        // pair the cursor jump alone makes it impossible to type).
+        // The orderbook hydrator below still updates prices in-place,
+        // so the "win" caption stays fresh while the user types. Next
+        // poll after blur will pick up any new data.
+        const isTypingStake = document.activeElement?.matches?.("[data-bet-stake]");
+        if (!isTypingStake) {
+            pane.innerHTML = html;
+            cachedMarketsHTML = html;
+            cachedMarketsPk = gameId;
+            // Restore each card's typed stake BEFORE the orderbook hydrator
+            // runs — the hydrator reads the input value to recompute payouts,
+            // so the saved stake has to be in place first or it'll quote
+            // against $0.50 by mistake on the first refresh.
+            restoreBetStakes();
+        }
         // Kalshi's /markets endpoint returns null bids/asks on most
         // MLB markets but /markets/{ticker}/orderbook has real
         // liquidity. Hydrate the Kalshi cards in the "Every book we
