@@ -5391,6 +5391,70 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding-top: 6px;
 }
 
+/* Stat-type sub-tabs inside Player Props / Team Props.
+   Visually a smaller, secondary version of .markets-tabs — same
+   bottom-border accent on the active one, but the row scrolls
+   horizontally because there can be 8+ categories. */
+.prop-stat-tabs {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 2px;
+    margin: 0 0 6px;
+    scrollbar-width: thin;
+}
+.prop-stat-tabs::-webkit-scrollbar { height: 4px; }
+.prop-stat-tabs::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.25);
+    border-radius: 4px;
+}
+.prop-stat-tab {
+    flex: 0 0 auto;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 7px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 80ms ease, border-color 80ms ease, background 80ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+.prop-stat-tab:hover {
+    color: var(--text);
+    background: rgba(148, 163, 184, 0.04);
+}
+.prop-stat-tab.active {
+    color: var(--accent-action);
+    border-bottom-color: var(--accent-action);
+}
+.prop-stat-tab-count {
+    font-size: 10px;
+    font-weight: 700;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--text-dim);
+    padding: 1px 6px;
+    border-radius: 99px;
+    min-width: 16px;
+    text-align: center;
+}
+.prop-stat-tab.active .prop-stat-tab-count {
+    background: rgba(56, 189, 248, 0.18);
+    color: var(--accent-action);
+}
+/* Hide every pane that isn't active. The render emits all of them
+   so the local DOM-swap click handler can flip .active without a
+   re-render. */
+.prop-stat-pane { display: none; }
+.prop-stat-pane.active { display: block; }
+
 /* Player-prop filter input */
 .markets-filter {
     display: flex;

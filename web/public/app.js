@@ -4752,6 +4752,11 @@ function stopMarketsPoll() {
 let marketsSubTab = "game_lines";  // game_lines | player_props | team_props
 let marketsShowAlts = { spread: false, total: false };
 let marketsPlayerFilter = "";
+// Sub-sub-tabs inside player_props / team_props (stat type: home_runs,
+// strikeouts, etc.). Persist across the 8s dashboard poll so the
+// user's pick survives re-render.
+let marketsPlayerStatTab = "home_runs";
+let marketsTeamStatTab   = "run_line";
 // Per-game header: click 'Market consensus' to expand a panel listing
 // every book / market source we pulled from.
 let marketsAllBooksOpen = false;
@@ -4866,6 +4871,38 @@ function renderGameLinesTab(d) {
 
 // Player Props tab: searchable list. Filter chip narrows by player
 // name token (case-insensitive). Sub-grouped by pitcher / batter prop.
+// Stat-type detection for player props. Reads the market title for
+// the well-known stat keywords. Returns one of the keys in
+// PLAYER_STAT_TABS below — group markets by this and render each
+// group under its own sub-tab so the user isn't scrolling through
+// HR / strikeout / hits / TB all mixed together.
+function getPlayerStatType(market) {
+    const t = (market.title || "").toLowerCase();
+    if (/strikeouts?\b|\bk['']?s?\b|so total/.test(t))     return "strikeouts";
+    if (/home runs?\b|\bhrs?\b/.test(t))                   return "home_runs";
+    if (/total bases?\b|tb total/.test(t))                 return "total_bases";
+    if (/hits[\s,]+runs[\s,]+(rbis?|runs batted)/.test(t)) return "combo_hrrbi";
+    if (/hits?\b/.test(t))                                 return "hits";
+    if (/walks?\b/.test(t))                                return "walks";
+    if (/earned runs?\b|\beras?\b/.test(t))                return "earned_runs";
+    if (/record a win|record the win|to record a win/.test(t)) return "pitcher_win";
+    return "other_player";
+}
+
+// Display config for each player-stat sub-tab — title shown on the
+// chip + the side of the matchup it applies to (just informational).
+const PLAYER_STAT_TABS = [
+    { key: "home_runs",    label: "Home Runs" },
+    { key: "hits",         label: "Hits" },
+    { key: "strikeouts",   label: "Strikeouts" },
+    { key: "total_bases",  label: "Total Bases" },
+    { key: "combo_hrrbi",  label: "H+R+RBI" },
+    { key: "walks",        label: "Walks" },
+    { key: "earned_runs",  label: "Earned Runs" },
+    { key: "pitcher_win",  label: "Pitcher Win" },
+    { key: "other_player", label: "Other" },
+];
+
 function renderPlayerPropsTab(d) {
     const all = d.markets.player_prop || [];
     if (!all.length) {
@@ -4873,7 +4910,7 @@ function renderPlayerPropsTab(d) {
           <div class="markets-tab-body">
             <div class="markets-empty">
               <div class="markets-empty-title">No player props quoted on this game yet.</div>
-              <div class="markets-empty-sub">Bovada usually has 50+ prop markets per game; check back closer to first pitch.</div>
+              <div class="markets-empty-sub">Per-game props (HR / K / Hits / TB) appear when Kalshi opens them, usually a few hours before first pitch.</div>
             </div>
           </div>
         `;
@@ -4883,10 +4920,27 @@ function renderPlayerPropsTab(d) {
         ? all.filter((m) => (m.title || "").toLowerCase().includes(filt))
         : all;
 
-    // Sub-bucket: titles mentioning "strikeout", "win", "record"
-    // tend to be pitcher props; everything else is batter.
-    const pitcher = matched.filter((m) => /strikeout|record a win|hits allowed|walks|earned run|pitcher/i.test(m.title || ""));
-    const batter  = matched.filter((m) => !pitcher.includes(m));
+    // Group every prop by stat type. Sub-tabs along the top let the
+    // user jump straight to "Home Runs" / "Strikeouts" / etc. instead
+    // of scrolling through all 119 mixed together.
+    const byStat = new Map();
+    for (const m of matched) {
+        const k = getPlayerStatType(m);
+        if (!byStat.has(k)) byStat.set(k, []);
+        byStat.get(k).push(m);
+    }
+
+    // Only show tabs that have markets. Preserve PLAYER_STAT_TABS order.
+    const tabs = PLAYER_STAT_TABS.filter((t) => (byStat.get(t.key) || []).length);
+    if (!tabs.length) {
+        return `
+          <div class="markets-tab-body">
+            <div class="empty">No player props match "${escapeHTML(marketsPlayerFilter)}".</div>
+          </div>
+        `;
+    }
+    const activeKey = tabs.some((t) => t.key === marketsPlayerStatTab)
+        ? marketsPlayerStatTab : tabs[0].key;
 
     return `
       <div class="markets-tab-body" data-mtab-body="player_props">
@@ -4897,17 +4951,52 @@ function renderPlayerPropsTab(d) {
                  data-mtab-filter="1" />
           ${filt ? `<button class="markets-filter-clear" data-mtab-clear-filter="1">clear</button>` : ""}
         </div>
-        ${matched.length === 0
-          ? `<div class="empty">No props match "${escapeHTML(marketsPlayerFilter)}".</div>`
-          : `
-            ${renderMarketsSection(`Pitcher props (${pitcher.length})`, pitcher)}
-            ${renderMarketsSection(`Batter props (${batter.length})`,   batter)}
-          `}
+        <nav class="prop-stat-tabs" role="tablist">
+          ${tabs.map((t) => {
+            const count = (byStat.get(t.key) || []).length;
+            return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
+                            data-stat-tab="${t.key}" role="tab">
+                ${t.label} <span class="prop-stat-tab-count">${count}</span>
+              </button>`;
+          }).join("")}
+        </nav>
+        ${tabs.map((t) => `
+          <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
+               data-stat-pane="${t.key}">
+            ${renderMarketsSection("", byStat.get(t.key) || [])}
+          </div>
+        `).join("")}
       </div>
     `;
 }
 
-// Team Props tab: game props + 1st-inning + run markets.
+// Stat-type detection for team props. Same pattern as the player
+// version — keys map to TEAM_PROP_TABS for the sub-tab UI.
+//
+// Kalshi phrasings actually observed in /api/game/{id}/markets:
+//   - "Will Texas score over 5.5 runs?"             → team_total
+//   - "Texas Rangers vs. Kansas City Royals: O/U 7.5" → game_total
+//   - "Spread: Texas Rangers (-1.5)"                → run_line
+//   - "Will there be a run scored in the first inning?: …" → first_inning
+function getTeamPropType(market) {
+    const t = (market.title || "").toLowerCase();
+    if (/1st inning|first inning|\b1h\b|\b1i\b|run in.*1st|run scored in the first/.test(t)) return "first_inning";
+    if (/first 5/.test(t))                                            return "first_5";
+    if (/wins by over|wins by at least|win margin|winning margin|^spread:|\bspread:.*\(-/.test(t)) return "run_line";
+    if (/team total|team runs|will [\w. ]+ score (?:over|under|at least)/.test(t)) return "team_total";
+    if (/total runs?|: o\/u\b/.test(t))                               return "game_total";
+    return "other_team";
+}
+
+const TEAM_PROP_TABS = [
+    { key: "run_line",      label: "Run Line" },
+    { key: "game_total",    label: "Game Total" },
+    { key: "team_total",    label: "Team Total" },
+    { key: "first_5",       label: "First 5 Innings" },
+    { key: "first_inning",  label: "1st-Inning" },
+    { key: "other_team",    label: "Other" },
+];
+
 function renderTeamPropsTab(d) {
     const all = d.markets.team_prop || [];
     if (!all.length) {
@@ -4915,21 +5004,41 @@ function renderTeamPropsTab(d) {
           <div class="markets-tab-body">
             <div class="markets-empty">
               <div class="markets-empty-title">No team props quoted on this game yet.</div>
-              <div class="markets-empty-sub">First-inning, run-scoring, and winning-margin markets show up here.</div>
+              <div class="markets-empty-sub">Run line / Total / Team Total / First 5 / 1st-inning markets show up here when Kalshi opens them.</div>
             </div>
           </div>
         `;
     }
-    // Sub-bucket by clue word in title.
-    const firstInning = all.filter((m) => /1st inning|first inning|1H|1I/i.test(m.title || ""));
-    const winMargin   = all.filter((m) => /winning margin|to win by/i.test(m.title || ""));
-    const runScoring  = all.filter((m) => !firstInning.includes(m) && !winMargin.includes(m));
+    const byKind = new Map();
+    for (const m of all) {
+        const k = getTeamPropType(m);
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k).push(m);
+    }
+    const tabs = TEAM_PROP_TABS.filter((t) => (byKind.get(t.key) || []).length);
+    if (!tabs.length) {
+        return `<div class="markets-tab-body"><div class="empty">No team props.</div></div>`;
+    }
+    const activeKey = tabs.some((t) => t.key === marketsTeamStatTab)
+        ? marketsTeamStatTab : tabs[0].key;
 
     return `
       <div class="markets-tab-body" data-mtab-body="team_props">
-        ${renderMarketsSection(`Game props (${runScoring.length})`,   runScoring)}
-        ${renderMarketsSection(`1st-inning markets (${firstInning.length})`, firstInning)}
-        ${renderMarketsSection(`Winning margin (${winMargin.length})`, winMargin)}
+        <nav class="prop-stat-tabs" role="tablist">
+          ${tabs.map((t) => {
+            const count = (byKind.get(t.key) || []).length;
+            return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
+                            data-team-stat-tab="${t.key}" role="tab">
+                ${t.label} <span class="prop-stat-tab-count">${count}</span>
+              </button>`;
+          }).join("")}
+        </nav>
+        ${tabs.map((t) => `
+          <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
+               data-team-stat-pane="${t.key}">
+            ${renderMarketsSection("", byKind.get(t.key) || [])}
+          </div>
+        `).join("")}
       </div>
     `;
 }
@@ -5455,6 +5564,34 @@ if (typeof window !== "undefined") {
                 hydrateKalshiBookCells();
             }
         }
+    });
+
+    // Click delegation for stat-type sub-tabs (Home Runs / Hits /
+    // Strikeouts / …) inside the Player Props and Team Props panes.
+    // We do a local DOM swap rather than re-rendering the whole
+    // markets section — that keeps it instant and preserves any
+    // open chip selection / hydrated orderbook in other cards.
+    // The state vars (marketsPlayerStatTab / marketsTeamStatTab)
+    // get updated too so the 8s dashboard re-render restores the
+    // user's pick instead of snapping back to the default.
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-stat-tab], [data-team-stat-tab]");
+        if (!btn) return;
+        e.preventDefault();
+        const isTeam   = btn.hasAttribute("data-team-stat-tab");
+        const key      = isTeam ? btn.getAttribute("data-team-stat-tab")
+                                : btn.getAttribute("data-stat-tab");
+        const tabAttr  = isTeam ? "data-team-stat-tab"  : "data-stat-tab";
+        const paneAttr = isTeam ? "data-team-stat-pane" : "data-stat-pane";
+        if (isTeam) marketsTeamStatTab   = key;
+        else        marketsPlayerStatTab = key;
+        // Find the nearest enclosing markets-tab-body so we only
+        // touch the active player/team props section.
+        const body = btn.closest(".markets-tab-body") || document;
+        body.querySelectorAll(`[${tabAttr}]`).forEach((t) =>
+            t.classList.toggle("active", t.getAttribute(tabAttr) === key));
+        body.querySelectorAll(`[${paneAttr}]`).forEach((p) =>
+            p.classList.toggle("active", p.getAttribute(paneAttr) === key));
     });
 }
 
