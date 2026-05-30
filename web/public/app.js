@@ -1754,6 +1754,14 @@ async function refreshTeam(tricode) {
         const games     = gamesRes.ok ? await gamesRes.json() : null;
         if (tricode !== activeTeamTricode) return;
         teamView.innerHTML = renderTeamView(tricode, standings, markets, games);
+        // Wire live Kalshi prices into every Buy button on the page.
+        // Without this the team page's bet buttons sit forever at
+        // "win $—" because data-price-cents never gets set —
+        // /api/markets ships null probabilities on Kalshi binary
+        // markets and only the per-ticker orderbook fills them in.
+        if (typeof hydrateKalshiBookCells === "function") {
+            hydrateKalshiBookCells();
+        }
     } catch (e) {
         if (!teamView.querySelector(".team-doc")) {
             renderEmpty(teamView, `Couldn't load ${tricode}.`, `${e.message || e}`);
