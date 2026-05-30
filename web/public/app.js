@@ -1759,6 +1759,10 @@ async function refreshTeam(tricode) {
 }
 
 function renderTeamView(tricode, standings, markets, games) {
+    // Kalshi-only mode: strip every non-Kalshi market from the team
+    // page too. Same filter used by the per-game Markets pane.
+    if (markets) filterToKalshi(markets);
+
     const teamRow = findTeamInStandings(standings, tricode);
     const teamName = TEAM_NAMES[tricode] || tricode;
 
@@ -1787,9 +1791,10 @@ function renderTeamView(tricode, standings, markets, games) {
         || m.question_type === "spread"
         || m.question_type === "total"
     );
-    const moneylines = gameLines.filter((m) => m.question_type === "moneyline");
-    const totals     = gameLines.filter((m) => m.question_type === "total");
-    const spreads    = gameLines.filter((m) => m.question_type === "spread");
+
+    // Per-game TEAM props (run line / game total / team total / first
+    // 5 / 1st-inning) that Kalshi tagged with this team's tricode.
+    const teamProps = teamMarkets.filter((m) => m.question_type === "team_prop");
 
     // Today's scheduled game for this team, if any. Used to link the
     // game lines to our model's WE and a CTA to "open the live tracker".
@@ -1817,32 +1822,76 @@ function renderTeamView(tricode, standings, markets, games) {
     });
 
     const noMarkets =
-        gameLines.length === 0 && futures.length === 0 && teamPlayerProps.length === 0;
-
-    const oddsApiOn = markets?.sources?.includes("odds_api");
+        gameLines.length === 0 && futures.length === 0
+        && teamPlayerProps.length === 0 && teamProps.length === 0;
 
     return `
       <div class="team-doc">
         ${header}
         ${todayGameBlock}
         ${noMarkets
-            ? `<div class="empty">No public markets currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
+            ? `<div class="empty">No Kalshi markets currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
             : `
-              ${renderTeamFutureSection("Game-day moneyline",  moneylines, tricode)}
-              ${renderTeamFutureSection("Total runs O/U",       totals,     tricode)}
-              ${renderTeamFutureSection("Run-line spread",      spreads,    tricode)}
-              ${renderTeamPropSection(teamPlayerProps, teamName)}
-              ${renderTeamFutureSection("World Series 2026",         wsMarkets,   tricode)}
-              ${renderTeamFutureSection("League Championship Series", lcsMarkets, tricode)}
-              ${renderTeamFutureSection("Division title",             divMarkets, tricode)}
-              ${renderTeamFutureSection("Regular-season wins",        winsMarkets, tricode)}
-              ${renderTeamFutureSection("Other team futures",         otherFut,    tricode)}
+              ${renderTeamGameLinesSection(gameLines, tricode)}
+              ${renderTeamTeamPropsSection(teamProps)}
+              ${renderTeamPlayerPropsSection(teamPlayerProps, teamName)}
+              ${renderTeamFuturesSection(wsMarkets, lcsMarkets, divMarkets, winsMarkets, otherFut, tricode)}
             `}
-        ${!oddsApiOn ? renderOddsApiHint() : ""}
         <footer class="team-footnote">
-          Lines refresh every 30s. Pulled from Polymarket, Kalshi, Manifold${oddsApiOn ? ", and The Odds API (FanDuel / DraftKings / BetMGM / Caesars)" : ""}.
+          Lines refresh every 30s. Pulled from Kalshi.
         </footer>
       </div>
+    `;
+}
+
+// Game-day moneyline / total / spread for the team's tonight game.
+// Three small sub-sections inside one parent — they're not laddered
+// the way player/team props are, so flat rows are right here.
+function renderTeamGameLinesSection(gameLines, tricode) {
+    if (!gameLines.length) return "";
+    const moneylines = gameLines.filter((m) => m.question_type === "moneyline");
+    const totals     = gameLines.filter((m) => m.question_type === "total");
+    const spreads    = gameLines.filter((m) => m.question_type === "spread");
+    return `
+      ${renderTeamFutureSection("Game-day moneyline", moneylines, tricode)}
+      ${renderTeamFutureSection("Total runs O/U",      totals,     tricode)}
+      ${renderTeamFutureSection("Run-line spread",     spreads,    tricode)}
+    `;
+}
+
+// Per-game team props (run line / game total / team total / first 5 /
+// 1st-inning) — uses the same sub-tabs the per-game Markets pane uses.
+function renderTeamTeamPropsSection(teamProps) {
+    if (!teamProps.length) return "";
+    return `
+      <section class="team-section" data-prop-tabs-scope>
+        <h3 class="team-section-title">Team props · tonight's game</h3>
+        ${renderTeamPropsByKind(teamProps)}
+      </section>
+    `;
+}
+
+// Player props — uses the same stat-type sub-tabs (Home Runs / Hits /
+// Strikeouts / …) + condensed threshold cards as the per-game pane.
+function renderTeamPlayerPropsSection(props, teamName) {
+    if (!props.length) return "";
+    return `
+      <section class="team-section" data-prop-tabs-scope>
+        <h3 class="team-section-title">Player props · ${escapeHTMLAttr(teamName)} roster</h3>
+        ${renderPlayerPropsByStat(props)}
+      </section>
+    `;
+}
+
+// Season futures (WS / LCS / Division / Wins / Other) — vertical
+// stack, just stripped of non-Kalshi sources by the upstream filter.
+function renderTeamFuturesSection(ws, lcs, div, wins, other, tricode) {
+    return `
+      ${renderTeamFutureSection("World Series 2026",         ws,    tricode)}
+      ${renderTeamFutureSection("League Championship Series", lcs,  tricode)}
+      ${renderTeamFutureSection("Division title",             div,  tricode)}
+      ${renderTeamFutureSection("Regular-season wins",        wins, tricode)}
+      ${renderTeamFutureSection("Other team futures",         other, tricode)}
     `;
 }
 
@@ -4956,29 +5005,13 @@ function renderPlayerPropsTab(d) {
     const matched = filt
         ? all.filter((m) => (m.title || "").toLowerCase().includes(filt))
         : all;
-
-    // Group every prop by stat type. Sub-tabs along the top let the
-    // user jump straight to "Home Runs" / "Strikeouts" / etc. instead
-    // of scrolling through all 119 mixed together.
-    const byStat = new Map();
-    for (const m of matched) {
-        const k = getPlayerStatType(m);
-        if (!byStat.has(k)) byStat.set(k, []);
-        byStat.get(k).push(m);
-    }
-
-    // Only show tabs that have markets. Preserve PLAYER_STAT_TABS order.
-    const tabs = PLAYER_STAT_TABS.filter((t) => (byStat.get(t.key) || []).length);
-    if (!tabs.length) {
+    if (!matched.length) {
         return `
           <div class="markets-tab-body">
             <div class="empty">No player props match "${escapeHTML(marketsPlayerFilter)}".</div>
           </div>
         `;
     }
-    const activeKey = tabs.some((t) => t.key === marketsPlayerStatTab)
-        ? marketsPlayerStatTab : tabs[0].key;
-
     return `
       <div class="markets-tab-body" data-mtab-body="player_props">
         <div class="markets-filter">
@@ -4988,22 +5021,45 @@ function renderPlayerPropsTab(d) {
                  data-mtab-filter="1" />
           ${filt ? `<button class="markets-filter-clear" data-mtab-clear-filter="1">clear</button>` : ""}
         </div>
-        <nav class="prop-stat-tabs" role="tablist">
-          ${tabs.map((t) => {
-            const count = (byStat.get(t.key) || []).length;
-            return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
-                            data-stat-tab="${t.key}" role="tab">
-                ${t.label} <span class="prop-stat-tab-count">${count}</span>
-              </button>`;
-          }).join("")}
-        </nav>
-        ${tabs.map((t) => `
-          <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
-               data-stat-pane="${t.key}">
-            ${renderMarketsSection("", byStat.get(t.key) || [])}
-          </div>
-        `).join("")}
+        ${renderPlayerPropsByStat(matched)}
       </div>
+    `;
+}
+
+// Reusable: groups a flat Kalshi player-prop list into stat-type
+// sub-tabs (Home Runs / Hits / Strikeouts / …) with condensed
+// threshold cards inside each pane. Used by the per-game Markets
+// pane AND the team page. The document-level click handler over
+// [data-stat-tab] / [data-stat-pane] works in both contexts because
+// it scopes via the nearest .markets-tab-body OR
+// [data-prop-tabs-scope] ancestor.
+function renderPlayerPropsByStat(markets) {
+    const byStat = new Map();
+    for (const m of markets) {
+        const k = getPlayerStatType(m);
+        if (!byStat.has(k)) byStat.set(k, []);
+        byStat.get(k).push(m);
+    }
+    const tabs = PLAYER_STAT_TABS.filter((t) => (byStat.get(t.key) || []).length);
+    if (!tabs.length) return `<div class="empty">No player props.</div>`;
+    const activeKey = tabs.some((t) => t.key === marketsPlayerStatTab)
+        ? marketsPlayerStatTab : tabs[0].key;
+    return `
+      <nav class="prop-stat-tabs" role="tablist">
+        ${tabs.map((t) => {
+          const count = (byStat.get(t.key) || []).length;
+          return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
+                          data-stat-tab="${t.key}" role="tab">
+              ${t.label} <span class="prop-stat-tab-count">${count}</span>
+            </button>`;
+        }).join("")}
+      </nav>
+      ${tabs.map((t) => `
+        <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
+             data-stat-pane="${t.key}">
+          ${renderMarketsSection("", byStat.get(t.key) || [])}
+        </div>
+      `).join("")}
     `;
 }
 
@@ -5046,37 +5102,43 @@ function renderTeamPropsTab(d) {
           </div>
         `;
     }
+    return `
+      <div class="markets-tab-body" data-mtab-body="team_props">
+        ${renderTeamPropsByKind(all)}
+      </div>
+    `;
+}
+
+// Reusable team-prop sub-tabs (Run Line / Game Total / Team Total
+// / First 5 / 1st-Inning / Other). Shared by the per-game pane and
+// the team page.
+function renderTeamPropsByKind(markets) {
     const byKind = new Map();
-    for (const m of all) {
+    for (const m of markets) {
         const k = getTeamPropType(m);
         if (!byKind.has(k)) byKind.set(k, []);
         byKind.get(k).push(m);
     }
     const tabs = TEAM_PROP_TABS.filter((t) => (byKind.get(t.key) || []).length);
-    if (!tabs.length) {
-        return `<div class="markets-tab-body"><div class="empty">No team props.</div></div>`;
-    }
+    if (!tabs.length) return `<div class="empty">No team props.</div>`;
     const activeKey = tabs.some((t) => t.key === marketsTeamStatTab)
         ? marketsTeamStatTab : tabs[0].key;
-
     return `
-      <div class="markets-tab-body" data-mtab-body="team_props">
-        <nav class="prop-stat-tabs" role="tablist">
-          ${tabs.map((t) => {
-            const count = (byKind.get(t.key) || []).length;
-            return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
-                            data-team-stat-tab="${t.key}" role="tab">
-                ${t.label} <span class="prop-stat-tab-count">${count}</span>
-              </button>`;
-          }).join("")}
-        </nav>
-        ${tabs.map((t) => `
-          <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
-               data-team-stat-pane="${t.key}">
-            ${renderMarketsSection("", byKind.get(t.key) || [])}
-          </div>
-        `).join("")}
-      </div>
+      <nav class="prop-stat-tabs" role="tablist">
+        ${tabs.map((t) => {
+          const count = (byKind.get(t.key) || []).length;
+          return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
+                          data-team-stat-tab="${t.key}" role="tab">
+              ${t.label} <span class="prop-stat-tab-count">${count}</span>
+            </button>`;
+        }).join("")}
+      </nav>
+      ${tabs.map((t) => `
+        <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
+             data-team-stat-pane="${t.key}">
+          ${renderMarketsSection("", byKind.get(t.key) || [])}
+        </div>
+      `).join("")}
     `;
 }
 
@@ -5857,9 +5919,10 @@ if (typeof window !== "undefined") {
         const paneAttr = isTeam ? "data-team-stat-pane" : "data-stat-pane";
         if (isTeam) marketsTeamStatTab   = key;
         else        marketsPlayerStatTab = key;
-        // Find the nearest enclosing markets-tab-body so we only
-        // touch the active player/team props section.
-        const body = btn.closest(".markets-tab-body") || document;
+        // Find the nearest enclosing scope so we only touch the active
+        // player/team props section — markets pane uses .markets-tab-body,
+        // team page uses [data-prop-tabs-scope].
+        const body = btn.closest(".markets-tab-body, [data-prop-tabs-scope]") || document;
         body.querySelectorAll(`[${tabAttr}]`).forEach((t) =>
             t.classList.toggle("active", t.getAttribute(tabAttr) === key));
         body.querySelectorAll(`[${paneAttr}]`).forEach((p) =>
