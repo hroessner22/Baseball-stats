@@ -5498,8 +5498,12 @@ function renderCondensedPropCard(markets) {
         window._propCards = window._propCards || {};
         window._propCards[cardId] = markets;
     }
-    // Default to the median threshold — that's usually the "main" line.
-    const defaultIdx = Math.floor(markets.length / 2);
+    // Default to the LEAST threshold (smallest "N+"). On HR markets every
+    // 2+ line is a dead +9900 / 1% moonshot — useless as the steady-state
+    // view. The 1+ line is the one whose odds sit nearest +100 (real bets
+    // happen on it). User asked: "always set the steady state at the least
+    // number of something (the odds closest to +100)".
+    const defaultIdx = 0;
     const label = getPropGroupLabel(markets[0]);
     const src = markets[0].source || "?";
 
