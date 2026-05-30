@@ -1032,13 +1032,35 @@ function renderMarketsDashboard(d) {
 
         <!-- My Kalshi: balance + open orders + cancel buttons.
              Rendered inline so the user can see what they have on the
-             book without leaving the markets view. Auto-refreshes
-             every 20s via kalshi.js. -->
+             markets view. Auto-refreshes every 20s via kalshi.js. -->
         <div data-kalshi-mybets>${
           (typeof window !== "undefined" && window.Kalshi)
               ? window.Kalshi.renderMyBetsPanel()
               : ""
         }</div>
+
+        <!-- Deal finder: user sets a target YES-price range (e.g., 1¢
+             to 30¢ for long shots, or 80¢ to 99¢ for "is the market
+             almost certain wrong?" bets). We scan every Kalshi market
+             on tonight's slate via /orderbook, filter to those whose
+             best-YES-ask falls in range, and show them as one-tap
+             betting opportunities. -->
+        <div class="deal-finder">
+          <div class="deal-finder-head">
+            <strong>Find Kalshi deals</strong>
+            <span class="deal-finder-sub">
+              show every market whose YES costs between
+            </span>
+            <input type="number" min="1" max="99" step="1"
+                   placeholder="min" data-deal-min value="1">
+            <span class="deal-finder-dash">¢ and</span>
+            <input type="number" min="1" max="99" step="1"
+                   placeholder="max" data-deal-max value="30">
+            <span class="deal-finder-cent">¢</span>
+            <button class="deal-finder-go" data-deal-go>Find</button>
+          </div>
+          <div class="deal-finder-results" data-deal-results></div>
+        </div>
 
         <div class="md-games">
           ${gameList.map((g) => renderMarketsDashboardGameCard(g, d._game_lookup || {})).join("")}
@@ -1397,6 +1419,146 @@ function stashMdGames(games) {
     for (const g of games || []) {
         window._mdGames[g.key] = g;
     }
+}
+
+
+// ── Deal finder ─────────────────────────────────────────────────
+//
+// Scans every Kalshi market on tonight's slate, pulls each ticker's
+// live orderbook in parallel, and surfaces the ones whose best YES
+// ask falls inside the user's [min, max] cents range. Click a result
+// to open the bet modal preloaded with that side.
+//
+// "Deals" interpretation: long shots if you set 1-30¢, coin-flip
+// arbitrage if 45-55¢, market-thinks-it's-rigged-but-you-disagree if
+// 80-99¢. Same plumbing for all of them — we just filter on price.
+
+const dealResultsCache = new Map();      // ticker → { ts, ask, count }
+
+async function onDealFinderGo() {
+    const minEl = document.querySelector("[data-deal-min]");
+    const maxEl = document.querySelector("[data-deal-max]");
+    const resultsEl = document.querySelector("[data-deal-results]");
+    if (!minEl || !maxEl || !resultsEl) return;
+    const min = Math.max(1, Math.min(99, parseInt(minEl.value, 10) || 1));
+    const max = Math.max(1, Math.min(99, parseInt(maxEl.value, 10) || 99));
+    if (min > max) {
+        resultsEl.innerHTML = `<div class="deal-finder-empty">min must be ≤ max</div>`;
+        return;
+    }
+
+    // Build the list of (ticker, marketRef, outcome) tuples we'll scan
+    // — every Kalshi market on every game in tonight's slate.
+    const tuples = [];
+    for (const g of Object.values(window._mdGames || {})) {
+        const kinds = ["moneyline", "spread", "total", "player_prop", "team_prop"];
+        for (const kind of kinds) {
+            for (const m of (g.markets?.[kind] || [])) {
+                if (m.source !== "kalshi") continue;
+                for (const o of (m.outcomes || [])) {
+                    const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+                    if (!idMatch) continue;
+                    tuples.push({ ticker: idMatch[1], market: m, outcome: o, game: g, kind });
+                }
+            }
+        }
+    }
+    if (!tuples.length) {
+        resultsEl.innerHTML = `<div class="deal-finder-empty">No Kalshi markets loaded yet. Wait a few seconds and try again.</div>`;
+        return;
+    }
+
+    resultsEl.innerHTML = `<div class="deal-finder-loading">Scanning ${tuples.length} markets…</div>`;
+
+    // Fetch orderbooks for unique tickers in parallel, with a tiny
+    // client-side cache so back-to-back searches don't re-hit Kalshi.
+    const uniqueTickers = Array.from(new Set(tuples.map((t) => t.ticker)));
+    const askByTicker = new Map();
+    await Promise.all(uniqueTickers.map(async (ticker) => {
+        const cached = dealResultsCache.get(ticker);
+        if (cached && (Date.now() - cached.ts) < 30_000) {
+            askByTicker.set(ticker, cached);
+            return;
+        }
+        try {
+            const ob = await window.Kalshi.getOrderbook(ticker);
+            const noBook = ob?.no || [];
+            if (!noBook.length) { askByTicker.set(ticker, { ask: null, count: 0, ts: Date.now() }); return; }
+            const bestNoBid = noBook[noBook.length - 1];
+            const noBidCents = Number(bestNoBid[0]);
+            const cnt = Number(bestNoBid[1]);
+            const ask = (Number.isFinite(noBidCents) && noBidCents >= 1 && noBidCents <= 99)
+                ? 100 - noBidCents : null;
+            const entry = { ask, count: Number.isFinite(cnt) ? cnt : 0, ts: Date.now() };
+            askByTicker.set(ticker, entry);
+            dealResultsCache.set(ticker, entry);
+        } catch {
+            askByTicker.set(ticker, { ask: null, count: 0, ts: Date.now() });
+        }
+    }));
+
+    // Filter to tuples whose price is in range, sort cheapest first.
+    const deals = tuples
+        .map((t) => ({ ...t, ...askByTicker.get(t.ticker) }))
+        .filter((t) => t.ask != null && t.ask >= min && t.ask <= max)
+        .sort((a, b) => a.ask - b.ask);
+
+    if (!deals.length) {
+        resultsEl.innerHTML = `<div class="deal-finder-empty">No Kalshi markets currently trading between ${min}¢ and ${max}¢.</div>`;
+        return;
+    }
+
+    // Render. Each result is a button so the bet modal opens on click.
+    resultsEl.innerHTML = `
+      <div class="deal-finder-found">${deals.length} match${deals.length === 1 ? "" : "es"}</div>
+      <div class="deal-finder-list">
+        ${deals.map((d) => `
+          <button class="deal-finder-row" data-deal-pick
+                  data-ticker="${escapeHTMLAttr(d.ticker)}"
+                  data-outcome-id="${escapeHTMLAttr(d.outcome.id || "")}"
+                  data-outcome-name="${escapeHTMLAttr(d.outcome.name || "")}"
+                  data-market-title="${escapeHTMLAttr(d.market.title || "")}">
+            <span class="deal-price">${d.ask}¢</span>
+            <span class="deal-market">
+              <span class="deal-outcome-name">${escapeHTML(d.outcome.name || "")}</span>
+              <span class="deal-market-title">${escapeHTML(d.market.title || "")}</span>
+            </span>
+            <span class="deal-meta">
+              ${d.game.away} @ ${d.game.home}
+              <span class="deal-kind">${d.kind}</span>
+            </span>
+          </button>
+        `).join("")}
+      </div>
+    `;
+}
+
+function onDealFinderPick(btn) {
+    if (!window.Kalshi || !window.Kalshi.openBetModal) return;
+    const market = {
+        id:             "",
+        source:         "kalshi",
+        title:          btn.getAttribute("data-market-title") || "",
+        raw_market_id:  btn.getAttribute("data-ticker") || "",
+        outcomes:       [],
+    };
+    const outcome = {
+        id:          btn.getAttribute("data-outcome-id") || "",
+        name:        btn.getAttribute("data-outcome-name") || "",
+        probability: null,
+    };
+    window.Kalshi.openBetModal(market, outcome);
+}
+
+// Hook deal-finder buttons via the same delegation pattern other
+// dashboard interactions use — attached on marketsView for free.
+if (typeof window !== "undefined") {
+    document.addEventListener("click", (e) => {
+        const goBtn = e.target.closest("[data-deal-go]");
+        if (goBtn) { e.preventDefault(); onDealFinderGo(); return; }
+        const pickBtn = e.target.closest("[data-deal-pick]");
+        if (pickBtn) { e.preventDefault(); onDealFinderPick(pickBtn); return; }
+    });
 }
 
 attachMdBetHandlers();
