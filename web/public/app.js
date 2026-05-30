@@ -6071,6 +6071,7 @@ function renderMarketOutcome(outcome, market) {
         : (outcome.price != null ? `${Number(outcome.price).toFixed(2)} dec` : null);
     const isFav = isAmericanFavorite(american) || (prob != null && prob >= 0.5);
     const noQuote = pct == null && oddsText == null;
+    const displayName = outcomeDisplayName(outcome, market);
 
     // Kalshi's /markets endpoint gives null prices on most MLB
     // markets — emit a hydration-tagged placeholder so
@@ -6084,7 +6085,7 @@ function renderMarketOutcome(outcome, market) {
           <div class="market-outcome"
                data-kalshi-ob-cell
                data-ticker="${escapeHTMLAttr(ticker)}">
-            <div class="mo-name">${escapeHTML(outcome.name || "")}</div>
+            <div class="mo-name">${escapeHTML(displayName)}</div>
             <div class="mo-odds-block mab-cell-odds">
               <span class="mab-cell-loading">…</span>
             </div>
@@ -6094,7 +6095,7 @@ function renderMarketOutcome(outcome, market) {
 
     return `
       <div class="market-outcome ${isFav ? "is-favorite" : ""}">
-        <div class="mo-name">${escapeHTML(outcome.name || "")}</div>
+        <div class="mo-name">${escapeHTML(displayName)}</div>
         ${noQuote
             ? `<div class="mo-no-quote">no quote yet</div>`
             : `
@@ -6105,6 +6106,29 @@ function renderMarketOutcome(outcome, market) {
             `}
       </div>
     `;
+}
+
+// Pick the display label for an outcome row. When the market is a
+// binary YES + NO on the SAME Kalshi ticker (player props, team-
+// future questions like "Will Yankees win the AL East"), Kalshi
+// repeats the subject as the name on BOTH outcomes — so the row
+// would read "Yankees / Yankees" instead of "Yes / No". Detect that
+// and show YES/NO instead. Outcomes that are SEPARATE Kalshi
+// markets (moneylines where each team is its own ticker) keep
+// their team name as the label.
+function outcomeDisplayName(outcome, market) {
+    const outcomes = market?.outcomes || [];
+    if (outcomes.length === 2) {
+        const bases = outcomes.map((o) => {
+            const m = String(o.id || "").match(/^(.*):(yes|no)$/i);
+            return m ? m[1] : null;
+        });
+        if (bases[0] && bases[0] === bases[1]) {
+            const m = String(outcome.id || "").match(/^.*:(yes|no)$/i);
+            if (m) return m[1].toUpperCase();
+        }
+    }
+    return outcome.name || "";
 }
 
 function formatAmericanOdds(american) {

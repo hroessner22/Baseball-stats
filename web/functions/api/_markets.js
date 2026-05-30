@@ -677,6 +677,29 @@ function extractTeamTricodeFromKalshiTicker(ticker) {
     return null;
 }
 
+// Kalshi shortens shared-city team names to single-letter
+// disambiguators in their market titles: "New York Y" for Yankees,
+// "New York M" for Mets, "Chicago C" / "Chicago WS", "Los Angeles A"
+// / "Los Angeles D". Useless in headlines — replace with the proper
+// nickname so "Will New York Y win the AL East" reads as "Will
+// Yankees win the AL East" everywhere downstream.
+const KALSHI_TEAM_NAME_FIX = [
+    [/\bNew York Y\b/g,    "Yankees"],
+    [/\bNew York M\b/g,    "Mets"],
+    [/\bChicago WS\b/g,    "White Sox"],
+    [/\bChicago C\b/g,     "Cubs"],
+    [/\bLos Angeles A\b/g, "Angels"],
+    [/\bLos Angeles D\b/g, "Dodgers"],
+];
+function fixKalshiTeamNames(s) {
+    if (!s) return s;
+    let out = String(s);
+    for (const [rx, repl] of KALSHI_TEAM_NAME_FIX) {
+        out = out.replace(rx, repl);
+    }
+    return out;
+}
+
 function toKalshiSingleMarket(m, type) {
     const yb = Number(m.yes_bid);
     const ya = Number(m.yes_ask);
@@ -685,7 +708,7 @@ function toKalshiSingleMarket(m, type) {
         ? (yb + ya) / 200
         : (Number.isFinite(last) && last > 0 ? last / 100 : undefined);
     const noProb = yesProb != null ? 1 - yesProb : undefined;
-    const title = m.title || m.subtitle || m.ticker;
+    const title = fixKalshiTeamNames(m.title || m.subtitle || m.ticker);
     // For season-long player futures (HR leader, Pitcher of the Month),
     // tag home_tricode with the player's team from the description so
     // the team-profile page can pick them up via its tricode filter.
@@ -707,11 +730,11 @@ function toKalshiSingleMarket(m, type) {
         id: `kalshi:${m.ticker}`,
         source: "kalshi",
         title,
-        description: m.subtitle || "",
+        description: fixKalshiTeamNames(m.subtitle || ""),
         url: `https://kalshi.com/markets/${(m.ticker || "").toLowerCase()}`,
         outcomes: [
-            { id: `${m.ticker}:yes`, name: m.yes_sub_title || "Yes", probability: yesProb },
-            { id: `${m.ticker}:no`,  name: m.no_sub_title  || "No",  probability: noProb },
+            { id: `${m.ticker}:yes`, name: fixKalshiTeamNames(m.yes_sub_title || "Yes"), probability: yesProb },
+            { id: `${m.ticker}:no`,  name: fixKalshiTeamNames(m.no_sub_title  || "No"),  probability: noProb },
         ],
         question_type:
             type === "future_player" || type === "per_game_player" ? "player_prop"
