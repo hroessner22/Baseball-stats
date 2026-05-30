@@ -5192,7 +5192,7 @@ function renderMarketRow(market) {
           </a>
         </header>
         <div class="market-outcomes">
-          ${outcomes.map(renderMarketOutcome).join("")}
+          ${outcomes.map((o) => renderMarketOutcome(o, market)).join("")}
         </div>
         ${betButtons}
         <div class="market-meta">${src}${liquidity}${volume}${bookCount}</div>
@@ -5200,7 +5200,7 @@ function renderMarketRow(market) {
     `;
 }
 
-function renderMarketOutcome(outcome) {
+function renderMarketOutcome(outcome, market) {
     const prob = outcome.probability;
     const probDevig = outcome.probability_devig;       // optional: vig-removed
     const american  = outcome.american;                // optional: "+130", "-150"
@@ -5212,6 +5212,27 @@ function renderMarketOutcome(outcome) {
         : (outcome.price != null ? `${Number(outcome.price).toFixed(2)} dec` : null);
     const isFav = isAmericanFavorite(american) || (prob != null && prob >= 0.5);
     const noQuote = pct == null && oddsText == null;
+
+    // Kalshi's /markets endpoint gives null prices on most MLB
+    // markets — emit a hydration-tagged placeholder so
+    // hydrateKalshiBookCells (called after pane innerHTML set) fills
+    // the price in from /markets/{ticker}/orderbook. The .mab-cell-odds
+    // class makes the existing hydrator find it.
+    if (noQuote && market?.source === "kalshi") {
+        const idMatch = String(outcome.id || "").match(/^(.*):(yes|no)$/i);
+        const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+        return `
+          <div class="market-outcome"
+               data-kalshi-ob-cell
+               data-ticker="${escapeHTMLAttr(ticker)}">
+            <div class="mo-name">${escapeHTML(outcome.name || "")}</div>
+            <div class="mo-odds-block mab-cell-odds">
+              <span class="mab-cell-loading">…</span>
+            </div>
+          </div>
+        `;
+    }
+
     return `
       <div class="market-outcome ${isFav ? "is-favorite" : ""}">
         <div class="mo-name">${escapeHTML(outcome.name || "")}</div>

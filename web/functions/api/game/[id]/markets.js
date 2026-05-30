@@ -53,6 +53,8 @@ export async function onRequest(context) {
 
     const homeAbbr = game?.teams?.home?.abbr || game?.teams?.home?.name;
     const awayAbbr = game?.teams?.away?.abbr || game?.teams?.away?.name;
+    const homeId   = game?.teams?.home?.id;
+    const awayId   = game?.teams?.away?.id;
     if (!homeAbbr || !awayAbbr) {
         return jsonError(400, "couldn't resolve teams for this game");
     }
@@ -67,10 +69,14 @@ export async function onRequest(context) {
     let allMarkets;
     let savantHomeWe = null;
     let savantSource = null;
+    let homeRoster = [];
+    let awayRoster = [];
     try {
-        const [marketsRes, savantRes] = await Promise.allSettled([
+        const [marketsRes, savantRes, homeRosRes, awayRosRes] = await Promise.allSettled([
             listAllMlbMarkets(env),
             fetchSavantWe(gameId),
+            fetchRoster(homeId),
+            fetchRoster(awayId),
         ]);
         if (marketsRes.status === "fulfilled") {
             allMarkets = marketsRes.value;
@@ -81,9 +87,55 @@ export async function onRequest(context) {
             savantHomeWe = savantRes.value?.value;
             savantSource = savantRes.value?.source;
         }
+        if (homeRosRes.status === "fulfilled") homeRoster = homeRosRes.value || [];
+        if (awayRosRes.status === "fulfilled") awayRoster = awayRosRes.value || [];
     } catch (e) {
         return jsonError(502, `markets fetch failed: ${e.message || e}`);
     }
+
+    // Kalshi's player_prop markets (HR leader, RBI leader, pitcher of
+    // the month, etc.) don't carry team tricodes because they're
+    // season-long futures, not per-game props — filterMarketsForGame
+    // would drop them. Cross-reference each prop's title against the
+    // home + away active rosters and tag matches with this game's
+    // team tricodes so they survive the filter and appear under the
+    // per-game Markets tab's PLAYER PROPS section.
+    if (homeRoster.length || awayRoster.length) {
+        // Two patterns to match against — full name (e.g. "framber valdez")
+        // catches titles like "Will Framber Valdez be the AL Pitcher
+        // of the Month?", and last-name catches the Kalshi ticker
+        // convention (KXMLBPITCHEROTM-26MAYAL-FVALDEZ19) which embeds
+        // initial + last name without spaces.
+        const fullNames = new Set();
+        const lastNames = new Set();
+        for (const raw of [...homeRoster, ...awayRoster]) {
+            const lc = raw.toLowerCase();
+            if (lc.length >= 5) fullNames.add(lc);
+            const parts = raw.split(/\s+/);
+            const last = parts[parts.length - 1] || "";
+            if (last.length >= 5) lastNames.add(last.toLowerCase());
+        }
+        for (const m of allMarkets) {
+            if (m.source !== "kalshi") continue;
+            if (m.question_type !== "player_prop") continue;
+            if (m.home_tricode || m.away_tricode) continue;
+            const hay = `${m.title || ""} ${m.description || ""} ${m.raw_market_id || ""}`.toLowerCase();
+            let hit = false;
+            for (const n of fullNames) {
+                if (hay.includes(n)) { hit = true; break; }
+            }
+            if (!hit) {
+                for (const n of lastNames) {
+                    if (hay.includes(n)) { hit = true; break; }
+                }
+            }
+            if (hit) {
+                m.home_tricode = homeAbbr;
+                m.away_tricode = awayAbbr;
+            }
+        }
+    }
+
     // Filter to this game's teams + time window, THEN drop every
     // source that doesn't publish LIVE in-play lines. The pregame
     // sources (espn_dk, thescore, vegasinsider + all vi_* sub-books,
@@ -258,4 +310,28 @@ function jsonError(status, message) {
         status,
         headers: { "content-type": "application/json" },
     });
+}
+
+// MLB Stats API roster fetch — returns the active roster's full names
+// as a plain string[]. Used by the player-prop cross-reference logic
+// above to figure out which Kalshi season-long player futures should
+// surface on this specific game.
+//
+// Cached 10 min at the edge — rosters don't change mid-game.
+async function fetchRoster(teamId) {
+    if (!teamId) return [];
+    const url = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active`;
+    try {
+        const res = await fetch(url, {
+            headers: { "User-Agent": "DIAMOND-CONTEXT/0.1 (+https://diamond-context.pages.dev)" },
+            cf: { cacheTtl: 600, cacheEverything: true },
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data.roster || [])
+            .map((p) => p.person?.fullName)
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
 }

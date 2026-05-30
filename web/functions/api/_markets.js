@@ -1262,7 +1262,17 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
 
         if (startMs && m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - startMs);
-            if (dt > PER_GAME_WINDOW_MS) continue;
+            if (dt > PER_GAME_WINDOW_MS) {
+                // Player / team props can be season-long futures
+                // (Kalshi: HR leader, RBI leader, Pitcher of the Month).
+                // Their start_time is when the market opened, often
+                // weeks before tonight's first pitch — but they're
+                // still relevant to every game during the open window.
+                // Skip the time-window rejection for those question
+                // types; team-pair match alone is enough.
+                if (m.question_type !== "player_prop"
+                    && m.question_type !== "team_prop") continue;
+            }
         }
         matches.push(m);
     }
