@@ -6538,6 +6538,37 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text-dim);
     font-size: 11px;
 }
+.kalshi-modal .km-steps {
+    margin: 0 0 12px;
+    padding-left: 22px;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.6;
+}
+.kalshi-modal .km-steps li { margin-bottom: 3px; }
+.kalshi-modal .km-steps a {
+    color: var(--accent-action);
+    text-decoration: none;
+}
+.kalshi-modal .km-steps a:hover { text-decoration: underline; }
+.kalshi-modal .km-steps strong { color: var(--text); }
+.kalshi-modal .km-field textarea {
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    line-height: 1.4;
+    resize: vertical;
+    min-height: 100px;
+}
+.kalshi-modal .km-field textarea:focus {
+    outline: none;
+    border-color: var(--accent-action);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
 .kalshi-modal .km-close {
     position: absolute;
     top: 10px;

@@ -1,107 +1,178 @@
-// Kalshi in-site trading client.
+// Kalshi in-site trading client (API-key + RSA signing edition).
+//
+// Kalshi deprecated email/password login on their new API
+// (api.elections.kalshi.com). The ONLY auth path now is RSA-PSS
+// signing of each request:
+//
+//   sig = RSA-PSS-SHA256(timestamp + METHOD + path, private_key)
+//
+// Headers on every authed request:
+//   KALSHI-ACCESS-KEY:       <key_id from the user's Kalshi dashboard>
+//   KALSHI-ACCESS-SIGNATURE: <base64-encoded signature>
+//   KALSHI-ACCESS-TIMESTAMP: <ms timestamp at signing time>
 //
 // What this file owns:
-//   - The "Connect Kalshi" modal (email + password → bearer token)
-//   - localStorage of the token
+//   - "Connect Kalshi" modal that takes a Kalshi key id + private key
+//     (PEM, downloaded from kalshi.com → Profile → API Keys)
+//   - Key id + PEM stored in localStorage; CryptoKey imported into
+//     memory and re-imported on every page load
+//   - WebCrypto RSA-PSS signing of each request, in the BROWSER —
+//     the private key NEVER leaves the user's machine. Our Worker
+//     proxy receives only the signed headers + the request envelope
+//     and forwards to Kalshi as-is.
 //   - GET balance / positions / orders
-//   - POST a new order (with a confirmation modal)
+//   - POST a new order (with confirmation modal)
 //   - Account strip in the page header showing balance + sign-out
-//   - "Buy YES / Buy NO" buttons that get injected next to every
-//     Kalshi market row on the Live View and the per-game Markets tab.
+//   - "Buy YES / Buy NO" inline buttons that get injected next to
+//     every Kalshi market row on the per-game Markets tab
 //
-// The user's password ONLY exists in memory during the /login call.
-// We never persist it. The bearer token that comes back from Kalshi is
-// what we keep in localStorage and re-attach as X-Kalshi-Token on
-// every subsequent API call.
-//
-// Loaded as a plain script, attaches to `window.Kalshi`. Designed so
-// app.js calls `Kalshi.renderBetButtons(market)` inline with each
-// market card and `Kalshi.renderAccountStrip()` somewhere visible.
-//
-// Phase 1 (this commit): connect, balance, positions, single-leg
-// limit orders. Phase 2 will add cancels, market orders, positions
-// PnL.
+// Designed so app.js calls Kalshi.renderBetButtons(market) inline
+// with each market card and Kalshi.renderAccountStrip() somewhere
+// visible.
 
 (function (root) {
 "use strict";
 
-const TOKEN_KEY = "kalshi_token_v1";
-const EMAIL_KEY = "kalshi_email_v1";    // displayed in the account strip
-const BALANCE_REFRESH_MS = 30000;       // re-poll balance every 30s
+const KEY_ID_KEY = "kalshi_key_id_v2";
+const PEM_KEY    = "kalshi_pem_v2";
+const LABEL_KEY  = "kalshi_label_v2";   // user-friendly name shown in strip
+const BALANCE_REFRESH_MS = 30000;
 
 let cachedBalanceCents = null;
 let cachedBalanceFetchedAt = 0;
 let balanceFetchInFlight = null;
+let cachedPrivateKey = null;     // imported CryptoKey, kept in memory
+let cachedPrivateKeyPem = null;  // PEM that produced cachedPrivateKey
 
-// ── Token storage ────────────────────────────────────────────────
+// ── Storage ─────────────────────────────────────────────────────
 
-function getToken() {
-    try { return localStorage.getItem(TOKEN_KEY) || null; }
+function getKeyId() {
+    try { return localStorage.getItem(KEY_ID_KEY) || null; }
     catch { return null; }
 }
-function setToken(token, email) {
-    try {
-        localStorage.setItem(TOKEN_KEY, token);
-        if (email) localStorage.setItem(EMAIL_KEY, email);
-    } catch { /* localStorage disabled — operate in-memory only */ }
+function getPem() {
+    try { return localStorage.getItem(PEM_KEY) || null; }
+    catch { return null; }
 }
-function clearToken() {
+function getLabel() {
+    try { return localStorage.getItem(LABEL_KEY) || ""; }
+    catch { return ""; }
+}
+function setCredentials(keyId, pem, label) {
     try {
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(EMAIL_KEY);
+        localStorage.setItem(KEY_ID_KEY, keyId);
+        localStorage.setItem(PEM_KEY, pem);
+        if (label) localStorage.setItem(LABEL_KEY, label);
+    } catch { /* localStorage disabled */ }
+}
+function clearCredentials() {
+    try {
+        localStorage.removeItem(KEY_ID_KEY);
+        localStorage.removeItem(PEM_KEY);
+        localStorage.removeItem(LABEL_KEY);
     } catch { /* no-op */ }
+    cachedPrivateKey = null;
+    cachedPrivateKeyPem = null;
     cachedBalanceCents = null;
     cachedBalanceFetchedAt = 0;
 }
-function getEmail() {
-    try { return localStorage.getItem(EMAIL_KEY) || ""; }
-    catch { return ""; }
+function isConnected() { return !!(getKeyId() && getPem()); }
+
+
+// ── RSA-PSS signing (WebCrypto) ─────────────────────────────────
+
+// Convert a PEM-encoded RSA private key (PKCS#8) into a non-extractable
+// WebCrypto CryptoKey usable for RSA-PSS-SHA256 signing. The browser
+// holds the key in memory; even our own code can't read it back.
+async function importPrivateKey(pem) {
+    if (cachedPrivateKey && cachedPrivateKeyPem === pem) return cachedPrivateKey;
+    const cleaned = pem
+        .replace(/-----BEGIN [A-Z ]+-----/g, "")
+        .replace(/-----END [A-Z ]+-----/g, "")
+        .replace(/\s+/g, "");
+    if (!cleaned) throw new Error("Empty PEM");
+    const binary = base64ToBytes(cleaned);
+    const key = await crypto.subtle.importKey(
+        "pkcs8",
+        binary.buffer,
+        { name: "RSA-PSS", hash: "SHA-256" },
+        false,          // not extractable
+        ["sign"],
+    );
+    cachedPrivateKey = key;
+    cachedPrivateKeyPem = pem;
+    return key;
 }
-function isConnected() { return !!getToken(); }
+
+function base64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+function bytesToBase64(bytes) {
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+}
+
+// Signs (timestamp + METHOD + path) with the user's private key using
+// RSA-PSS / SHA-256 / salt-length 32 — Kalshi's spec, same as their
+// official Python SDK.
+async function signRequest(privateKey, method, path) {
+    const timestamp = Date.now().toString();
+    const msg = timestamp + String(method).toUpperCase() + path;
+    const data = new TextEncoder().encode(msg);
+    const sigBytes = await crypto.subtle.sign(
+        { name: "RSA-PSS", saltLength: 32 },
+        privateKey,
+        data,
+    );
+    return { timestamp, signature: bytesToBase64(new Uint8Array(sigBytes)) };
+}
 
 
 // ── API wrappers ────────────────────────────────────────────────
 
-async function login(email, password) {
-    const res = await fetch("/api/kalshi/login", {
+// Generic signed call to Kalshi via our /api/kalshi/proxy worker.
+// `path` is the full Kalshi path including /trade-api/v2 prefix.
+async function callKalshi(method, path, body = null) {
+    const keyId = getKeyId();
+    const pem = getPem();
+    if (!keyId || !pem) throw new Error("not connected to Kalshi");
+    const privateKey = await importPrivateKey(pem);
+    // Sign path WITHOUT query string — Kalshi signs the path only.
+    const signPath = path.split("?")[0];
+    const { timestamp, signature } = await signRequest(privateKey, method, signPath);
+
+    const res = await fetch("/api/kalshi/proxy", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.token) {
-        throw new Error(data.error || data.message || `login failed (HTTP ${res.status})`);
-    }
-    setToken(data.token, email);
-    return data;
-}
-
-async function fetchAuthed(path, opts = {}) {
-    const token = getToken();
-    if (!token) throw new Error("not connected to Kalshi");
-    const res = await fetch(path, {
-        method:  opts.method  || "GET",
-        headers: {
-            "content-type":     "application/json",
-            "x-kalshi-token":   token,
-            ...(opts.headers || {}),
-        },
-        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        body: JSON.stringify({
+            method,
+            path,
+            headers: {
+                "KALSHI-ACCESS-KEY":       keyId,
+                "KALSHI-ACCESS-SIGNATURE": signature,
+                "KALSHI-ACCESS-TIMESTAMP": timestamp,
+            },
+            body: body,
+        }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-        // 401 → token expired or revoked. Drop it so the UI re-prompts.
-        if (res.status === 401) clearToken();
-        const msg = data.error || data.message || `kalshi ${path} → HTTP ${res.status}`;
-        throw new Error(msg);
+        // 401/403 → key revoked or signing mismatch. Drop creds so the
+        // UI re-prompts cleanly.
+        if (res.status === 401 || res.status === 403) clearCredentials();
+        const msg = (data && (data.error?.message || data.error || data.message))
+            || `kalshi ${path} → HTTP ${res.status}`;
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
     }
     return data;
 }
 
 async function getBalance() {
     if (!isConnected()) return null;
-    // Single in-flight de-dupe + 30s cache so the UI can call this
-    // freely on every render.
     const now = Date.now();
     if (now - cachedBalanceFetchedAt < BALANCE_REFRESH_MS && cachedBalanceCents != null) {
         return cachedBalanceCents;
@@ -109,7 +180,7 @@ async function getBalance() {
     if (balanceFetchInFlight) return balanceFetchInFlight;
     balanceFetchInFlight = (async () => {
         try {
-            const data = await fetchAuthed("/api/kalshi/balance");
+            const data = await callKalshi("GET", "/trade-api/v2/portfolio/balance");
             cachedBalanceCents = Number(data.balance) || 0;
             cachedBalanceFetchedAt = Date.now();
             return cachedBalanceCents;
@@ -134,12 +205,11 @@ async function placeOrder(opts) {
         count:           opts.count,
         [priceKey]:      opts.price,
     };
-    return fetchAuthed("/api/kalshi/orders", { method: "POST", body: payload });
+    return callKalshi("POST", "/trade-api/v2/portfolio/orders", payload);
 }
 
 function cryptoUuid() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-    // Fallback for very old browsers — should never hit on modern Chrome/Safari.
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
         const r = (Math.random() * 16) | 0;
         return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
@@ -157,23 +227,37 @@ function openConnectModal() {
         <button class="km-close" aria-label="Close">×</button>
         <h2 id="km-title">Connect Kalshi</h2>
         <p class="km-sub">
-          Sign in to your <a href="https://kalshi.com" target="_blank" rel="noopener">Kalshi</a>
-          account to place bets directly from this site. Kalshi is a
-          CFTC-regulated US exchange and is available in New York.
+          Place bets directly from this site via your
+          <a href="https://kalshi.com" target="_blank" rel="noopener">Kalshi</a>
+          account. Kalshi is a CFTC-regulated US exchange, available in
+          New York.
         </p>
+        <ol class="km-steps">
+          <li>Go to <a href="https://kalshi.com/account/profile" target="_blank" rel="noopener">kalshi.com / Profile / API Keys</a>.</li>
+          <li>Click <strong>Create new API key</strong>. Save the key ID (a UUID) and download the private key file (.pem).</li>
+          <li>Paste both below.</li>
+        </ol>
         <p class="km-sub km-sub-trust">
-          Your password is forwarded to Kalshi over HTTPS once and
-          discarded. Only the resulting bearer token is stored — in
-          your browser's localStorage, never on our servers.
+          Your private key stays in your browser — it's imported as a
+          non-extractable WebCrypto key and used to RSA-sign each
+          request locally. Our server never sees the key, only the
+          per-request signature.
         </p>
         <form class="km-form">
           <label class="km-field">
-            <span>Email</span>
-            <input type="email" name="email" autocomplete="email" required>
+            <span>Key ID</span>
+            <input type="text" name="key_id" autocomplete="off"
+                   placeholder="e.g. 6f7e8c9d-1a2b-3c4d-..." required>
           </label>
           <label class="km-field">
-            <span>Password</span>
-            <input type="password" name="password" autocomplete="current-password" required>
+            <span>Private key (paste the .pem file contents)</span>
+            <textarea name="pem" rows="7" required spellcheck="false"
+                      placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;MIIEowIBAAKCAQ...&#10;-----END RSA PRIVATE KEY-----"></textarea>
+          </label>
+          <label class="km-field km-field-inline">
+            <span>Label (optional, shown in the account strip)</span>
+            <input type="text" name="label" autocomplete="off"
+                   placeholder="e.g. main account">
           </label>
           <div class="km-error" hidden></div>
           <div class="km-actions">
@@ -195,42 +279,57 @@ function openConnectModal() {
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
         const data = new FormData(form);
-        const email = String(data.get("email") || "").trim();
-        const password = String(data.get("password") || "");
+        const keyId = String(data.get("key_id") || "").trim();
+        const pem = String(data.get("pem") || "").trim();
+        const label = String(data.get("label") || "").trim();
         errEl.hidden = true;
         submit.disabled = true;
-        submit.textContent = "Connecting…";
+        submit.textContent = "Validating…";
         try {
-            await login(email, password);
+            if (!keyId) throw new Error("Key ID required");
+            if (!/BEGIN[A-Z ]+PRIVATE KEY/.test(pem)) {
+                throw new Error("Private key must be PEM format (starts with -----BEGIN ... PRIVATE KEY-----)");
+            }
+            // Test by trying to import the key + fetch balance.
+            // Stash creds first so callKalshi() can use them.
+            setCredentials(keyId, pem, label);
+            try {
+                await importPrivateKey(pem);
+            } catch (e) {
+                clearCredentials();
+                throw new Error("Could not parse private key: " + (e.message || e));
+            }
+            // Real round-trip test.
+            try {
+                await callKalshi("GET", "/trade-api/v2/portfolio/balance");
+            } catch (e) {
+                clearCredentials();
+                throw e;
+            }
             close();
             renderAllAccountStrips();
             renderAllBetButtons();
             toast("Connected to Kalshi", "ok");
         } catch (err) {
             errEl.hidden = false;
-            errEl.textContent = err.message || "Login failed";
+            errEl.textContent = err.message || "Connection failed";
             submit.disabled = false;
             submit.textContent = "Connect";
         }
     });
 
-    // Autofocus email
-    setTimeout(() => overlay.querySelector('input[name="email"]')?.focus(), 50);
+    setTimeout(() => overlay.querySelector('input[name="key_id"]')?.focus(), 50);
 }
 
 
-// ── Bet modal ───────────────────────────────────────────────────
+// ── Bet modal (unchanged from prior version) ────────────────────
 
-// market = { id, source: "kalshi", title, outcomes: [...], raw_market_id, url }
-// outcome = { id, name, probability, ... }
 function openBetModal(market, outcome) {
     if (!isConnected()) {
         openConnectModal();
         return;
     }
     const ticker = market.raw_market_id || market.id?.split(":").pop() || "";
-    // outcome.name on a Kalshi moneyline is the team tricode they YES on.
-    // The actual side (YES/NO) is encoded in the outcome.id suffix.
     const sideMatch = String(outcome.id || "").match(/:(yes|no)$/i);
     const side = (sideMatch ? sideMatch[1] : "yes").toLowerCase();
     const probPercent = outcome.probability != null
@@ -298,7 +397,6 @@ function openBetModal(market, outcome) {
             const prc = parseInt(prcIn.value, 10);
             const res = await placeOrder({ ticker, side, count: cnt, price: prc });
             close();
-            // Invalidate balance cache — order may have moved funds.
             cachedBalanceCents = null;
             cachedBalanceFetchedAt = 0;
             renderAllAccountStrips();
@@ -318,10 +416,6 @@ function openBetModal(market, outcome) {
 
 // ── Account strip ───────────────────────────────────────────────
 
-// Returns the HTML string for an account strip. Drop it inline anywhere
-// in the page — it renders one of two states:
-//   not-connected: "Connect Kalshi" CTA
-//   connected:     balance + email + sign out
 function renderAccountStrip() {
     if (!isConnected()) {
         return `
@@ -332,12 +426,12 @@ function renderAccountStrip() {
     }
     const balCents = cachedBalanceCents;
     const balText = balCents != null ? `$${(balCents / 100).toFixed(2)}` : "…";
-    const email = getEmail();
+    const label = getLabel();
     return `
       <div class="kalshi-strip kalshi-strip-connected">
         <span class="ks-label">Kalshi</span>
         <span class="ks-balance">Balance <strong>${balText}</strong></span>
-        ${email ? `<span class="ks-email">${escapeHtml(email)}</span>` : ""}
+        ${label ? `<span class="ks-email">${escapeHtml(label)}</span>` : ""}
         <button class="ks-signout" data-kalshi-signout>Sign out</button>
       </div>
     `;
@@ -349,12 +443,8 @@ function renderAllAccountStrips() {
     });
 }
 
-// Re-render every bet-button slot on the page. Called after connect /
-// sign-out so the "Bet" buttons appear or disappear in lockstep.
 function renderAllBetButtons() {
     document.querySelectorAll("[data-kalshi-bet-slot]").forEach((slot) => {
-        // The market + outcome are encoded in the slot's data attrs so
-        // the render call doesn't need the original market object.
         const enabled = isConnected();
         const side = slot.getAttribute("data-side") || "yes";
         const team = slot.getAttribute("data-team") || "";
@@ -368,10 +458,6 @@ function renderAllBetButtons() {
     });
 }
 
-// Returns inline HTML for a Buy YES + Buy NO pair to render next to a
-// Kalshi moneyline / spread / total row. The outcomes are passed in as
-// JSON-stringified data attrs so the click handler can reconstruct the
-// market context without us holding refs to every market.
 function renderBetButtons(market) {
     if (market.source !== "kalshi") return "";
     const outs = (market.outcomes || []).slice(0, 2);
@@ -401,8 +487,6 @@ function renderBetButtons(market) {
     `;
 }
 
-// Reconstruct the minimum market + outcome shape from a clicked button's
-// data attrs (avoids storing global market refs).
 function marketFromButton(btn) {
     return {
         id:             btn.getAttribute("data-market-id") || "",
@@ -437,7 +521,7 @@ function attachDelegates() {
         const signoutBtn = t.closest("[data-kalshi-signout]");
         if (signoutBtn) {
             e.preventDefault();
-            clearToken();
+            clearCredentials();
             renderAllAccountStrips();
             renderAllBetButtons();
             toast("Signed out of Kalshi", "ok");
@@ -452,7 +536,8 @@ function attachDelegates() {
     });
 }
 
-// ── Tiny toast notification (slide-in, auto-dismiss) ────────────
+
+// ── Tiny toast notification ─────────────────────────────────────
 
 function toast(msg, kind = "ok") {
     let host = document.querySelector(".ks-toasts");
@@ -469,11 +554,11 @@ function toast(msg, kind = "ok") {
     setTimeout(() => {
         el.classList.remove("ks-toast-show");
         setTimeout(() => el.remove(), 220);
-    }, 3600);
+    }, 4200);
 }
 
 
-// ── Escape helpers (defensive XSS protection in raw HTML strings) ─
+// ── Escape helpers ──────────────────────────────────────────────
 
 function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -486,12 +571,8 @@ function escapeHtmlAttr(s) { return escapeHtml(s); }
 // ── Bootstrap ───────────────────────────────────────────────────
 
 attachDelegates();
-// Pre-warm balance on page load when connected so the first render
-// of the account strip shows a real number instead of "…".
 if (isConnected()) {
     getBalance().then(renderAllAccountStrips);
-    // Then re-poll every 30s so the displayed balance stays current
-    // after fills.
     setInterval(() => getBalance().then(renderAllAccountStrips), BALANCE_REFRESH_MS);
 }
 
@@ -500,7 +581,7 @@ if (isConnected()) {
 
 root.Kalshi = {
     isConnected,
-    getEmail,
+    getLabel,
     getBalance,
     placeOrder,
     openConnectModal,
