@@ -4532,24 +4532,9 @@ async function hydrateMarkets(gameId) {
         const pane = document.getElementById("markets-pane");
         if (!pane) return;
         const html = renderMarkets(data);
-        // Don't blow the pane away while the user is mid-edit in a
-        // stake input — innerHTML destroys the focused element, drops
-        // the cursor, and resets the value (even with our save/restore
-        // pair the cursor jump alone makes it impossible to type).
-        // The orderbook hydrator below still updates prices in-place,
-        // so the "win" caption stays fresh while the user types. Next
-        // poll after blur will pick up any new data.
-        const isTypingStake = document.activeElement?.matches?.("[data-bet-stake]");
-        if (!isTypingStake) {
-            pane.innerHTML = html;
-            cachedMarketsHTML = html;
-            cachedMarketsPk = gameId;
-            // Restore each card's typed stake BEFORE the orderbook hydrator
-            // runs — the hydrator reads the input value to recompute payouts,
-            // so the saved stake has to be in place first or it'll quote
-            // against $0.50 by mistake on the first refresh.
-            restoreBetStakes();
-        }
+        pane.innerHTML = html;
+        cachedMarketsHTML = html;
+        cachedMarketsPk = gameId;
         // Kalshi's /markets endpoint returns null bids/asks on most
         // MLB markets but /markets/{ticker}/orderbook has real
         // liquidity. Hydrate the Kalshi cards in the "Every book we
@@ -5640,51 +5625,10 @@ function renderPropPane(market) {
     `;
 }
 
-// ── Per-card bet-stake persistence ─────────────────────────────────
-//
-// Without this, the 8s markets re-render (and every chip click
-// re-render) blows the user's typed stake back to the $0.50
-// default. We save the stake on input under the parent card's
-// data-prop-group-key (same key that already persists chip picks)
-// and restore it after each render. Synthetic 'input' event after
-// restore re-runs kalshi.js's recompute so the payouts reflect the
-// restored stake.
-//
-// In-memory only — no localStorage. Same lifecycle as the chip pick.
-
-document.addEventListener("input", (e) => {
-    const input = e.target.closest("[data-bet-stake]");
-    if (!input) return;
-    // The bet ROW carries data-stake-key (set by renderBetButtons).
-    // Saving at the row level works for every market shape — condensed
-    // prop cards AND singleton/team-prop rows that don't have a
-    // .condensed-prop wrapper.
-    const row = input.closest("[data-stake-key]");
-    if (!row) return;
-    const key = row.getAttribute("data-stake-key");
-    if (!key) return;
-    window._propStakes = window._propStakes || {};
-    window._propStakes[key] = input.value;
-});
-
-function restoreBetStakes() {
-    if (typeof document === "undefined" || !window._propStakes) return;
-    const inputs = document.querySelectorAll("[data-bet-stake]");
-    inputs.forEach((input) => {
-        const row = input.closest("[data-stake-key]");
-        if (!row) return;
-        const key = row.getAttribute("data-stake-key");
-        if (!key) return;
-        const saved = window._propStakes[key];
-        if (saved == null || saved === "") return;
-        if (input.value === saved) return;
-        input.value = saved;
-        // Bubbles to the kalshi.js stake-input listener so the payout
-        // captions on this row recompute against the restored stake +
-        // whatever price was set during render.
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-}
+// (Per-card stake persistence was removed. The stake input is now a
+// single global widget pinned to document.body via kalshi.js's
+// ensureGlobalStakeWidget(). Markets-pane re-renders can no longer
+// touch it because it's not inside the pane.)
 
 // ── Model-props sidecar (lives next to the live Kalshi quote) ──────
 //
@@ -5888,9 +5832,6 @@ if (typeof window !== "undefined") {
         const pane = card.querySelector("[data-prop-pane]");
         if (pane) {
             pane.innerHTML = renderPropPane(markets[idx]);
-            // Restore the saved stake on this card's fresh bet row
-            // before hydration recalculates payouts.
-            restoreBetStakes();
             if (typeof hydrateKalshiBookCells === "function") {
                 hydrateKalshiBookCells();
             }

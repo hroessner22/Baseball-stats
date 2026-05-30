@@ -935,68 +935,34 @@ function renderAllBetButtons() {
 function renderBetButtons(market) {
     if (market.source !== "kalshi") return "";
     const outs = (market.outcomes || []).slice(0, 2);
-    // Detect "two outcomes on the SAME Kalshi ticker" (YES + NO of
-    // one binary market) vs "two separate Kalshi tickers" (moneyline
-    // where each team is its own market). Drives button label format
-    // below — see comment inside the buttons map.
+    // Stake input is GLOBAL — it lives in a floating widget pinned to
+    // document.body via ensureGlobalStakeWidget(), so neither the 8s
+    // markets-pane re-render nor the 5s game-view re-render can wipe
+    // it out from under the user's typing. Bet cards just show two
+    // Buy buttons with a live "to win" caption computed against that
+    // single global stake. Read it once per render; the widget's
+    // input listener calls refreshAllBetPayouts() to push fresh
+    // captions into every visible button when the value changes.
+    const stake = getGlobalStake();
     const tickerBases = outs.map((o) => {
         const m = String(o.id || "").match(/^(.*):(yes|no)$/i);
         return m ? m[1] : (market.raw_market_id || "");
     });
     const sameTickerBinary = outs.length === 2 && tickerBases[0] && tickerBases[0] === tickerBases[1];
-    // Stable per-(player+stat) stake key so the user's typed stake
-    // survives every re-render path: 8s markets poll, chip click in
-    // a condensed prop card, switching stat-type sub-tab. We can't
-    // rely on the parent .condensed-prop[data-prop-group-key]
-    // because singletons + team props don't have that wrapper — they
-    // go through plain renderMarketRow. So the row carries its own
-    // key, derived here from the market title with a fallback to the
-    // full Kalshi ticker for non-player markets.
-    const stakeKey = computeStakeKey(market);
-    // Default stake $0.50 — matches the legacy "Buy YES · 50¢"
-    // shorthand the buttons used to show. The saved value, if any,
-    // gets layered on top in restoreBetStakes() right after innerHTML.
-    const defaultStake = 0.50;
-    const savedStake = (typeof window !== "undefined" && window._propStakes && stakeKey)
-        ? window._propStakes[stakeKey] : null;
-    const initialStake = (savedStake != null && savedStake !== "") ? savedStake : defaultStake.toFixed(2);
     return `
-      <div class="ks-bet-row" data-bet-row="1" data-stake-key="${escapeHtmlAttr(stakeKey)}">
-        <div class="ks-bet-stake">
-          <label class="ks-bet-stake-label">Stake</label>
-          <span class="ks-bet-stake-prefix">$</span>
-          <input type="number" class="ks-bet-stake-input"
-                 value="${escapeHtmlAttr(initialStake)}" min="0.01" step="0.01"
-                 data-bet-stake="1" />
-        </div>
+      <div class="ks-bet-row" data-bet-row="1">
         <div class="ks-bet-buttons">
           ${outs.map((o) => {
               const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
               const side = (idMatch ? idMatch[2] : "yes").toLowerCase();
-              // Per-outcome full Kalshi ticker (KXMLBGAME-...-{TEAM}),
-              // NOT the folded shared key — Kalshi rejects the latter
-              // with "market not found".
               const fullTicker = idMatch ? idMatch[1] : (market.raw_market_id || "");
-              // YES price in cents from probability (if /markets gave us
-              // one). Kalshi player props ship null and the orderbook
-              // hydrator fills the real value in afterward via
-              // updateBetButtonsForTicker(). priceCents on the button
-              // reflects THIS side: YES → yesCents, NO → 100 - yesCents.
               const yesCents = o.probability != null
                   ? Math.max(1, Math.min(99, Math.round(o.probability * 100)))
                   : null;
               const priceCents = yesCents == null
                   ? null
                   : (side === "yes" ? yesCents : 100 - yesCents);
-              const payoutText = formatPayout(defaultStake, priceCents);
-              // Button label needs context when the two outcomes are
-              // SEPARATE Kalshi markets (moneyline: KXMLBGAME-...-TEX
-              // YES vs KXMLBGAME-...-KC YES — both 'yes' side, only
-              // the team name differentiates them). For binary
-              // markets where outcomes are YES + NO on the SAME
-              // ticker (player props), keep the short YES/NO label
-              // since the card header already carries the player +
-              // threshold context.
+              const payoutText = formatPayout(stake, priceCents);
               const action = sameTickerBinary
                   ? `Buy ${side.toUpperCase()}`
                   : `Buy ${o.name || side.toUpperCase()}`;
@@ -1019,6 +985,83 @@ function renderBetButtons(market) {
         </div>
       </div>
     `;
+}
+
+// ── Global stake widget ────────────────────────────────────────────
+//
+// One stake input for every Kalshi bet, lives in document.body. The
+// markets pane innerHTML wipes (every 8s) and the game-view innerHTML
+// wipes (every 5s) can never see this element, so the user's typed
+// value + cursor stay put across both. Position is sticky-top-right
+// of the viewport; only visible when at least one Buy button is on
+// screen. Value persists across hard reloads via localStorage.
+
+const GLOBAL_STAKE_LS_KEY = "diamond_context_global_bet_stake";
+
+function getGlobalStake() {
+    if (typeof window === "undefined") return 0.50;
+    if (window._globalBetStake != null) return window._globalBetStake;
+    try {
+        const fromLS = parseFloat(localStorage.getItem(GLOBAL_STAKE_LS_KEY) || "");
+        if (Number.isFinite(fromLS) && fromLS > 0) {
+            window._globalBetStake = fromLS;
+            return fromLS;
+        }
+    } catch { /* localStorage blocked */ }
+    window._globalBetStake = 0.50;
+    return 0.50;
+}
+
+function setGlobalStake(val) {
+    const num = parseFloat(val);
+    if (!Number.isFinite(num) || num <= 0) return;
+    window._globalBetStake = num;
+    try { localStorage.setItem(GLOBAL_STAKE_LS_KEY, String(num)); } catch {}
+    refreshAllBetPayouts();
+}
+
+function ensureGlobalStakeWidget() {
+    if (typeof document === "undefined") return;
+    if (document.getElementById("global-stake-widget")) return;
+    const widget = document.createElement("div");
+    widget.id = "global-stake-widget";
+    widget.className = "global-stake-widget";
+    widget.innerHTML = `
+      <span class="gsw-label">Bet stake</span>
+      <span class="gsw-prefix">$</span>
+      <input type="number" id="global-stake-input"
+             class="gsw-input" min="0.01" step="0.01"
+             value="${getGlobalStake().toFixed(2)}" />
+      <span class="gsw-help">Applied to every Buy button</span>
+    `;
+    document.body.appendChild(widget);
+    const input = widget.querySelector("#global-stake-input");
+    input.addEventListener("input", () => setGlobalStake(input.value));
+    syncGlobalStakeWidgetVisibility();
+}
+
+// Show only when the markets pane is live in the DOM. The renderGame
+// pass blows the markets pane in and out as the user clicks the mode
+// toggle — observe the body for that mutation and toggle visibility.
+function syncGlobalStakeWidgetVisibility() {
+    if (typeof document === "undefined") return;
+    const widget = document.getElementById("global-stake-widget");
+    if (!widget) return;
+    const marketsOpen = !!document.getElementById("markets-pane");
+    widget.classList.toggle("is-visible", marketsOpen);
+}
+
+// Recompute every visible Buy button's payout against the current
+// global stake. Called when the stake input changes — orderbook
+// hydration already updates payouts when prices move.
+function refreshAllBetPayouts() {
+    if (typeof document === "undefined") return;
+    const stake = getGlobalStake();
+    document.querySelectorAll(".ks-bet-btn").forEach((btn) => {
+        const priceCents = parseInt(btn.getAttribute("data-price-cents") || "", 10);
+        const slot = btn.querySelector("[data-bet-payout]");
+        if (slot) slot.textContent = formatPayout(stake, Number.isFinite(priceCents) ? priceCents : null);
+    });
 }
 
 // Stable key for persisting the user's typed stake. For player props
@@ -1049,36 +1092,20 @@ function formatPayout(stake, priceCents) {
 
 // Hydrator hook: after the orderbook returns a live YES quote, find
 // every Buy-button on the page that shares this ticker and refresh
-// its data-price-cents + payout display. Called from app.js's
-// hydrateKalshiBookCells. Idempotent.
+// its data-price-cents + payout display against the GLOBAL stake.
+// Called from app.js's hydrateKalshiBookCells. Idempotent.
 function updateBetButtonsForTicker(ticker, yesProb) {
     if (!ticker || typeof document === "undefined") return;
     if (!Number.isFinite(yesProb) || yesProb <= 0 || yesProb >= 1) return;
     const yesCents = Math.max(1, Math.min(99, Math.round(yesProb * 100)));
+    const stake = getGlobalStake();
     const sel = `.ks-bet-btn[data-ticker="${cssEscape(ticker)}"]`;
     document.querySelectorAll(sel).forEach((btn) => {
         const side = btn.getAttribute("data-side");
         const priceCents = side === "yes" ? yesCents : 100 - yesCents;
         btn.setAttribute("data-price-cents", String(priceCents));
-        const row = btn.closest("[data-bet-row]");
-        const stakeInput = row?.querySelector("[data-bet-stake]");
-        const stake = parseFloat(stakeInput?.value || "0.50");
         const slot = btn.querySelector("[data-bet-payout]");
         if (slot) slot.textContent = formatPayout(stake, priceCents);
-    });
-}
-
-// Recompute payouts within ONE bet row — used when the user edits
-// the stake input. Reads each button's last-known price and rewrites
-// the payout caption.
-function recomputeRowPayouts(row) {
-    if (!row) return;
-    const stakeInput = row.querySelector("[data-bet-stake]");
-    const stake = parseFloat(stakeInput?.value || "0.50");
-    row.querySelectorAll(".ks-bet-btn").forEach((btn) => {
-        const priceCents = parseInt(btn.getAttribute("data-price-cents") || "", 10);
-        const slot = btn.querySelector("[data-bet-payout]");
-        if (slot) slot.textContent = formatPayout(stake, Number.isFinite(priceCents) ? priceCents : null);
     });
 }
 
@@ -1130,12 +1157,10 @@ function attachDelegates() {
         const betBtn = t.closest("[data-kalshi-bet]");
         if (betBtn) {
             e.preventDefault();
-            // Pull the stake the user typed in the inline calculator
-            // so the modal opens pre-filled with the right contract
-            // count instead of the bare default (1).
-            const row = betBtn.closest("[data-bet-row]");
-            const stakeInput = row?.querySelector("[data-bet-stake]");
-            const stake = parseFloat(stakeInput?.value || "");
+            // Seed the modal with the global stake so the Contracts
+            // field opens pre-filled with whatever count the user's
+            // current stake actually buys at this side's price.
+            const stake = getGlobalStake();
             const priceCents = parseInt(betBtn.getAttribute("data-price-cents") || "", 10);
             const seed = (Number.isFinite(stake) && Number.isFinite(priceCents) && priceCents > 0)
                 ? { stake_dollars: stake, price_cents: priceCents }
@@ -1189,16 +1214,6 @@ function attachDelegates() {
         }
     });
 
-    // Stake-input live recompute. Listening at document level so the
-    // markets pane's 8s re-render doesn't drop the handler — and so
-    // the input works in every condensed prop card without per-card
-    // wiring at render time.
-    document.addEventListener("input", (e) => {
-        const stakeInput = e.target.closest("[data-bet-stake]");
-        if (!stakeInput) return;
-        const row = stakeInput.closest("[data-bet-row]");
-        if (row) recomputeRowPayouts(row);
-    });
 }
 
 
@@ -1236,6 +1251,24 @@ function escapeHtmlAttr(s) { return escapeHtml(s); }
 // ── Bootstrap ───────────────────────────────────────────────────
 
 attachDelegates();
+
+// Global stake widget: bootstrap once on load, then keep its
+// visibility in sync as the user toggles between Live View / Markets.
+// MutationObserver watches the body for #markets-pane coming and going
+// — far simpler than threading visibility through every renderGame call.
+if (typeof document !== "undefined") {
+    const bootstrap = () => {
+        ensureGlobalStakeWidget();
+        syncGlobalStakeWidgetVisibility();
+    };
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bootstrap);
+    } else {
+        bootstrap();
+    }
+    const visObserver = new MutationObserver(syncGlobalStakeWidgetVisibility);
+    visObserver.observe(document.body, { childList: true, subtree: true });
+}
 
 // Initial pull when the page loads while already connected.
 if (isConnected()) {
@@ -1285,6 +1318,12 @@ root.Kalshi = {
     // orderbook quote lands — refreshes the "to win" payout display
     // on each Buy button without re-rendering the whole pane.
     updateBetButtonsForTicker,
+    // Global stake helpers — read/write the single body-level input
+    // value. ensureGlobalStakeWidget() can be called defensively from
+    // anywhere; the bootstrap below already runs on script load.
+    getGlobalStake,
+    setGlobalStake,
+    ensureGlobalStakeWidget,
     toast,
 };
 
