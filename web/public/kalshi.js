@@ -935,21 +935,29 @@ function renderAllBetButtons() {
 function renderBetButtons(market) {
     if (market.source !== "kalshi") return "";
     const outs = (market.outcomes || []).slice(0, 2);
-    // One bet row per market: shared stake input on top, two Buy
-    // buttons below (YES + NO). Each button shows the "to win"
-    // payout — fractional dollars assuming the user's exact stake
-    // (the bet modal handles whole-contract rounding at submit).
+    // Stable per-(player+stat) stake key so the user's typed stake
+    // survives every re-render path: 8s markets poll, chip click in
+    // a condensed prop card, switching stat-type sub-tab. We can't
+    // rely on the parent .condensed-prop[data-prop-group-key]
+    // because singletons + team props don't have that wrapper — they
+    // go through plain renderMarketRow. So the row carries its own
+    // key, derived here from the market title with a fallback to the
+    // full Kalshi ticker for non-player markets.
+    const stakeKey = computeStakeKey(market);
     // Default stake $0.50 — matches the legacy "Buy YES · 50¢"
-    // shorthand the buttons used to show. Stored on the row so the
-    // orderbook hydrator can find it later for live recomputation.
+    // shorthand the buttons used to show. The saved value, if any,
+    // gets layered on top in restoreBetStakes() right after innerHTML.
     const defaultStake = 0.50;
+    const savedStake = (typeof window !== "undefined" && window._propStakes && stakeKey)
+        ? window._propStakes[stakeKey] : null;
+    const initialStake = (savedStake != null && savedStake !== "") ? savedStake : defaultStake.toFixed(2);
     return `
-      <div class="ks-bet-row" data-bet-row="1">
+      <div class="ks-bet-row" data-bet-row="1" data-stake-key="${escapeHtmlAttr(stakeKey)}">
         <div class="ks-bet-stake">
           <label class="ks-bet-stake-label">Stake</label>
           <span class="ks-bet-stake-prefix">$</span>
           <input type="number" class="ks-bet-stake-input"
-                 value="${defaultStake.toFixed(2)}" min="0.01" step="0.01"
+                 value="${escapeHtmlAttr(initialStake)}" min="0.01" step="0.01"
                  data-bet-stake="1" />
         </div>
         <div class="ks-bet-buttons">
@@ -991,6 +999,19 @@ function renderBetButtons(market) {
         </div>
       </div>
     `;
+}
+
+// Stable key for persisting the user's typed stake. For player props
+// the key is "player|stat" (e.g. "vinnie pasquantino|home runs") so
+// the same stake survives chip switches to different thresholds. For
+// any other market (team props, game lines), fall back to the full
+// Kalshi ticker — per-market stable, no cross-threshold carryover
+// since those aren't laddered the same way.
+function computeStakeKey(market) {
+    const t = (market.title || "").trim();
+    const m = t.match(/^(.+?):\s*\d+(?:\.\d+)?\+?\s+(.+?)\??$/);
+    if (m) return `kalshi|player|${m[1].toLowerCase()}|${m[2].toLowerCase()}`;
+    return `kalshi|raw|${market.raw_market_id || market.id || t}`;
 }
 
 // Format the "to win $X.XX" caption inside a Buy button. Shows "—"

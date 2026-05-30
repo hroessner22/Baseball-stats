@@ -5645,9 +5645,13 @@ function renderPropPane(market) {
 document.addEventListener("input", (e) => {
     const input = e.target.closest("[data-bet-stake]");
     if (!input) return;
-    const card = input.closest("[data-prop-group-key]");
-    if (!card) return;
-    const key = card.getAttribute("data-prop-group-key");
+    // The bet ROW carries data-stake-key (set by renderBetButtons).
+    // Saving at the row level works for every market shape — condensed
+    // prop cards AND singleton/team-prop rows that don't have a
+    // .condensed-prop wrapper.
+    const row = input.closest("[data-stake-key]");
+    if (!row) return;
+    const key = row.getAttribute("data-stake-key");
     if (!key) return;
     window._propStakes = window._propStakes || {};
     window._propStakes[key] = input.value;
@@ -5657,9 +5661,9 @@ function restoreBetStakes() {
     if (typeof document === "undefined" || !window._propStakes) return;
     const inputs = document.querySelectorAll("[data-bet-stake]");
     inputs.forEach((input) => {
-        const card = input.closest("[data-prop-group-key]");
-        if (!card) return;
-        const key = card.getAttribute("data-prop-group-key");
+        const row = input.closest("[data-stake-key]");
+        if (!row) return;
+        const key = row.getAttribute("data-stake-key");
         if (!key) return;
         const saved = window._propStakes[key];
         if (saved == null || saved === "") return;
