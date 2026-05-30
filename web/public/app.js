@@ -5547,19 +5547,35 @@ function groupMarketsByQuestion(markets) {
 // keyed by card id so the click handler can re-render the active
 // pane without re-fetching anything.
 let _propCardSeq = 0;
+// User-picked threshold per condensed prop card, keyed by the stable
+// (source|kind|player|stat) group key — survives the 8s markets-pane
+// re-render so the chip the user clicked doesn't snap back to the
+// default every poll. Cleared only on hard reload (in-memory only,
+// no localStorage — picks are session state, not preferences).
 function renderCondensedPropCard(markets) {
     markets = markets.slice().sort((a, b) => getPropThreshold(a) - getPropThreshold(b));
     const cardId = `pc${++_propCardSeq}`;
+    const groupKey = getPropGroupKey(markets[0]) || "";
     if (typeof window !== "undefined") {
         window._propCards = window._propCards || {};
         window._propCards[cardId] = markets;
+        window._propPicks = window._propPicks || {};
     }
     // Default to the LEAST threshold (smallest "N+"). On HR markets every
     // 2+ line is a dead +9900 / 1% moonshot — useless as the steady-state
     // view. The 1+ line is the one whose odds sit nearest +100 (real bets
     // happen on it). User asked: "always set the steady state at the least
     // number of something (the odds closest to +100)".
-    const defaultIdx = 0;
+    let defaultIdx = 0;
+    // If the user already picked a threshold on this player+stat this
+    // session, restore that pick across the auto-refresh. The pick
+    // saver is the chip click handler; it stores under the same key.
+    const savedThr = (typeof window !== "undefined" && groupKey)
+        ? window._propPicks[groupKey] : null;
+    if (savedThr != null) {
+        const matchIdx = markets.findIndex((m) => getPropThreshold(m) === savedThr);
+        if (matchIdx >= 0) defaultIdx = matchIdx;
+    }
     const label = getPropGroupLabel(markets[0]);
     const src = markets[0].source || "?";
 
@@ -5573,7 +5589,8 @@ function renderCondensedPropCard(markets) {
 
     return `
       <article class="market-row condensed-prop" data-source="${src}"
-               data-prop-card-id="${cardId}">
+               data-prop-card-id="${cardId}"
+               data-prop-group-key="${escapeHTMLAttr(groupKey)}">
         <header class="market-row-head">
           <span class="market-source market-source-${src}">${src}</span>
           <span class="market-title">${escapeHTML(label)}</span>
@@ -5789,6 +5806,15 @@ if (typeof window !== "undefined") {
         e.preventDefault();
         const card = chip.closest(`[data-prop-card-id="${cardId}"]`);
         if (!card) return;
+        // Persist the user's pick under the stable group key so the
+        // next 8s markets re-render restores it (otherwise renderer
+        // resets to defaultIdx=0 every poll and the user loses their
+        // selection). Cleared only on hard reload.
+        const groupKey = card.getAttribute("data-prop-group-key");
+        if (groupKey) {
+            window._propPicks = window._propPicks || {};
+            window._propPicks[groupKey] = getPropThreshold(markets[idx]);
+        }
         card.querySelectorAll(".prop-chip").forEach((c) =>
             c.classList.toggle("active", c === chip));
         const pane = card.querySelector("[data-prop-pane]");
