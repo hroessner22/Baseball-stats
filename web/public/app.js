@@ -847,14 +847,42 @@ function showMarketsDashboard() {
     marketsDashboardTimer = setInterval(refreshMarketsDashboard, MARKETS_REFRESH_MS);
 }
 
+// /api/markets is flaky on Cloudflare Pages Functions — empirically
+// ~15% of requests 503 because the fan-out to 11 upstream adapters
+// occasionally exceeds the CPU/memory headroom on certain edge nodes.
+// Backend is fine (200 on retry). Wrap the fetch in a small retry so
+// one transient 503 doesn't blow the dashboard.
+async function fetchWithRetry(url, maxRetries = 3, baseDelayMs = 500) {
+    let lastErr;
+    for (let i = 0; i <= maxRetries; i++) {
+        try {
+            const res = await fetch(url);
+            // 5xx is the transient case — retry. 4xx is a real client
+            // error — surface immediately.
+            if (res.status >= 500 && res.status < 600 && i < maxRetries) {
+                await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+                continue;
+            }
+            return res;
+        } catch (e) {
+            lastErr = e;
+            if (i < maxRetries) {
+                await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+                continue;
+            }
+        }
+    }
+    throw lastErr || new Error("network failed after retries");
+}
+
 async function refreshMarketsDashboard() {
     try {
         // Two parallel fetches: today's game-day markets AND the day's
         // schedule. The schedule gives us the game_pk → team-pair lookup
         // so each dashboard card can link directly into its live tracker.
         const [marketsRes, gamesRes] = await Promise.all([
-            fetch(`/api/markets?scope=game_day`),
-            fetch(`/api/games/today`),
+            fetchWithRetry(`/api/markets?scope=game_day`),
+            fetchWithRetry(`/api/games/today`),
         ]);
         if (!marketsRes.ok) throw new Error(`HTTP ${marketsRes.status}`);
         const data = await marketsRes.json();
@@ -869,6 +897,8 @@ async function refreshMarketsDashboard() {
         data._game_lookup = gameLookup;
         marketsView.innerHTML = renderMarketsDashboard(data);
     } catch (e) {
+        // Keep showing the prior render if we have one — only render
+        // the empty / error state when there's nothing on screen.
         if (!marketsView.querySelector(".markets-dashboard")) {
             renderEmpty(marketsView, "Couldn't load markets.", `${e.message || e}`);
         }
@@ -3831,7 +3861,7 @@ function renderPitchingTable(side, d) {
 
 async function hydrateMarkets(gameId) {
     try {
-        const res = await fetch(`/api/game/${gameId}/markets`);
+        const res = await fetchWithRetry(`/api/game/${gameId}/markets`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
@@ -3864,7 +3894,7 @@ async function hydrateMarkets(gameId) {
 // shared response with the Markets tab when both are open.
 async function hydrateMarketConsensusPill(gameId) {
     try {
-        const res = await fetch(`/api/game/${gameId}/markets`);
+        const res = await fetchWithRetry(`/api/game/${gameId}/markets`);
         if (!res.ok) return;
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
