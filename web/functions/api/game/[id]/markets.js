@@ -53,8 +53,6 @@ export async function onRequest(context) {
 
     const homeAbbr = game?.teams?.home?.abbr || game?.teams?.home?.name;
     const awayAbbr = game?.teams?.away?.abbr || game?.teams?.away?.name;
-    const homeId   = game?.teams?.home?.id;
-    const awayId   = game?.teams?.away?.id;
     if (!homeAbbr || !awayAbbr) {
         return jsonError(400, "couldn't resolve teams for this game");
     }
@@ -69,14 +67,10 @@ export async function onRequest(context) {
     let allMarkets;
     let savantHomeWe = null;
     let savantSource = null;
-    let homeRoster = [];
-    let awayRoster = [];
     try {
-        const [marketsRes, savantRes, homeRosRes, awayRosRes] = await Promise.allSettled([
+        const [marketsRes, savantRes] = await Promise.allSettled([
             listAllMlbMarkets(env),
             fetchSavantWe(gameId),
-            fetchRoster(homeId),
-            fetchRoster(awayId),
         ]);
         if (marketsRes.status === "fulfilled") {
             allMarkets = marketsRes.value;
@@ -87,54 +81,16 @@ export async function onRequest(context) {
             savantHomeWe = savantRes.value?.value;
             savantSource = savantRes.value?.source;
         }
-        if (homeRosRes.status === "fulfilled") homeRoster = homeRosRes.value || [];
-        if (awayRosRes.status === "fulfilled") awayRoster = awayRosRes.value || [];
     } catch (e) {
         return jsonError(502, `markets fetch failed: ${e.message || e}`);
     }
 
-    // Kalshi's player_prop markets (HR leader, RBI leader, pitcher of
-    // the month, etc.) don't carry team tricodes because they're
-    // season-long futures, not per-game props — filterMarketsForGame
-    // would drop them. Cross-reference each prop's title against the
-    // home + away active rosters and tag matches with this game's
-    // team tricodes so they survive the filter and appear under the
-    // per-game Markets tab's PLAYER PROPS section.
-    if (homeRoster.length || awayRoster.length) {
-        // Two patterns to match against — full name (e.g. "framber valdez")
-        // catches titles like "Will Framber Valdez be the AL Pitcher
-        // of the Month?", and last-name catches the Kalshi ticker
-        // convention (KXMLBPITCHEROTM-26MAYAL-FVALDEZ19) which embeds
-        // initial + last name without spaces.
-        const fullNames = new Set();
-        const lastNames = new Set();
-        for (const raw of [...homeRoster, ...awayRoster]) {
-            const lc = raw.toLowerCase();
-            if (lc.length >= 5) fullNames.add(lc);
-            const parts = raw.split(/\s+/);
-            const last = parts[parts.length - 1] || "";
-            if (last.length >= 5) lastNames.add(last.toLowerCase());
-        }
-        for (const m of allMarkets) {
-            if (m.source !== "kalshi") continue;
-            if (m.question_type !== "player_prop") continue;
-            if (m.home_tricode || m.away_tricode) continue;
-            const hay = `${m.title || ""} ${m.description || ""} ${m.raw_market_id || ""}`.toLowerCase();
-            let hit = false;
-            for (const n of fullNames) {
-                if (hay.includes(n)) { hit = true; break; }
-            }
-            if (!hit) {
-                for (const n of lastNames) {
-                    if (hay.includes(n)) { hit = true; break; }
-                }
-            }
-            if (hit) {
-                m.home_tricode = homeAbbr;
-                m.away_tricode = awayAbbr;
-            }
-        }
-    }
+    // Roster cross-reference was removed — Kalshi's per-game player
+    // props (KXMLBHR, KXMLBKS, ...) self-identify the game via their
+    // ticker, so they flow through naturally. Season-long futures (HR
+    // leader, Pitcher of the Month) are tagged with the player's team
+    // in the adapter via description parsing and belong on the team
+    // profile page; they get filtered out below for the per-game tab.
 
     // Filter to this game's teams + time window, THEN drop every
     // source that doesn't publish LIVE in-play lines. The pregame
@@ -147,7 +103,17 @@ export async function onRequest(context) {
     const allGameMarkets = filterMarketsForGame(
         allMarkets, homeAbbr, awayAbbr, game.start_time,
     );
-    const gameMarkets       = filterToLiveLineSources(allGameMarkets);
+    let gameMarkets = filterToLiveLineSources(allGameMarkets);
+    // Strict per-game filter for player_prop: require BOTH home and
+    // away tricodes (i.e. the market is for THIS specific game).
+    // Per-game Kalshi props (KXMLBHR/KXMLBKS/...) have both set by
+    // parseKalshiPerGameTicker. Season-long futures (HR leader,
+    // Pitcher of Month) only have home_tricode (player's team), and
+    // those belong on the team page, not the per-game tab.
+    gameMarkets = gameMarkets.filter((m) => {
+        if (m.question_type !== "player_prop") return true;
+        return !!(m.home_tricode && m.away_tricode);
+    });
     const droppedPregame    = allGameMarkets.length - gameMarkets.length;
     const pregameSourcesSeen = Array.from(new Set(
         allGameMarkets

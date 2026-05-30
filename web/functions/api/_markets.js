@@ -581,6 +581,36 @@ function foldKalshiGameMarkets(markets) {
     return out;
 }
 
+// Kalshi season-long player futures (HR leader, Pitcher of the Month,
+// etc.) embed the player's team in the market's `subtitle`/description
+// using their own shorthand (":: Colorado", ":: A's", ":: Chicago WS").
+// Map that to our canonical tricode so we can attach it to home_tricode
+// on the market — that lets the team-profile page surface the future
+// for the right team via its existing tricode filter.
+const KALSHI_DESC_TO_TRI = {
+    "arizona":       "ARI", "atlanta":      "ATL", "baltimore":    "BAL",
+    "boston":        "BOS", "chicago c":    "CHC", "chicago ws":   "CHW",
+    "chicago w":     "CHW", "cincinnati":   "CIN", "cleveland":    "CLE",
+    "colorado":      "COL", "detroit":      "DET", "houston":      "HOU",
+    "kansas city":   "KC",  "los angeles a":"LAA", "los angeles d":"LAD",
+    "miami":         "MIA", "milwaukee":    "MIL", "minnesota":    "MIN",
+    "new york m":    "NYM", "new york y":   "NYY", "a's":          "OAK",
+    "oakland":       "OAK", "philadelphia": "PHI", "pittsburgh":   "PIT",
+    "san diego":     "SD",  "seattle":      "SEA", "san francisco":"SF",
+    "st. louis":     "STL", "tampa bay":    "TB",  "texas":        "TEX",
+    "toronto":       "TOR", "washington":   "WSH",
+};
+// Keys ordered longest-first so "los angeles a" matches before "los angeles".
+const KALSHI_DESC_KEYS = Object.keys(KALSHI_DESC_TO_TRI).sort((a, b) => b.length - a.length);
+function extractKalshiDescTeam(desc) {
+    if (!desc) return null;
+    const d = desc.toLowerCase().replace(/::/g, "").trim();
+    for (const k of KALSHI_DESC_KEYS) {
+        if (d.includes(k)) return KALSHI_DESC_TO_TRI[k];
+    }
+    return null;
+}
+
 function toKalshiSingleMarket(m, type) {
     const yb = Number(m.yes_bid);
     const ya = Number(m.yes_ask);
@@ -590,6 +620,16 @@ function toKalshiSingleMarket(m, type) {
         : (Number.isFinite(last) && last > 0 ? last / 100 : undefined);
     const noProb = yesProb != null ? 1 - yesProb : undefined;
     const title = m.title || m.subtitle || m.ticker;
+    // For season-long player futures (HR leader, Pitcher of the Month),
+    // tag home_tricode with the player's team from the description so
+    // the team-profile page can pick them up via its tricode filter.
+    // We DELIBERATELY leave away_tricode null — that single-tricode
+    // shape is what the per-game endpoint uses to distinguish season
+    // futures from real per-game props.
+    let derivedHome = null;
+    if (type === "future_player") {
+        derivedHome = extractKalshiDescTeam(m.subtitle || "");
+    }
     return flat({
         id: `kalshi:${m.ticker}`,
         source: "kalshi",
@@ -608,7 +648,7 @@ function toKalshiSingleMarket(m, type) {
         status: m.status === "active" ? "open" : (m.status || "unknown"),
         start_time: m.open_time || null,
         close_time: m.close_time || null,
-        home_tricode: null,
+        home_tricode: derivedHome,
         away_tricode: null,
         liquidity_usd: undefined,
         volume_usd:    undefined,
