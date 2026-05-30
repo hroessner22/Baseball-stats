@@ -30,11 +30,19 @@ export async function onRequest(context) {
     const env = context.env || {};
     const url = new URL(context.request.url);
     const scope = url.searchParams.get("scope");
+    const sourceFilter = url.searchParams.get("source");
 
     let markets;
     let initialDiagnostics = null;
     try {
-        markets = await listAllMlbMarkets(env);
+        // ?source=kalshi drops the fan-out from 11 adapters down to 1.
+        // The frontend runs in Kalshi-only mode and throws every other
+        // source's data away on the client, so calling them is pure
+        // waste — and that waste is what blows the worker over
+        // Cloudflare's subrequest/CPU budgets and 503s the endpoint.
+        // This is the prevention half of the 'degraded our_markets'
+        // fix; the recovery half lives in public/health.js.
+        markets = await listAllMlbMarkets(env, { source: sourceFilter || null });
         initialDiagnostics = markets._diagnostics || null;
     } catch (e) {
         return new Response(

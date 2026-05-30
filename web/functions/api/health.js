@@ -50,7 +50,11 @@ export async function onRequest(context) {
     const allChecks = [
         ...UPSTREAM_CHECKS,
         { name: "our_games",    url: `${origin}/api/games/today` },
-        { name: "our_markets",  url: `${origin}/api/markets?scope=game_day` },
+        // Ping the same shape the frontend actually calls — the
+        // Kalshi-only filtered path. If THAT 503s we have a real
+        // problem; the full 11-adapter fan-out is exercised by
+        // ?debug=1 only and not worth tying user-facing health to.
+        { name: "our_markets",  url: `${origin}/api/markets?scope=game_day&source=kalshi` },
     ];
 
     const results = await Promise.allSettled(

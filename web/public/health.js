@@ -70,21 +70,29 @@ async function checkHealth(opts = {}) {
 let scheduleTimer = null;
 
 // Autonomous adaptation when the health checker goes yellow / red.
-// User asked: "when this happens and the checker is yellow, make
-// changes." Concretely:
-//   - Slow the markets-dashboard auto-refresh from 10s → 30s while
-//     degraded, so we stop hammering an already-struggling endpoint.
-//   - Show a banner at the top of the markets view so the user knows
-//     we're in throttle mode.
-//   - When health flips back to OK, restore the normal cadence and
-//     remove the banner.
+// User asked: "you actually need to work to fix it when this comes up."
+// Throttling alone is passive — we now ACTIVELY try to recover:
+//
+//   1. Fire a cache-busting refetch against every failing endpoint.
+//      A 503 cached at the Cloudflare edge would otherwise serve the
+//      bad response for 30s; ?cb=<ts> + cache:no-store forces a fresh
+//      origin hit and a fresh cache entry.
+//   2. Schedule a few escalating retries (4s, 12s, 30s) so we beat
+//      the next regular health poll to recovery when possible.
+//   3. Slow the markets-dashboard refresh to 30s — keeps us from
+//      hammering the endpoint while it's already struggling.
+//   4. Show a banner naming the failing check.
+//
+// When health flips back to OK, restore the 10s cadence, hide the
+// banner, and cancel any pending retries.
+let activeRecoveryTimers = [];
+
 function applyDegradedAdaptations(health) {
     const isOk = health?.ok === true;
     if (!isOk && !degradedActionsApplied) {
         degradedActionsApplied = true;
         degradedSince = Date.now();
-        // Slow the dashboard auto-refresh by replacing the existing
-        // interval handle. app.js stores it as marketsDashboardTimer.
+        // Slow the dashboard auto-refresh while degraded.
         try {
             if (root.marketsDashboardTimer) clearInterval(root.marketsDashboardTimer);
             if (typeof root.refreshMarketsDashboard === "function") {
@@ -92,8 +100,14 @@ function applyDegradedAdaptations(health) {
             }
         } catch { /* best-effort */ }
         showDegradedBanner();
+        // Fire active recovery — don't wait passively for the next
+        // health poll, go knock the bad endpoint into the cache.
+        runActiveRecovery(health);
     } else if (isOk && degradedActionsApplied) {
         degradedActionsApplied = false;
+        // Cancel any pending recovery retries that might still fire.
+        activeRecoveryTimers.forEach(clearTimeout);
+        activeRecoveryTimers = [];
         // Restore the normal 10s cadence.
         try {
             if (root.marketsDashboardTimer) clearInterval(root.marketsDashboardTimer);
@@ -103,7 +117,76 @@ function applyDegradedAdaptations(health) {
         } catch { /* best-effort */ }
         hideDegradedBanner();
         degradedSince = null;
+    } else if (!isOk && degradedActionsApplied) {
+        // Still degraded on a subsequent poll — kick another wave of
+        // recovery attempts. checkHealth() schedules itself faster
+        // (5s) while degraded, but the recovery wave does cache-bust
+        // refetches the health probe wouldn't do on its own.
+        runActiveRecovery(health);
     }
+}
+
+// Map of failing-check name → URL we can remediate from the browser.
+// Upstream checks (mlb_stats, polymarket, kalshi) live on different
+// origins and we have no way to kick their caches; the in-flight
+// proxy retries inside the worker are the only recovery path for
+// those. Our own endpoints we CAN cache-bust.
+const RECOVERABLE_URLS = {
+    our_markets: "/api/markets?scope=game_day&source=kalshi",
+    our_games:   "/api/games/today",
+};
+
+// Walk the failed checks, fire a cache-busting refetch against each
+// failing endpoint we own, then schedule two more attempts with
+// backoff so the recovery is more than a single shot. Once a
+// previously-failing endpoint returns 2xx, immediately re-poll
+// health + refresh the markets dashboard so the user sees data
+// again without waiting for the next regular tick.
+function runActiveRecovery(health) {
+    const failing = Object.keys(health?.checks || {})
+        .filter((name) => health.checks[name].ok === false)
+        .filter((name) => name in RECOVERABLE_URLS);
+    if (!failing.length) return;
+    const urls = failing.map((name) => RECOVERABLE_URLS[name]);
+
+    const fireRound = async () => {
+        const results = await Promise.allSettled(
+            urls.map((u) => {
+                // Add a cache-buster + force a fresh origin hit. The
+                // Cloudflare edge would otherwise serve a stale 5xx
+                // for the full cache TTL even after the origin is
+                // healthy again. A 'cache: no-store' on the client
+                // tells Cloudflare to revalidate.
+                const sep = u.includes("?") ? "&" : "?";
+                return fetch(`${u}${sep}cb=${Date.now()}`, {
+                    cache: "no-store",
+                    headers: { "cache-control": "no-cache" },
+                });
+            }),
+        );
+        // Did anything recover this round? If yes, kick a re-check
+        // immediately AND nudge the markets dashboard to repopulate
+        // from the now-good cache.
+        const recovered = results.some(
+            (r) => r.status === "fulfilled" && r.value.ok,
+        );
+        if (recovered) {
+            try {
+                if (typeof root.refreshMarketsDashboard === "function") {
+                    root.refreshMarketsDashboard();
+                }
+            } catch { /* best-effort */ }
+            // Re-poll health right away so the banner clears as
+            // soon as possible.
+            checkHealth({ noSchedule: true });
+        }
+    };
+
+    // Three escalating rounds: now, +4s, +12s. Plus the next regular
+    // 5s health poll, which gives ~4 attempts in the first 30 seconds.
+    fireRound();
+    activeRecoveryTimers.push(setTimeout(fireRound, 4_000));
+    activeRecoveryTimers.push(setTimeout(fireRound, 12_000));
 }
 
 function showDegradedBanner() {

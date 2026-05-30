@@ -924,7 +924,10 @@ async function refreshMarketsDashboard() {
         // schedule. The schedule gives us the game_pk → team-pair lookup
         // so each dashboard card can link directly into its live tracker.
         const [marketsRes, gamesRes] = await Promise.all([
-            fetchWithRetry(`/api/markets?scope=game_day`),
+            // KALSHI_ONLY_MODE on the client throws every other
+            // source's data away — pass ?source=kalshi so the
+            // worker doesn't waste subrequests fetching them.
+            fetchWithRetry(`/api/markets?scope=game_day&source=kalshi`),
             fetchWithRetry(`/api/games/today`),
         ]);
         if (!marketsRes.ok) throw new Error(`HTTP ${marketsRes.status}`);
@@ -1743,7 +1746,7 @@ async function refreshTeam(tricode) {
         //   - games/today: find this team's game today (if playing)
         const [standingsRes, marketsRes, gamesRes] = await Promise.all([
             fetch("/api/standings"),
-            fetch("/api/markets"),
+            fetch("/api/markets?source=kalshi"),
             fetch("/api/games/today"),
         ]);
         const standings = standingsRes.ok ? await standingsRes.json() : null;
@@ -2095,7 +2098,7 @@ async function refreshPlayer(mlbam) {
 async function hydratePlayerProps(gamePk, playerName, mlbam) {
     if (!playerName) return;
     try {
-        const res = await fetch(`/api/markets`);
+        const res = await fetch(`/api/markets?source=kalshi`);
         if (!res.ok) return;
         const data = await res.json();
         const slot = document.getElementById("pt-market-chips-slot");
@@ -6908,7 +6911,7 @@ function renderMatchupCard(m) {
 async function hydrateMatchupPropChips(gameId, batterName, pitcherName) {
     if (!gameId || (!batterName && !pitcherName)) return;
     try {
-        const res = await fetch(`/api/markets`);
+        const res = await fetch(`/api/markets?source=kalshi`);
         if (!res.ok) return;
         const data = await res.json();
         const slot = document.getElementById("matchup-prop-chips-slot");

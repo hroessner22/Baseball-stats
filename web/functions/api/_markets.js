@@ -1046,20 +1046,32 @@ function flat(o) {
 // Optional second return value `diagnostics` exposes per-adapter
 // outcomes (count or error) — used by /api/markets?debug=1 to surface
 // silent adapter failures without spamming user-facing responses.
-export async function listAllMlbMarkets(env) {
-    const labeled = [
-        ["polymarket", listPolymarketMlbMarkets()],
-        ["kalshi",     listKalshiMlbMarkets()],
-        ["manifold",   listManifoldMlbMarkets()],
-        ["odds_api",   listOddsApiMlbMarkets(env || {})],
-        ["bovada",     listBovadaMlbMarkets()],
-        ["pinnacle",   listPinnacleMlbMarkets()],
-        ["smarkets",   listSmarketsMlbMarkets()],
-        ["sxbet",      listSxBetMlbMarkets()],
-        ["thescore",   listTheScoreMlbMarkets()],
-        ["espn_dk",    listEspnDraftKingsMlbMarkets()],
-        ["vegasinsider", listVegasInsiderMlbMarkets()],
+export async function listAllMlbMarkets(env, opts = {}) {
+    // Source filter: when the caller declares it only needs one
+    // source (the frontend is in Kalshi-only mode and throws the
+    // other 10 sources' data away on the client anyway), skip the
+    // dead adapters entirely. Saves ~10 fan-outs worth of
+    // subrequests + CPU per /api/markets call — the difference
+    // between "/api/markets degraded, slowed auto-refresh to 30s"
+    // and the endpoint just working.
+    const onlySource = opts.source || null;
+    const ALL_ADAPTERS = [
+        ["polymarket", listPolymarketMlbMarkets],
+        ["kalshi",     listKalshiMlbMarkets],
+        ["manifold",   listManifoldMlbMarkets],
+        ["odds_api",   () => listOddsApiMlbMarkets(env || {})],
+        ["bovada",     listBovadaMlbMarkets],
+        ["pinnacle",   listPinnacleMlbMarkets],
+        ["smarkets",   listSmarketsMlbMarkets],
+        ["sxbet",      listSxBetMlbMarkets],
+        ["thescore",   listTheScoreMlbMarkets],
+        ["espn_dk",    listEspnDraftKingsMlbMarkets],
+        ["vegasinsider", listVegasInsiderMlbMarkets],
     ];
+    const labeled = onlySource
+        ? ALL_ADAPTERS.filter(([name]) => name === onlySource)
+                      .map(([name, fn]) => [name, fn()])
+        : ALL_ADAPTERS.map(([name, fn]) => [name, fn()]);
     const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
     const diagnostics = {};
