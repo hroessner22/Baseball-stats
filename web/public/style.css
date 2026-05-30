@@ -3978,7 +3978,10 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .this-inning .ti-row {
     display: grid;
-    grid-template-columns: 42px 30px minmax(80px, 1fr) 3fr;
+    /* Outcome chip · avatar · batter name (shrinkable, ellipsizes) · description (gets the rest).
+       Was minmax(80px, 1fr) on the batter column + 3fr on the desc — combined with a description
+       that duplicated the batter name, it wrapped to 4 lines on the narrow right rail. */
+    grid-template-columns: 40px 28px minmax(0, max-content) minmax(0, 1fr);
     gap: 8px;
     align-items: center;
     padding: 4px 0;
@@ -5688,6 +5691,74 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-faint);
     font-size: 10px;
     font-style: italic;
+}
+
+/* Model-vs-market row. Single line under the YES/NO outcomes inside a
+   condensed prop card: MODEL | +250 | 28% | EDGE +4 pts ↗.
+   Color coded by edge direction so the user can spot live mispricings
+   at a glance: green = our model is more bullish than the market
+   (buy YES), red = more bearish (buy NO), grey = within ±2 pts. */
+.model-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 5px 8px;
+    margin-top: 4px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid rgba(148, 163, 184, 0.10);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.model-row-tag {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: rgba(56, 189, 248, 0.10);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--accent-action);
+}
+.model-row-american {
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--text);
+    letter-spacing: 0.02em;
+}
+.model-row-pct {
+    font-weight: 600;
+    color: var(--text-dim);
+    font-size: 11px;
+}
+.model-row-edge {
+    margin-left: auto;
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.model-row-edge strong { font-weight: 800; color: var(--text); }
+.model-edge-arrow { font-size: 12px; }
+
+/* Edge tints. ±2 pts is "noise"; beyond that we paint the row so the
+   color directs the eye to live mispricings without the user having
+   to read the number. */
+.model-row.model-edge-yes {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(34, 197, 94, 0.22);
+}
+.model-row.model-edge-yes .model-row-edge strong,
+.model-row.model-edge-yes .model-edge-arrow { color: var(--accent-win); }
+.model-row.model-edge-no {
+    background: rgba(239, 68, 68, 0.07);
+    border-color: rgba(239, 68, 68, 0.22);
+}
+.model-row.model-edge-no .model-row-edge strong,
+.model-row.model-edge-no .model-edge-arrow { color: var(--accent-live); }
+.model-row.model-edge-flat {
+    /* default tint already grey/blue — no override */
 }
 .market-meta {
     font-size: 10px;

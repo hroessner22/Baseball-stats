@@ -3991,6 +3991,29 @@ function renderCurrentPitches(pitches) {
     `;
 }
 
+// Strip the batter's full name (and an optional trailing period) from
+// the head of an MLB play description. The "this-inning" strip already
+// has the batter name in its own column — repeating it inside the
+// description column makes the row wrap into 4 lines on narrow rails.
+// Safe no-op if the description doesn't start with the name.
+function trimLeadingBatterName(desc, fullName) {
+    if (!desc || !fullName) return (desc || "").trim();
+    let d = desc.trim();
+    // Try the full name first, then the last-token surname as a fallback
+    // (MLB sometimes writes "Bobby Witt Jr. doubles" — full name match —
+    // but other times "Witt doubles" — surname only).
+    const candidates = [fullName.trim()];
+    const surname = fullName.trim().split(/\s+/).slice(-1)[0];
+    if (surname && surname !== fullName.trim()) candidates.push(surname);
+    for (const c of candidates) {
+        if (d.toLowerCase().startsWith(c.toLowerCase() + " ")) {
+            d = d.slice(c.length + 1);
+            break;
+        }
+    }
+    return d.replace(/\.+$/, "").trim();
+}
+
 // "This inning" play-by-play strip — every completed PA in the
 // current half-inning, oldest first. Shows the user how the frame
 // has unfolded so far without making them flip to Gamecast for
@@ -4011,12 +4034,17 @@ function renderThisInning(g) {
         const batterLink = p.batter_id
             ? `<a class="player-link" href="#player/${p.batter_id}">${shortName(p.batter)}</a>`
             : shortName(p.batter || "—");
+        // MLB descriptions like "Vinnie Pasquantino called out on strikes."
+        // duplicate the batter name we're already showing one column over.
+        // Strip the leading name and the trailing period so the column
+        // doesn't wrap on top of itself in the narrow right rail.
+        const tightDesc = trimLeadingBatterName(p.description || "", p.batter || "");
         return `
           <div class="ti-row">
             <span class="ti-outcome ${outcomeCls}">${outcomeLabel}</span>
             ${avatar}
             <span class="ti-batter">${batterLink}</span>
-            <span class="ti-desc">${escapeHTML(p.description || "")}</span>
+            <span class="ti-desc">${escapeHTML(tightDesc)}</span>
           </div>
         `;
     }).join("");
@@ -4480,7 +4508,16 @@ function renderPitchingTable(side, d) {
 
 async function hydrateMarkets(gameId) {
     try {
-        const res = await fetchWithRetry(`/api/game/${gameId}/markets`);
+        // Markets + our model projection fan out together. The model
+        // endpoint is independent (live MLB feed + matchup engine) so
+        // a slow Kalshi response doesn't gate it, and a missing model
+        // payload doesn't gate the Kalshi quotes. Whichever lands first
+        // shows up in the next renderPropPane pass; the chip click also
+        // re-reads the cache so it auto-fills as the model arrives.
+        const [res, _modelLoaded] = await Promise.all([
+            fetchWithRetry(`/api/game/${gameId}/markets`),
+            loadModelProps(gameId),
+        ]);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
@@ -5331,6 +5368,12 @@ async function hydrateKalshiBookCells() {
                 if (oddsEl) oddsEl.innerHTML = oddsHtml;
                 cell.setAttribute("data-hydrated", "1");
             });
+            // Pipe the live YES implied probability into any visible
+            // .model-row sharing this ticker so the EDGE pill refreshes.
+            const yesProb = orderbookYesProb(ob);
+            if (yesProb != null && typeof updateModelEdgeForTicker === "function") {
+                updateModelEdgeForTicker(ticker, yesProb);
+            }
         } catch {
             cellList.forEach((cell) => {
                 const oddsEl = cell.querySelector(".mab-cell-odds, .md-game-out-odds");
@@ -5339,6 +5382,19 @@ async function hydrateKalshiBookCells() {
             });
         }
     }));
+}
+
+// Reduce a normalized orderbook to the live YES implied probability
+// (0..1), as a fraction not a percent. Returns null when neither side
+// has resting orders. Mirrors orderbookToOddsHtml's askCents math.
+function orderbookYesProb(ob) {
+    if (!ob) return null;
+    const noBook = ob.no || [];
+    if (!noBook.length) return null;
+    const bestNoBid = noBook[noBook.length - 1];
+    const noBidCents = Number(bestNoBid[0]);
+    if (!Number.isFinite(noBidCents) || noBidCents < 1 || noBidCents > 99) return null;
+    return (100 - noBidCents) / 100;
 }
 
 // Reduce a normalized orderbook ({ yes:[[cents,qty]], no:[[cents,qty]] })
@@ -5539,9 +5595,183 @@ function renderPropPane(market) {
       <div class="market-outcomes">
         ${outcomes.map((o) => renderMarketOutcome(o, market)).join("")}
       </div>
+      ${renderModelRow(market, outcomes)}
       ${(isKalshi && typeof window !== "undefined" && window.Kalshi)
           ? window.Kalshi.renderBetButtons(market) : ""}
     `;
+}
+
+// ── Model-props sidecar (lives next to the live Kalshi quote) ──────
+//
+// We fetch /api/game/{id}/model-props once per game open (60s edge
+// cache) and look up each visible Kalshi player prop in it. Render
+// a single-line strip under the YES/NO row showing what our matchup
+// engine projects for the same prop, plus an "EDGE" pill comparing
+// the two. Stays invisible when we don't have a projection — better
+// to hide than show "—".
+
+const _modelPropsByGame = (typeof window !== "undefined")
+    ? (window._modelPropsByGame = window._modelPropsByGame || {})
+    : {};
+const _modelPropsInflight = {};
+
+async function loadModelProps(gameId) {
+    if (!gameId) return null;
+    const cached = _modelPropsByGame[gameId];
+    if (cached && (Date.now() - cached._fetched_at) < 60_000) return cached;
+    if (_modelPropsInflight[gameId]) return _modelPropsInflight[gameId];
+    _modelPropsInflight[gameId] = (async () => {
+        try {
+            const res = await fetch(`/api/game/${gameId}/model-props`, { cache: "no-store" });
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (!data || data.available === false) {
+                _modelPropsByGame[gameId] = { _fetched_at: Date.now(), available: false };
+                return _modelPropsByGame[gameId];
+            }
+            data._fetched_at = Date.now();
+            _modelPropsByGame[gameId] = data;
+            return data;
+        } catch {
+            return null;
+        } finally {
+            delete _modelPropsInflight[gameId];
+        }
+    })();
+    return _modelPropsInflight[gameId];
+}
+
+// Returns { yes_prob, no_prob, model_american, label } for a Kalshi
+// player_prop market, or null if we can't match it against a model
+// projection. The lookup walks the market title, plucks the player
+// name + threshold + stat keyword, then indexes into the cached
+// /api/game/{id}/model-props payload.
+function lookupModelProb(market) {
+    if (!market || market.source !== "kalshi") return null;
+    const m = _modelPropsByGame[activeGameId];
+    if (!m || m.available === false) return null;
+    const parsed = parseKalshiPropTitle(market.title || "");
+    if (!parsed) return null;
+    const mlbam = m.name_to_mlbam?.[normPlayerName(parsed.player)];
+    if (!mlbam) return null;
+    const ladder = m.model_props?.[mlbam]?.[parsed.stat];
+    if (!ladder) return null;
+    const yes = ladder[parsed.threshold];
+    if (yes == null) return null;
+    return {
+        yes_prob: yes,
+        no_prob:  Math.max(0, Math.min(1, 1 - yes)),
+        stat:     parsed.stat,
+        threshold: parsed.threshold,
+        player:   parsed.player,
+    };
+}
+
+function parseKalshiPropTitle(title) {
+    const t = String(title || "").trim();
+    // "Vinnie Pasquantino: 2+ hits?" / "Bobby Witt Jr.: 1+ home runs?"
+    let m = t.match(/^(.+?):\s*(\d+)\+\s+(.+?)\??$/);
+    if (!m) return null;
+    const player    = m[1].trim();
+    const threshold = parseInt(m[2], 10);
+    const statText  = m[3].toLowerCase().trim();
+    let stat = null;
+    if (/strikeouts?\b/.test(statText))                 stat = "strikeouts";
+    else if (/home runs?\b|\bhrs?\b/.test(statText))    stat = "home_runs";
+    else if (/total bases?\b/.test(statText))           stat = "total_bases";
+    else if (/hits?\b/.test(statText))                  stat = "hits";
+    if (!stat) return null;
+    return { player, threshold, stat };
+}
+
+function normPlayerName(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+// Convert a probability to American odds. Mirror of formatAmericanOdds
+// but accepts a probability (0..1) instead of a pre-formatted string.
+function probToAmerican(p) {
+    if (!Number.isFinite(p) || p <= 0 || p >= 1) return null;
+    if (p >= 0.5) return Math.round(-100 * p / (1 - p));
+    return Math.round(100 * (1 - p) / p);
+}
+
+function renderModelRow(market, outcomes) {
+    const model = lookupModelProb(market);
+    if (!model) return "";
+    // The model row carries data-model-yes + data-ticker so the
+    // orderbook hydrator can refresh the EDGE display once the live
+    // Kalshi quote lands — most Kalshi player props ship null
+    // probabilities in the /markets payload and only get populated
+    // by /orderbook hydration a few ms later. See updateModelEdges().
+    const yesOutcome = outcomes.find((o) => /yes/i.test(o.name || "")) || outcomes[0];
+    const idMatch = String(yesOutcome?.id || "").match(/^(.*):(yes|no)$/i);
+    const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+    const marketYesProb = yesOutcome?.probability_devig != null
+        ? yesOutcome.probability_devig
+        : yesOutcome?.probability;
+    const am = probToAmerican(model.yes_prob);
+    const amStr = am != null ? (am > 0 ? `+${am}` : `${am}`) : "—";
+    const pctStr = `${(model.yes_prob * 100).toFixed(model.yes_prob < 0.1 ? 1 : 0)}%`;
+    return `
+      <div class="model-row"
+           data-model-row="1"
+           data-ticker="${escapeHTMLAttr(ticker)}"
+           data-model-yes="${model.yes_prob}"
+           title="Our matchup engine's projection for this prop, vs Kalshi's implied probability.">
+        <span class="model-row-tag">MODEL</span>
+        <span class="model-row-american">${amStr}</span>
+        <span class="model-row-pct">${pctStr}</span>
+        <span class="model-row-edge" data-model-edge-slot>${
+            marketYesProb != null ? renderEdgeFragment(model.yes_prob, marketYesProb) : ""
+        }</span>
+      </div>
+    `;
+}
+
+// Format an EDGE fragment given the model and market probabilities.
+// Returns the inner HTML for .model-row-edge; the parent renders the
+// outer wrapper either at first render (when market quote is known
+// inline) or after the orderbook hydrator refills it.
+function renderEdgeFragment(modelYes, marketYes) {
+    if (modelYes == null || marketYes == null) return "";
+    const edgePts = Math.round((modelYes - marketYes) * 1000) / 10;
+    const arrow = edgePts >=  2 ? "↗" : edgePts <= -2 ? "↘" : "→";
+    const cls   = edgePts >=  2 ? "edge-yes"
+                : edgePts <= -2 ? "edge-no"
+                : "edge-flat";
+    const sign  = edgePts > 0 ? "+" : "";
+    return `EDGE <strong class="${cls}">${sign}${edgePts.toFixed(1)} pts</strong> <span class="model-edge-arrow ${cls}">${arrow}</span>`;
+}
+
+// Called by the orderbook hydrator after each Kalshi quote lands.
+// Walks every visible model row whose ticker matches and rewrites the
+// edge fragment + the row's tint class from the freshly-known market
+// implied probability. Idempotent — safe to call many times.
+function updateModelEdgeForTicker(ticker, marketYesProb) {
+    if (typeof document === "undefined" || !ticker) return;
+    const rows = document.querySelectorAll(`.model-row[data-ticker="${cssEscape(ticker)}"]`);
+    rows.forEach((row) => {
+        const yes = parseFloat(row.getAttribute("data-model-yes"));
+        if (!Number.isFinite(yes)) return;
+        const slot = row.querySelector("[data-model-edge-slot]");
+        if (slot) slot.innerHTML = renderEdgeFragment(yes, marketYesProb);
+        const edgePts = Math.round((yes - marketYesProb) * 1000) / 10;
+        row.classList.remove("model-edge-yes", "model-edge-no", "model-edge-flat");
+        row.classList.add(
+            edgePts >=  2 ? "model-edge-yes"
+            : edgePts <= -2 ? "model-edge-no"
+            : "model-edge-flat",
+        );
+    });
+}
+
+// Minimal CSS.escape polyfill for attribute selectors. The hydrator
+// callback runs in older browsers occasionally; native CSS.escape is
+// fine on modern Chrome / Safari but defending against the rare case.
+function cssEscape(s) {
+    if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^\w-]/g, (c) => "\\" + c);
 }
 
 // Click delegation for threshold-chip selection. Each chip is keyed
