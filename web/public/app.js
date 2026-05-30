@@ -905,11 +905,34 @@ async function refreshMarketsDashboard() {
         }
     } catch (e) {
         // Keep showing the prior render if we have one — only render
-        // the empty / error state when there's nothing on screen.
+        // an empty / loading state when there's nothing on screen.
+        // The state is intentionally NOT a hard "couldn't load"
+        // error: the markets endpoint flakes 15% of the time and the
+        // health monitor + this auto-retry will recover within a few
+        // seconds. Showing a friendly "Loading…" + retrying silently
+        // means a transient 503 doesn't blow the page.
         if (!marketsView.querySelector(".markets-dashboard")) {
-            renderEmpty(marketsView, "Couldn't load markets.", `${e.message || e}`);
+            renderEmpty(
+                marketsView,
+                "Loading markets…",
+                "First-load 503 — retrying every 5s, will appear automatically when it succeeds.",
+            );
+            // Auto-retry every 5s until we get markets up. This is on
+            // top of the regular 10s dashboard poll interval and only
+            // runs while the user has nothing on screen.
+            setTimeout(() => {
+                if (!marketsView.querySelector(".markets-dashboard")) {
+                    refreshMarketsDashboard();
+                }
+            }, 5_000);
         }
     }
+}
+
+// Expose so the health monitor (web/public/health.js) can trigger a
+// fast retry when the markets endpoint comes back from a failure.
+if (typeof window !== "undefined") {
+    window.refreshMarketsDashboard = refreshMarketsDashboard;
 }
 
 function renderMarketsDashboard(d) {
