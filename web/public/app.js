@@ -4141,6 +4141,14 @@ function renderMarkets(d) {
     return `
       <div class="markets">
         ${renderMarketsHeader(d, ourWe, consHome, consAway, edge, savant, d.savant_we_source)}
+        <!-- Kalshi account strip: connect CTA when signed out, balance
+             + sign-out when signed in. Re-rendered on connect / disconnect
+             via Kalshi.renderAllAccountStrips(). -->
+        <div data-kalshi-strip class="markets-kalshi-strip">${
+            (typeof window !== "undefined" && window.Kalshi)
+                ? window.Kalshi.renderAccountStrip()
+                : ""
+        }</div>
         <nav class="markets-tabs" role="tablist">
           <button class="markets-tab ${tab === "game_lines" ? "active" : ""}" data-mtab="game_lines" role="tab">
             Game lines <span class="markets-tab-count">${nGl}</span>
@@ -4576,6 +4584,13 @@ function renderMarketRow(market) {
         .slice()
         .sort((a, b) => (b.probability || 0) - (a.probability || 0));
 
+    // Inline "Buy YES / Buy NO" buttons on Kalshi markets — only when
+    // the Kalshi client script is loaded. The buttons call into the
+    // global Kalshi.openBetModal via click delegation (kalshi.js).
+    const betButtons = (src === "kalshi" && typeof window !== "undefined" && window.Kalshi)
+        ? window.Kalshi.renderBetButtons(market)
+        : "";
+
     return `
       <article class="market-row" data-source="${src}">
         <header class="market-row-head">
@@ -4588,6 +4603,7 @@ function renderMarketRow(market) {
         <div class="market-outcomes">
           ${outcomes.map(renderMarketOutcome).join("")}
         </div>
+        ${betButtons}
         <div class="market-meta">${src}${liquidity}${volume}${bookCount}</div>
       </article>
     `;
