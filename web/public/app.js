@@ -5272,18 +5272,27 @@ function centsToAmerican(cents) {
 
 function renderMarketsSection(title, rows) {
     if (!rows || !rows.length) return "";
-    // Partition priced (any outcome has probability) vs unpriced. If
-    // priced exists, render only those — Kalshi-no-quote rows are
-    // noise once Bovada lines are flowing. If NO priced exists, render
-    // up to ONE unpriced row so the user sees that we tried (and from
-    // which source) rather than a blank section.
+    // Partition priced (any outcome has probability) vs unpriced.
+    //
+    // Old behavior: when no priced rows exist, render just ONE unpriced
+    //   row "so the user sees we tried". That made sense when Kalshi
+    //   was a "no quote yet" fallback alongside Bovada/Polymarket.
+    //
+    // New behavior (Kalshi-only mode + orderbook hydration): every
+    //   Kalshi player_prop is "unpriced" in the markets pipeline because
+    //   real prices come from /orderbook hydration after render. So the
+    //   slice-to-one cap drops 119 markets down to 1. Show them ALL —
+    //   hydrateKalshiBookCells fills in each card's prices.
+    //
+    // We still prefer priced over unpriced when both exist (sportsbook
+    //   rows surface first, Kalshi-only-hydration rows below).
     const priced = rows.filter((m) =>
         (m.outcomes || []).some((o) => o.probability != null)
     );
     const unpriced = rows.filter((m) =>
         !(m.outcomes || []).some((o) => o.probability != null)
     );
-    let list = priced.length ? priced : unpriced.slice(0, 1);
+    let list = priced.length ? priced.concat(unpriced) : unpriced;
     list = list.slice().sort((a, b) => {
         const am = a?.is_main_line ? 1 : 0;
         const bm = b?.is_main_line ? 1 : 0;
