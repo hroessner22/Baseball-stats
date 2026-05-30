@@ -554,7 +554,10 @@ function openBetModal(market, outcome) {
           </div>
           <form class="km-form km-bet-form" data-form="take">
             <label class="km-field">
-              <span>Contracts to buy</span>
+              <span>Contracts to buy
+                <button type="button" class="km-max-btn" data-take-max
+                        title="Spend my full available balance">Max</button>
+              </span>
               <input type="number" name="count" min="1" step="1" value="1" required>
               <small class="km-hint" data-ob-hint></small>
             </label>
@@ -576,7 +579,10 @@ function openBetModal(market, outcome) {
           </p>
           <form class="km-form km-bet-form" data-form="post">
             <label class="km-field">
-              <span>Contracts</span>
+              <span>Contracts
+                <button type="button" class="km-max-btn" data-post-max
+                        title="Buy as many as my balance allows at the chosen price">Max</button>
+              </span>
               <input type="number" name="count" min="1" step="1" value="1" required>
             </label>
             <label class="km-field">
@@ -702,6 +708,42 @@ function openBetModal(market, outcome) {
             `;
             takeSubmit.disabled = true;
         }
+    });
+
+    // Max buttons: fill count with as many contracts as the user's
+    // available Kalshi balance can afford at the relevant price.
+    // Take mode uses the live best-ask; post mode uses the user's
+    // limit price.
+    overlay.querySelector("[data-take-max]")?.addEventListener("click", async () => {
+        const bal = await getBalance();
+        if (!bal || bal < 1) { toast("Need a Kalshi balance > $0 first", "err"); return; }
+        if (!bestAsk) { toast("Wait for the orderbook to load", "err"); return; }
+        const pCents = bestAsk.price;
+        const maxAffordable = Math.floor(bal / pCents);
+        const maxFillable = Math.min(maxAffordable, bestAsk.count);
+        if (maxFillable < 1) {
+            toast(`$${(bal/100).toFixed(2)} can't afford 1 at ${pCents}¢`, "err");
+            return;
+        }
+        takeCnt.value = maxFillable;
+        recalcTake();
+    });
+
+    overlay.querySelector("[data-post-max]")?.addEventListener("click", async () => {
+        const bal = await getBalance();
+        if (!bal || bal < 1) { toast("Need a Kalshi balance > $0 first", "err"); return; }
+        const pCents = parseInt(postPrc.value, 10);
+        if (!Number.isFinite(pCents) || pCents < 1) {
+            toast("Set a valid limit price first", "err");
+            return;
+        }
+        const maxAffordable = Math.floor(bal / pCents);
+        if (maxAffordable < 1) {
+            toast(`$${(bal/100).toFixed(2)} can't afford 1 at ${pCents}¢`, "err");
+            return;
+        }
+        postCnt.value = maxAffordable;
+        postRecalc();
     });
 
     setTimeout(() => takeCnt.focus(), 50);

@@ -320,30 +320,77 @@ async function listPolymarketMlbMarkets() {
 // the UI renders one card per game. Tickers carry the date + teams,
 // which we parse to set start_time + home/away tricode.
 
-// Series we pull. Game-day moneylines + a curated list of season
-// futures we know exist on Kalshi today.
+// Series we pull. Game-day moneylines + season futures + per-game
+// player props / team props. Kalshi exposes a clean per-game ticker
+// convention for sports — every market in the per-game series carries
+// the game date + team pair in the ticker (e.g.
+// KXMLBHR-26MAY301410DETCWS-DETFVALDEZ59-9), so we can attach the
+// game's home/away tricodes at parse time and the markets flow
+// straight into the per-game endpoint without needing roster
+// cross-reference.
 const KALSHI_SERIES = [
-    { ticker: "KXMLBGAME",        type: "game" },          // per-game moneyline
+    // Per-game moneyline
+    { ticker: "KXMLBGAME",        type: "game" },
+    // Season futures
     { ticker: "KXLEADERMLBHR",    type: "future_player" }, // HR leader
-    { ticker: "KXMLBRBI",         type: "future_player" }, // RBI leader
+    { ticker: "KXMLBRBI",         type: "future_player" }, // RBI leader (player season)
     { ticker: "KXMLBPITCHEROTM",  type: "future_player" }, // pitcher of the month
+    // Per-game player props (titled "Will X get Y+ stat?")
+    { ticker: "KXMLBHR",          type: "per_game_player" }, // home runs in game
+    { ticker: "KXMLBKS",          type: "per_game_player" }, // pitcher strikeouts in game
+    { ticker: "KXMLBHIT",         type: "per_game_player" }, // hits in game
+    { ticker: "KXMLBTB",          type: "per_game_player" }, // total bases in game
+    { ticker: "KXMLBHRR",         type: "per_game_player" }, // hits+runs+RBIs combo
+    // Per-game team props
+    { ticker: "KXMLBSPREAD",      type: "per_game_team" },   // run line
+    { ticker: "KXMLBTOTAL",       type: "per_game_team" },   // total runs O/U
+    { ticker: "KXMLBTEAMTOTAL",   type: "per_game_team" },   // team total runs
+    { ticker: "KXMLBF5",          type: "per_game_team" },   // first 5 innings winner
+    { ticker: "KXMLBF5SPREAD",    type: "per_game_team" },   // first 5 spread
+    { ticker: "KXMLBF5TOTAL",     type: "per_game_team" },   // first 5 total
+    { ticker: "KXMLBRFI",         type: "per_game_team" },   // run in 1st inning
 ];
 
 async function listKalshiMlbMarkets() {
     const all = [];
-    for (const s of KALSHI_SERIES) {
+
+    // Fan ALL Kalshi series fetches out in parallel — sequential await
+    // pushed total wall-time past the per-worker budget, so the later
+    // series (HIT, TB, SPREAD, TOTAL, F5...) silently never landed.
+    // With Promise.allSettled the slowest fetch sets total latency
+    // instead of the sum, and we still get every series that succeeds.
+    const seriesResults = await Promise.allSettled(KALSHI_SERIES.map((s) =>
+        fetchJson(
+            `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`,
+            { cacheTtl: 30 },
+        ).then((data) => ({ s, mkts: Array.isArray(data?.markets) ? data.markets : [] }))
+    ));
+
+    for (const r of seriesResults) {
+        if (r.status !== "fulfilled") continue;
+        const { s, mkts } = r.value;
         try {
-            const url = `${KALSHI_BASE}/markets`
-                      + `?series_ticker=${s.ticker}&status=open&limit=400`;
-            const data = await fetchJson(url, { cacheTtl: 30 });
-            const mkts = Array.isArray(data?.markets) ? data.markets : [];
             if (s.type === "game") {
                 all.push(...foldKalshiGameMarkets(mkts));
+            } else if (s.type === "per_game_player" || s.type === "per_game_team") {
+                // Per-game series carry the game date + team pair in
+                // the ticker so we can attach home/away tricodes at
+                // parse time, no roster cross-reference needed.
+                for (const m of mkts) {
+                    const market = toKalshiSingleMarket(m, s.type);
+                    const parsed = parseKalshiPerGameTicker(m.ticker);
+                    if (parsed) {
+                        market.home_tricode = parsed.home;
+                        market.away_tricode = parsed.away;
+                        market.start_time   = parsed.game_start;
+                    }
+                    all.push(market);
+                }
             } else {
                 for (const m of mkts) all.push(toKalshiSingleMarket(m, s.type));
             }
         } catch {
-            // skip this series, keep going with the rest
+            // single-series mapping failure shouldn't drop the rest
         }
     }
     // Team season-wins futures (KXMLBWINS-{TRI}) — previously one
@@ -405,6 +452,37 @@ function parseKalshiGameTicker(ticker) {
         t1: split.t1,  // away
         t2: split.t2,  // home
         side: sideTri,
+    };
+}
+
+// Parse the per-game prop ticker convention into game info. Examples:
+//   KXMLBHR-26MAY301410DETCWS-DETFVALDEZ59-9   → DET @ CHW, May 30 14:10 ET
+//   KXMLBKS-26MAY301410DETCWS-DETFVALDEZ59-9   → same
+//   KXMLBSPREAD-26MAY301410DETCWS-CWS5         → same
+//   KXMLBTOTAL-26MAY301605SDWSH-9              → SD @ WSH, May 30 16:05 ET
+//
+// Returns { game_start, away, home } with team tricodes canonicalized
+// to MLB-Stats abbreviations (CHW not CWS). Returns null if the
+// ticker doesn't match the per-game series pattern (e.g. for KXMLBGAME
+// or season-future tickers).
+function parseKalshiPerGameTicker(ticker) {
+    const m = (ticker || "").match(
+        /^KX[A-Z]+-(\d{2})([A-Z]{3})(\d{2})(\d{2})(\d{2})([A-Z]+)-/
+    );
+    if (!m) return null;
+    const [, yy, monStr, dd, hh, mm, pair] = m;
+    const months = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+    const monIdx = months[monStr];
+    if (monIdx == null) return null;
+    const split = splitMlbTeamPair(pair);
+    if (!split) return null;
+    const year = 2000 + Number(yy);
+    // Kalshi encodes ET clock time; convert to UTC by adding 4h (DST).
+    const startUtc = Date.UTC(year, monIdx, Number(dd), Number(hh) + 4, Number(mm));
+    return {
+        game_start: new Date(startUtc).toISOString(),
+        away: split.t1,
+        home: split.t2,
     };
 }
 
@@ -523,8 +601,9 @@ function toKalshiSingleMarket(m, type) {
             { id: `${m.ticker}:no`,  name: m.no_sub_title  || "No",  probability: noProb },
         ],
         question_type:
-            type === "future_player" ? "player_prop"
+            type === "future_player" || type === "per_game_player" ? "player_prop"
             : type === "future_team" ? "future"
+            : type === "per_game_team" ? "team_prop"
             : classifyQuestion(title),
         status: m.status === "active" ? "open" : (m.status || "unknown"),
         start_time: m.open_time || null,
