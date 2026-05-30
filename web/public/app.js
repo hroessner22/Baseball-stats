@@ -960,6 +960,16 @@ function renderMarketsDashboard(d) {
           </div>
         </header>
 
+        <!-- My Kalshi: balance + open orders + cancel buttons.
+             Rendered inline so the user can see what they have on the
+             book without leaving the markets view. Auto-refreshes
+             every 20s via kalshi.js. -->
+        <div data-kalshi-mybets>${
+          (typeof window !== "undefined" && window.Kalshi)
+              ? window.Kalshi.renderMyBetsPanel()
+              : ""
+        }</div>
+
         <div class="md-games">
           ${gameList.map((g) => renderMarketsDashboardGameCard(g, d._game_lookup || {})).join("")}
         </div>

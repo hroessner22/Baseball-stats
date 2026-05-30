@@ -53,15 +53,18 @@ export async function onRequest(context) {
     if (!String(path).startsWith("/trade-api/v2/")) {
         return jsonResponse({ error: "path must start with /trade-api/v2/" }, 400);
     }
-    const requiredHeaders = [
-        "KALSHI-ACCESS-KEY",
-        "KALSHI-ACCESS-SIGNATURE",
-        "KALSHI-ACCESS-TIMESTAMP",
-    ];
-    for (const h of requiredHeaders) {
-        if (!headers || !headers[h]) {
-            return jsonResponse({ error: `missing header ${h}` }, 400);
-        }
+    // Auth headers are OPTIONAL — public Kalshi endpoints like
+    // /markets/{ticker}/orderbook work without them. If any of the
+    // three are present, all three must be present (partial auth would
+    // confuse Kalshi). Otherwise we forward without them.
+    const authHeaders = {};
+    const authKeys = ["KALSHI-ACCESS-KEY", "KALSHI-ACCESS-SIGNATURE", "KALSHI-ACCESS-TIMESTAMP"];
+    const presentAuth = authKeys.filter((k) => headers && headers[k]);
+    if (presentAuth.length && presentAuth.length !== authKeys.length) {
+        return jsonResponse({ error: "incomplete Kalshi auth headers" }, 400);
+    }
+    if (presentAuth.length === authKeys.length) {
+        for (const k of authKeys) authHeaders[k] = headers[k];
     }
 
     const url = `${KALSHI_HOST}${path}`;
@@ -70,9 +73,7 @@ export async function onRequest(context) {
         headers: {
             "Content-Type": "application/json",
             "User-Agent":   "DIAMOND-CONTEXT/0.1 (+https://diamond-context.pages.dev)",
-            "KALSHI-ACCESS-KEY":       headers["KALSHI-ACCESS-KEY"],
-            "KALSHI-ACCESS-SIGNATURE": headers["KALSHI-ACCESS-SIGNATURE"],
-            "KALSHI-ACCESS-TIMESTAMP": headers["KALSHI-ACCESS-TIMESTAMP"],
+            ...authHeaders,
         },
     };
     if (body != null) {

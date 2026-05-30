@@ -6835,3 +6835,252 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .ks-toast-ok   { border-left: 3px solid var(--accent-win); }
 .ks-toast-err  { border-left: 3px solid var(--accent-live); }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   Bet modal take/post toggle + orderbook info
+   ═══════════════════════════════════════════════════════════════ */
+
+.km-mode-tabs {
+    display: flex;
+    gap: 0;
+    margin: 16px 0 12px;
+    border-bottom: 1px solid var(--border);
+}
+.km-mode-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    font-family: inherit;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 120ms, border-color 120ms;
+}
+.km-mode-tab:hover { color: var(--text); }
+.km-mode-tab.active {
+    color: var(--accent-action);
+    border-bottom-color: var(--accent-action);
+}
+
+.km-mode-explainer {
+    font-size: 11px;
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+/* Orderbook info card inside take-mode */
+.km-orderbook-info {
+    padding: 10px 12px;
+    background: rgba(56, 189, 248, 0.06);
+    border: 1px solid rgba(56, 189, 248, 0.18);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 12px;
+}
+.km-ob-loading {
+    color: var(--text-faint);
+    font-style: italic;
+}
+.km-ob-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.km-ob-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+.km-ob-val {
+    color: var(--accent-win);
+    font-weight: 800;
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+}
+.km-ob-qty {
+    color: var(--text-dim);
+    font-size: 11px;
+}
+.km-ob-empty {
+    color: var(--text-dim);
+    line-height: 1.5;
+    font-size: 12px;
+}
+.km-ob-empty strong { color: var(--accent-live); display: block; margin-bottom: 4px; }
+.km-ob-empty em { font-style: italic; color: var(--text); }
+
+.km-hint-warn {
+    color: #FCA5A5;
+    background: rgba(239, 68, 68, 0.08);
+    padding: 4px 8px;
+    border-radius: 3px;
+    margin-top: 4px;
+    display: block;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   My Kalshi panel — balance + open orders + cancel
+   Lives at the top of the markets dashboard.
+   ═══════════════════════════════════════════════════════════════ */
+
+.ks-mybets {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    margin-bottom: 18px;
+}
+.ks-mybets-disconnected .ks-mybets-empty {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: var(--text-dim);
+}
+.ks-mybets-disconnected .ks-cta {
+    background: transparent;
+    border: 1px dashed rgba(56, 189, 248, 0.5);
+    color: var(--accent-action);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-family: inherit;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.ks-mybets-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: #86EFAC;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+}
+.ks-mybets-refresh {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    font-family: inherit;
+    transition: color 120ms, border-color 120ms, transform 220ms;
+}
+.ks-mybets-refresh:hover {
+    color: var(--text);
+    border-color: var(--accent-action);
+    transform: rotate(90deg);
+}
+
+.ks-mybets-grid {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 24px;
+    align-items: start;
+}
+@media (max-width: 720px) {
+    .ks-mybets-grid { grid-template-columns: 1fr; }
+}
+
+.ks-mybets-key {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+}
+.ks-mybets-balance-val {
+    color: var(--accent-win);
+    font-size: 32px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.ks-mybets-orders-empty {
+    font-size: 12px;
+    color: var(--text-faint);
+    font-style: italic;
+}
+.ks-mybets-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.ks-mybets-table thead th {
+    text-align: left;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+}
+.ks-mybets-table tbody td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+.ks-mybets-table tbody tr:last-child td { border-bottom: none; }
+.ks-mybets-ticker {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
+.ks-mybets-side {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.06em;
+}
+.ks-mybets-side-yes {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--accent-win);
+}
+.ks-mybets-side-no {
+    background: rgba(239, 68, 68, 0.18);
+    color: var(--accent-live);
+}
+.ks-mybets-cancel {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: color 120ms, border-color 120ms, background 120ms;
+}
+.ks-mybets-cancel:hover {
+    color: var(--accent-live);
+    border-color: var(--accent-live);
+    background: rgba(239, 68, 68, 0.08);
+}
+.ks-mybets-cancel:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

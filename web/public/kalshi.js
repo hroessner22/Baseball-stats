@@ -281,6 +281,103 @@ async function placeOrder(opts) {
     return callKalshi("POST", "/trade-api/v2/portfolio/orders", payload);
 }
 
+async function cancelOrder(orderId) {
+    if (!orderId) throw new Error("orderId required");
+    return callKalshi("DELETE", `/trade-api/v2/portfolio/orders/${encodeURIComponent(orderId)}`);
+}
+
+async function getOpenOrders() {
+    if (!isConnected()) return [];
+    try {
+        const data = await callKalshi("GET", "/trade-api/v2/portfolio/orders?status=resting&limit=50");
+        return data.orders || [];
+    } catch { return []; }
+}
+
+async function getPositions() {
+    if (!isConnected()) return { market_positions: [] };
+    try {
+        return await callKalshi("GET", "/trade-api/v2/portfolio/positions?limit=100");
+    } catch { return { market_positions: [] }; }
+}
+
+// Public Kalshi orderbook — used by "take existing offer" mode to
+// figure out what's actually available to fill against.
+//
+// Kalshi currently returns one of two shapes (both observed live):
+//   OLD:  { orderbook:    { yes: [[price_cents, contract_qty], ...], no: [...] } }
+//   NEW:  { orderbook_fp: { yes_dollars: [[price_$_str, qty_$_str], ...], no_dollars: [...] } }
+//
+// We normalize both to { yes: [[price_cents, contracts], ...], no: [...] }
+// so the rest of the code is shape-agnostic. Both formats sort each
+// array ASCENDING by price.
+async function getOrderbook(ticker) {
+    if (!ticker) return null;
+    try {
+        const res = await fetch("/api/kalshi/proxy", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                method: "GET",
+                path:   `/trade-api/v2/markets/${encodeURIComponent(ticker)}/orderbook`,
+                headers: {},
+                body:    null,
+            }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return null;
+        const raw = data.orderbook_fp || data.orderbook;
+        return normalizeOrderbook(raw);
+    } catch { return null; }
+}
+
+function normalizeOrderbook(raw) {
+    if (!raw) return null;
+    // Old format already in [price_cents, contracts] — pass through.
+    if (raw.yes || raw.no) {
+        return { yes: raw.yes || [], no: raw.no || [] };
+    }
+    // New format: price in dollars as string, qty in dollars as string.
+    // Convert: price_cents = price_$ × 100; contracts = qty_$ / price_$.
+    const conv = (arr) => (arr || []).map(([p, q]) => {
+        const priceDollars = parseFloat(p);
+        const qtyDollars   = parseFloat(q);
+        if (!Number.isFinite(priceDollars) || priceDollars <= 0
+            || !Number.isFinite(qtyDollars) || qtyDollars <= 0) {
+            return [0, 0];
+        }
+        return [Math.round(priceDollars * 100), Math.floor(qtyDollars / priceDollars)];
+    }).filter(([p, c]) => p > 0 && c > 0);
+    return {
+        yes: conv(raw.yes_dollars),
+        no:  conv(raw.no_dollars),
+    };
+}
+
+// On a binary Kalshi market, the YES order book and the NO order book
+// are TWO sides of the same coin. If someone is bidding `q` × NO at
+// price `p`¢, that's equivalent to someone OFFERING (asking) to sell
+// YES at `(100 - p)`¢ for that same `q` quantity. This is how Kalshi
+// expresses asks in its public orderbook: there's no separate "yes_ask"
+// list — instead you read the "no" bids and flip them. Returns the
+// best ask for the side you want to BUY, with the count available.
+function bestAskForBuy(orderbook, side) {
+    if (!orderbook) return null;
+    // To buy YES at the lowest price, look at NO bids (highest first
+    // when sorted by NO price = lowest YES ask).
+    const otherSide = side === "yes" ? "no" : "yes";
+    const otherBook = orderbook[otherSide] || [];
+    // Kalshi sorts the array ascending by price. The HIGHEST NO bid
+    // corresponds to the LOWEST YES ask. So we want the last entry.
+    if (!otherBook.length) return null;
+    const last = otherBook[otherBook.length - 1];
+    const otherPrice = Number(last[0]);
+    const count = Number(last[1]);
+    const askPrice = 100 - otherPrice;
+    if (!Number.isFinite(askPrice) || !Number.isFinite(count) || count < 1) return null;
+    return { price: askPrice, count };
+}
+
 function cryptoUuid() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -402,16 +499,8 @@ function openBetModal(market, outcome) {
         openConnectModal();
         return;
     }
-    // Per-team Kalshi tickers (KXMLBGAME-...-TEX vs KXMLBGAME-...-KC)
-    // were folded into a single display market in foldKalshiGameMarkets,
-    // with the FULL per-side ticker preserved as the prefix of each
-    // outcome.id. So the ticker we POST against lives in outcome.id, NOT
-    // market.raw_market_id (which is only the shared key without the
-    // team suffix and yields Kalshi "market not found").
     const idMatch = String(outcome.id || "").match(/^(.*):(yes|no)$/i);
-    const ticker = idMatch
-        ? idMatch[1]
-        : (market.raw_market_id || "");
+    const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
     const side = (idMatch ? idMatch[2] : "yes").toLowerCase();
     const probPercent = outcome.probability != null
         ? Math.max(1, Math.min(99, Math.round(outcome.probability * 100)))
@@ -425,73 +514,203 @@ function openBetModal(market, outcome) {
         <h2>Buy ${side.toUpperCase()} · ${escapeHtml(outcome.name || "")}</h2>
         <p class="km-sub km-bet-ticker">${escapeHtml(market.title || "")}</p>
         <p class="km-sub km-ticker-line">Ticker <code>${escapeHtml(ticker)}</code></p>
-        <form class="km-form km-bet-form">
-          <label class="km-field">
-            <span>Contracts</span>
-            <input type="number" name="count" min="1" step="1" value="1" required>
-          </label>
-          <label class="km-field">
-            <span>Limit price (¢)</span>
-            <input type="number" name="price" min="1" max="99" step="1"
-                   value="${probPercent}" required>
-            <small class="km-hint">Last quote ≈ ${probPercent}¢. Each contract pays $1 if you win.</small>
-          </label>
-          <div class="km-total">
-            Total cost: <strong class="km-total-val">$${(probPercent / 100).toFixed(2)}</strong>
+
+        <!-- TAKE vs POST mode toggle. Take = fill immediately at the
+             best available ask. Post = put your own price on the book
+             and wait for someone to take it. -->
+        <div class="km-mode-tabs" role="tablist">
+          <button type="button" class="km-mode-tab active" data-mode="take" role="tab" aria-selected="true">
+            Take existing offer
+          </button>
+          <button type="button" class="km-mode-tab" data-mode="post" role="tab" aria-selected="false">
+            Post your own price
+          </button>
+        </div>
+
+        <div class="km-mode-body km-mode-take">
+          <div class="km-orderbook-info" data-ob-info>
+            <span class="km-ob-loading">Loading orderbook…</span>
           </div>
-          <div class="km-error" hidden></div>
-          <div class="km-actions">
-            <button type="button" class="km-cancel">Cancel</button>
-            <button type="submit" class="km-submit">Place bet</button>
-          </div>
-        </form>
+          <form class="km-form km-bet-form" data-form="take">
+            <label class="km-field">
+              <span>Contracts to buy</span>
+              <input type="number" name="count" min="1" step="1" value="1" required>
+              <small class="km-hint" data-ob-hint></small>
+            </label>
+            <div class="km-total">
+              Cost at best ask: <strong class="km-total-val">—</strong>
+            </div>
+            <div class="km-error" hidden></div>
+            <div class="km-actions">
+              <button type="button" class="km-cancel">Cancel</button>
+              <button type="submit" class="km-submit" disabled>Take offer</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="km-mode-body km-mode-post" hidden>
+          <p class="km-sub km-mode-explainer">
+            Your order sits on Kalshi's book at your chosen price until
+            someone takes it (or you cancel). Pays $1 per contract if you win.
+          </p>
+          <form class="km-form km-bet-form" data-form="post">
+            <label class="km-field">
+              <span>Contracts</span>
+              <input type="number" name="count" min="1" step="1" value="1" required>
+            </label>
+            <label class="km-field">
+              <span>Your limit price (¢)</span>
+              <input type="number" name="price" min="1" max="99" step="1"
+                     value="${probPercent}" required>
+              <small class="km-hint">1¢-99¢. Each contract pays $1 if you win.</small>
+            </label>
+            <div class="km-total">
+              Total cost: <strong class="km-total-val">$${(probPercent / 100).toFixed(2)}</strong>
+            </div>
+            <div class="km-error" hidden></div>
+            <div class="km-actions">
+              <button type="button" class="km-cancel">Cancel</button>
+              <button type="submit" class="km-submit">Place limit order</button>
+            </div>
+          </form>
+        </div>
       </div>
     `;
     document.body.appendChild(overlay);
 
-    const form = overlay.querySelector(".km-form");
-    const errEl = overlay.querySelector(".km-error");
-    const totalEl = overlay.querySelector(".km-total-val");
-    const submit = overlay.querySelector(".km-submit");
-    const cntIn = form.querySelector('input[name="count"]');
-    const prcIn = form.querySelector('input[name="price"]');
-    const recalc = () => {
-        const cnt = Number(cntIn.value) || 0;
-        const prc = Number(prcIn.value) || 0;
-        totalEl.textContent = `$${((cnt * prc) / 100).toFixed(2)}`;
-    };
-    cntIn.addEventListener("input", recalc);
-    prcIn.addEventListener("input", recalc);
-
     const close = () => overlay.remove();
-    overlay.querySelector(".km-close").addEventListener("click", close);
-    overlay.querySelector(".km-cancel").addEventListener("click", close);
+    overlay.querySelectorAll(".km-close, .km-cancel").forEach((b) =>
+        b.addEventListener("click", close));
     overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
 
-    form.addEventListener("submit", async (e) => {
+    // Mode toggle behavior
+    const takeBody = overlay.querySelector(".km-mode-take");
+    const postBody = overlay.querySelector(".km-mode-post");
+    const tabs = overlay.querySelectorAll(".km-mode-tab");
+    tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+            tabs.forEach((t) => {
+                const active = t === tab;
+                t.classList.toggle("active", active);
+                t.setAttribute("aria-selected", active ? "true" : "false");
+            });
+            const mode = tab.getAttribute("data-mode");
+            takeBody.hidden = mode !== "take";
+            postBody.hidden = mode !== "post";
+        });
+    });
+
+    // POST form: original limit-order behavior
+    const postForm = overlay.querySelector('[data-form="post"]');
+    const postTotalEl = postForm.querySelector(".km-total-val");
+    const postCnt = postForm.querySelector('input[name="count"]');
+    const postPrc = postForm.querySelector('input[name="price"]');
+    const postRecalc = () => {
+        const cnt = Number(postCnt.value) || 0;
+        const prc = Number(postPrc.value) || 0;
+        postTotalEl.textContent = `$${((cnt * prc) / 100).toFixed(2)}`;
+    };
+    postCnt.addEventListener("input", postRecalc);
+    postPrc.addEventListener("input", postRecalc);
+    postForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        errEl.hidden = true;
-        submit.disabled = true;
-        submit.textContent = "Placing…";
-        try {
-            const cnt = parseInt(cntIn.value, 10);
-            const prc = parseInt(prcIn.value, 10);
-            const res = await placeOrder({ ticker, side, count: cnt, price: prc });
-            close();
-            cachedBalanceCents = null;
-            cachedBalanceFetchedAt = 0;
-            renderAllAccountStrips();
-            const status = res?.order?.status || "submitted";
-            toast(`Order ${status}: ${cnt} × ${side.toUpperCase()} @ ${prc}¢`, "ok");
-        } catch (err) {
-            errEl.hidden = false;
-            errEl.textContent = err.message || "Order failed";
-            submit.disabled = false;
-            submit.textContent = "Place bet";
+        submitOrder(postForm, ticker, side, parseInt(postPrc.value, 10), parseInt(postCnt.value, 10), close, "post");
+    });
+
+    // TAKE form: fetch orderbook, fill out the best-ask info, set the
+    // submit button live with the qty cap.
+    const takeForm = overlay.querySelector('[data-form="take"]');
+    const obInfo = overlay.querySelector("[data-ob-info]");
+    const obHint = takeForm.querySelector("[data-ob-hint]");
+    const takeTotal = takeForm.querySelector(".km-total-val");
+    const takeCnt = takeForm.querySelector('input[name="count"]');
+    const takeSubmit = takeForm.querySelector(".km-submit");
+
+    let bestAsk = null;        // { price, count } once orderbook loads
+    const recalcTake = () => {
+        const cnt = Number(takeCnt.value) || 0;
+        if (!bestAsk) {
+            takeTotal.textContent = "—";
+            takeSubmit.disabled = true;
+            return;
+        }
+        const capped = Math.min(cnt, bestAsk.count);
+        const cost = capped * bestAsk.price / 100;
+        takeTotal.textContent = `$${cost.toFixed(2)} (${capped} × ${bestAsk.price}¢)`;
+        takeSubmit.disabled = !(capped >= 1);
+        if (cnt > bestAsk.count) {
+            obHint.textContent = `Only ${bestAsk.count} available at ${bestAsk.price}¢ — your order will fill ${bestAsk.count} and reject the rest.`;
+            obHint.className = "km-hint km-hint-warn";
+        } else {
+            obHint.textContent = `${bestAsk.count} available at ${bestAsk.price}¢.`;
+            obHint.className = "km-hint";
+        }
+    };
+    takeCnt.addEventListener("input", recalcTake);
+    takeForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (!bestAsk) return;
+        const cnt = Math.min(parseInt(takeCnt.value, 10) || 0, bestAsk.count);
+        if (cnt < 1) return;
+        // Take = place a limit order AT the best ask price. Crosses the
+        // book and fills against the resting offer.
+        submitOrder(takeForm, ticker, side, bestAsk.price, cnt, close, "take");
+    });
+
+    // Load the orderbook for take mode.
+    getOrderbook(ticker).then((ob) => {
+        bestAsk = bestAskForBuy(ob, side);
+        if (bestAsk) {
+            obInfo.innerHTML = `
+              <div class="km-ob-row">
+                <span class="km-ob-label">Best ask</span>
+                <span class="km-ob-val">${bestAsk.price}¢</span>
+                <span class="km-ob-qty">× ${bestAsk.count} available</span>
+              </div>
+            `;
+            takeCnt.max = bestAsk.count;
+            recalcTake();
+        } else {
+            obInfo.innerHTML = `
+              <div class="km-ob-empty">
+                <strong>No offers to take.</strong>
+                Nobody is currently selling ${side.toUpperCase()} on this
+                market. Switch to <em>Post your own price</em> to put a
+                bid on the book and wait, or pick a different market.
+              </div>
+            `;
+            takeSubmit.disabled = true;
         }
     });
 
-    setTimeout(() => cntIn.focus(), 50);
+    setTimeout(() => takeCnt.focus(), 50);
+}
+
+// Shared submit for both take and post modes — fires placeOrder,
+// shows toast, refreshes balance + open orders.
+async function submitOrder(form, ticker, side, price, count, close, mode) {
+    const submit = form.querySelector(".km-submit");
+    const errEl = form.querySelector(".km-error");
+    errEl.hidden = true;
+    submit.disabled = true;
+    const originalText = submit.textContent;
+    submit.textContent = mode === "take" ? "Taking…" : "Placing…";
+    try {
+        const res = await placeOrder({ ticker, side, count, price });
+        close();
+        cachedBalanceCents = null;
+        cachedBalanceFetchedAt = 0;
+        renderAllAccountStrips();
+        renderAllMyBets();
+        const status = res?.order?.status || "submitted";
+        const verb = mode === "take" ? "Took" : "Placed";
+        toast(`${verb} ${count} × ${side.toUpperCase()} @ ${price}¢ (${status})`, "ok");
+    } catch (err) {
+        errEl.hidden = false;
+        errEl.textContent = err.message || "Order failed";
+        submit.disabled = false;
+        submit.textContent = originalText;
+    }
 }
 
 
@@ -522,6 +741,110 @@ function renderAllAccountStrips() {
     document.querySelectorAll("[data-kalshi-strip]").forEach((el) => {
         el.innerHTML = renderAccountStrip();
     });
+}
+
+
+// ── My Bets panel — balance breakdown + open orders + cancel ────
+
+// Shell that gets injected into any [data-kalshi-mybets] slot. Real
+// content (orders, positions) is hydrated async from Kalshi via
+// refreshMyBets() so the dashboard render isn't blocked on a network
+// round-trip. Re-render is cheap.
+function renderMyBetsPanel() {
+    if (!isConnected()) {
+        return `
+          <div class="ks-mybets ks-mybets-disconnected">
+            <div class="ks-mybets-head">My Kalshi bets</div>
+            <p class="ks-mybets-empty">
+              <button class="ks-cta" data-kalshi-connect>Connect Kalshi</button>
+              to see your balance and open orders here.
+            </p>
+          </div>
+        `;
+    }
+    const balCents = cachedBalanceCents;
+    const balText = balCents != null ? `$${(balCents / 100).toFixed(2)}` : "…";
+    return `
+      <div class="ks-mybets">
+        <div class="ks-mybets-head">
+          <span>My Kalshi</span>
+          <button class="ks-mybets-refresh" data-kalshi-mybets-refresh
+                  title="Refresh">⟳</button>
+        </div>
+        <div class="ks-mybets-grid">
+          <div class="ks-mybets-balance">
+            <div class="ks-mybets-key">Available balance</div>
+            <div class="ks-mybets-balance-val">${balText}</div>
+          </div>
+          <div class="ks-mybets-orders" data-kalshi-orders-slot>
+            <div class="ks-mybets-key">Open orders</div>
+            <div class="ks-mybets-orders-body">Loading…</div>
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+function renderAllMyBets() {
+    const slots = document.querySelectorAll("[data-kalshi-mybets]");
+    if (!slots.length) return;
+    slots.forEach((s) => { s.innerHTML = renderMyBetsPanel(); });
+    if (isConnected()) refreshMyBets();
+}
+
+// Pulls open orders fresh and renders into the orders slot. Called on
+// every render and on a 20s interval while the user is on the page.
+let myBetsRefreshTimer = null;
+async function refreshMyBets() {
+    if (!isConnected()) return;
+    const slots = document.querySelectorAll("[data-kalshi-orders-slot]");
+    if (!slots.length) return;
+    const [orders, balance] = await Promise.all([
+        getOpenOrders(),
+        getBalance(),
+    ]);
+    renderAllAccountStrips();
+    // Update the balance display in the panel.
+    document.querySelectorAll(".ks-mybets-balance-val").forEach((el) => {
+        el.textContent = balance != null ? `$${(balance / 100).toFixed(2)}` : "…";
+    });
+    slots.forEach((slot) => {
+        slot.innerHTML = `
+          <div class="ks-mybets-key">Open orders (${orders.length})</div>
+          ${orders.length === 0
+            ? `<div class="ks-mybets-orders-empty">No resting orders. Place one from any Kalshi market card.</div>`
+            : `<table class="ks-mybets-table">
+                 <thead>
+                   <tr><th>Market</th><th>Side</th><th>Qty</th><th>Price</th><th></th></tr>
+                 </thead>
+                 <tbody>
+                   ${orders.map(renderMyBetRow).join("")}
+                 </tbody>
+               </table>`}
+        `;
+    });
+}
+
+function renderMyBetRow(o) {
+    const ticker = o.ticker || "";
+    const sideName = (o.yes_price != null) ? "YES" : "NO";
+    const price = o.yes_price != null ? o.yes_price : o.no_price;
+    const remaining = (o.remaining_count != null) ? o.remaining_count : o.count;
+    // Truncate ticker — KXMLBGAME-26MAY301605KCTEX-TEX → KCTEX-TEX
+    const shortTicker = ticker.replace(/^KXMLBGAME-\d+[A-Z]+\d+/, "").replace(/^-+/, "") || ticker;
+    return `
+      <tr data-order-id="${escapeHtmlAttr(o.order_id || "")}">
+        <td title="${escapeHtmlAttr(ticker)}">
+          <code class="ks-mybets-ticker">${escapeHtml(shortTicker)}</code>
+        </td>
+        <td><span class="ks-mybets-side ks-mybets-side-${sideName.toLowerCase()}">${sideName}</span></td>
+        <td>${remaining}</td>
+        <td>${price != null ? price + "¢" : "—"}</td>
+        <td>
+          <button class="ks-mybets-cancel" data-kalshi-cancel="${escapeHtmlAttr(o.order_id || "")}">Cancel</button>
+        </td>
+      </tr>
+    `;
 }
 
 function renderAllBetButtons() {
@@ -618,6 +941,35 @@ function attachDelegates() {
             openBetModal(marketFromButton(betBtn), outcomeFromButton(betBtn));
             return;
         }
+        const refreshBtn = t.closest("[data-kalshi-mybets-refresh]");
+        if (refreshBtn) {
+            e.preventDefault();
+            // Bust the balance cache so the refresh button feels live.
+            cachedBalanceCents = null;
+            cachedBalanceFetchedAt = 0;
+            refreshMyBets();
+            return;
+        }
+        const cancelBtn = t.closest("[data-kalshi-cancel]");
+        if (cancelBtn) {
+            e.preventDefault();
+            const orderId = cancelBtn.getAttribute("data-kalshi-cancel");
+            if (!orderId) return;
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = "Cancelling…";
+            try {
+                await cancelOrder(orderId);
+                toast("Order cancelled", "ok");
+                cachedBalanceCents = null;
+                cachedBalanceFetchedAt = 0;
+                refreshMyBets();
+            } catch (err) {
+                toast(`Cancel failed: ${err.message || err}`, "err");
+                cancelBtn.disabled = false;
+                cancelBtn.textContent = "Cancel";
+            }
+            return;
+        }
     });
 }
 
@@ -657,8 +1009,13 @@ function escapeHtmlAttr(s) { return escapeHtml(s); }
 
 attachDelegates();
 if (isConnected()) {
-    getBalance().then(renderAllAccountStrips);
+    getBalance().then(() => { renderAllAccountStrips(); renderAllMyBets(); });
     setInterval(() => getBalance().then(renderAllAccountStrips), BALANCE_REFRESH_MS);
+    // Open orders auto-refresh — every 20s so the panel stays current
+    // after fills / cancels without a full page reload.
+    myBetsRefreshTimer = setInterval(() => {
+        if (isConnected()) refreshMyBets();
+    }, 20_000);
 }
 
 
@@ -668,13 +1025,20 @@ root.Kalshi = {
     isConnected,
     getLabel,
     getBalance,
+    getOpenOrders,
+    getPositions,
+    getOrderbook,
     placeOrder,
+    cancelOrder,
     openConnectModal,
     openBetModal,
     renderAccountStrip,
     renderBetButtons,
+    renderMyBetsPanel,
     renderAllAccountStrips,
     renderAllBetButtons,
+    renderAllMyBets,
+    refreshMyBets,
     toast,
 };
 
