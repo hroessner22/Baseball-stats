@@ -515,7 +515,7 @@ function openConnectModal() {
 
 // ── Bet modal (unchanged from prior version) ────────────────────
 
-function openBetModal(market, outcome) {
+function openBetModal(market, outcome, seed = null) {
     if (!isConnected()) {
         openConnectModal();
         return;
@@ -526,6 +526,13 @@ function openBetModal(market, outcome) {
     const probPercent = outcome.probability != null
         ? Math.max(1, Math.min(99, Math.round(outcome.probability * 100)))
         : 50;
+    // Seed = the stake + price the user already typed into the inline
+    // calculator on the card. Pre-fill the "Contracts" field with the
+    // rounded-down contract count their stake actually buys so they
+    // don't have to do the dollars-to-contracts math twice.
+    const seedCount = (seed && Number.isFinite(seed.stake_dollars) && Number.isFinite(seed.price_cents) && seed.price_cents > 0)
+        ? Math.max(1, Math.floor(seed.stake_dollars / (seed.price_cents / 100)))
+        : 1;
 
     const overlay = document.createElement("div");
     overlay.className = "kalshi-modal-overlay";
@@ -558,7 +565,7 @@ function openBetModal(market, outcome) {
                 <button type="button" class="km-max-btn" data-take-max
                         title="Spend my full available balance">Max</button>
               </span>
-              <input type="number" name="count" min="1" step="1" value="1" required>
+              <input type="number" name="count" min="1" step="1" value="${seedCount}" required>
               <small class="km-hint" data-ob-hint></small>
             </label>
             <div class="km-total">
@@ -583,7 +590,7 @@ function openBetModal(market, outcome) {
                 <button type="button" class="km-max-btn" data-post-max
                         title="Buy as many as my balance allows at the chosen price">Max</button>
               </span>
-              <input type="number" name="count" min="1" step="1" value="1" required>
+              <input type="number" name="count" min="1" step="1" value="${seedCount}" required>
             </label>
             <label class="km-field">
               <span>Your limit price (¢)</span>
@@ -928,34 +935,115 @@ function renderAllBetButtons() {
 function renderBetButtons(market) {
     if (market.source !== "kalshi") return "";
     const outs = (market.outcomes || []).slice(0, 2);
+    // One bet row per market: shared stake input on top, two Buy
+    // buttons below (YES + NO). Each button shows the "to win"
+    // payout — fractional dollars assuming the user's exact stake
+    // (the bet modal handles whole-contract rounding at submit).
+    // Default stake $0.50 — matches the legacy "Buy YES · 50¢"
+    // shorthand the buttons used to show. Stored on the row so the
+    // orderbook hydrator can find it later for live recomputation.
+    const defaultStake = 0.50;
     return `
-      <div class="ks-bet-row">
-        ${outs.map((o) => {
-            const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
-            const side = (idMatch ? idMatch[2] : "yes").toLowerCase();
-            // Per-outcome full Kalshi ticker (KXMLBGAME-...-{TEAM}),
-            // NOT the folded shared key — Kalshi rejects the latter
-            // with "market not found".
-            const fullTicker = idMatch ? idMatch[1] : (market.raw_market_id || "");
-            const cents = o.probability != null
-                ? Math.max(1, Math.min(99, Math.round(o.probability * 100)))
-                : 50;
-            return `
-              <button class="ks-bet-btn ks-bet-${side}"
-                      data-kalshi-bet="1"
-                      data-ticker="${escapeHtmlAttr(fullTicker)}"
-                      data-market-id="${escapeHtmlAttr(market.id || "")}"
-                      data-market-title="${escapeHtmlAttr(market.title || "")}"
-                      data-outcome-id="${escapeHtmlAttr(o.id || "")}"
-                      data-outcome-name="${escapeHtmlAttr(o.name || "")}"
-                      data-outcome-prob="${o.probability != null ? o.probability : ""}"
-                      data-side="${side}">
-                Buy ${side.toUpperCase()} ${escapeHtml(o.name || "")} · ${cents}¢
-              </button>
-            `;
-        }).join("")}
+      <div class="ks-bet-row" data-bet-row="1">
+        <div class="ks-bet-stake">
+          <label class="ks-bet-stake-label">Stake</label>
+          <span class="ks-bet-stake-prefix">$</span>
+          <input type="number" class="ks-bet-stake-input"
+                 value="${defaultStake.toFixed(2)}" min="0.01" step="0.01"
+                 data-bet-stake="1" />
+        </div>
+        <div class="ks-bet-buttons">
+          ${outs.map((o) => {
+              const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+              const side = (idMatch ? idMatch[2] : "yes").toLowerCase();
+              // Per-outcome full Kalshi ticker (KXMLBGAME-...-{TEAM}),
+              // NOT the folded shared key — Kalshi rejects the latter
+              // with "market not found".
+              const fullTicker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+              // YES price in cents from probability (if /markets gave us
+              // one). Kalshi player props ship null and the orderbook
+              // hydrator fills the real value in afterward via
+              // updateBetButtonsForTicker(). priceCents on the button
+              // reflects THIS side: YES → yesCents, NO → 100 - yesCents.
+              const yesCents = o.probability != null
+                  ? Math.max(1, Math.min(99, Math.round(o.probability * 100)))
+                  : null;
+              const priceCents = yesCents == null
+                  ? null
+                  : (side === "yes" ? yesCents : 100 - yesCents);
+              const payoutText = formatPayout(defaultStake, priceCents);
+              return `
+                <button class="ks-bet-btn ks-bet-${side}"
+                        data-kalshi-bet="1"
+                        data-ticker="${escapeHtmlAttr(fullTicker)}"
+                        data-market-id="${escapeHtmlAttr(market.id || "")}"
+                        data-market-title="${escapeHtmlAttr(market.title || "")}"
+                        data-outcome-id="${escapeHtmlAttr(o.id || "")}"
+                        data-outcome-name="${escapeHtmlAttr(o.name || "")}"
+                        data-outcome-prob="${o.probability != null ? o.probability : ""}"
+                        data-side="${side}"
+                        data-price-cents="${priceCents != null ? priceCents : ""}">
+                  <span class="ks-bet-btn-action">Buy ${side.toUpperCase()}</span>
+                  <span class="ks-bet-btn-win" data-bet-payout>${payoutText}</span>
+                </button>
+              `;
+          }).join("")}
+        </div>
       </div>
     `;
+}
+
+// Format the "to win $X.XX" caption inside a Buy button. Shows "—"
+// while we don't yet have a live price (orderbook still loading).
+function formatPayout(stake, priceCents) {
+    if (!Number.isFinite(stake) || stake <= 0) return "enter stake";
+    if (!Number.isFinite(priceCents) || priceCents < 1 || priceCents > 99) {
+        return "win $—";
+    }
+    // profit = stake × (100 - p) / p. Fractional dollars; the bet
+    // modal rounds to whole contracts at submit time.
+    const profit = stake * (100 - priceCents) / priceCents;
+    return `win $${profit.toFixed(2)}`;
+}
+
+// Hydrator hook: after the orderbook returns a live YES quote, find
+// every Buy-button on the page that shares this ticker and refresh
+// its data-price-cents + payout display. Called from app.js's
+// hydrateKalshiBookCells. Idempotent.
+function updateBetButtonsForTicker(ticker, yesProb) {
+    if (!ticker || typeof document === "undefined") return;
+    if (!Number.isFinite(yesProb) || yesProb <= 0 || yesProb >= 1) return;
+    const yesCents = Math.max(1, Math.min(99, Math.round(yesProb * 100)));
+    const sel = `.ks-bet-btn[data-ticker="${cssEscape(ticker)}"]`;
+    document.querySelectorAll(sel).forEach((btn) => {
+        const side = btn.getAttribute("data-side");
+        const priceCents = side === "yes" ? yesCents : 100 - yesCents;
+        btn.setAttribute("data-price-cents", String(priceCents));
+        const row = btn.closest("[data-bet-row]");
+        const stakeInput = row?.querySelector("[data-bet-stake]");
+        const stake = parseFloat(stakeInput?.value || "0.50");
+        const slot = btn.querySelector("[data-bet-payout]");
+        if (slot) slot.textContent = formatPayout(stake, priceCents);
+    });
+}
+
+// Recompute payouts within ONE bet row — used when the user edits
+// the stake input. Reads each button's last-known price and rewrites
+// the payout caption.
+function recomputeRowPayouts(row) {
+    if (!row) return;
+    const stakeInput = row.querySelector("[data-bet-stake]");
+    const stake = parseFloat(stakeInput?.value || "0.50");
+    row.querySelectorAll(".ks-bet-btn").forEach((btn) => {
+        const priceCents = parseInt(btn.getAttribute("data-price-cents") || "", 10);
+        const slot = btn.querySelector("[data-bet-payout]");
+        if (slot) slot.textContent = formatPayout(stake, Number.isFinite(priceCents) ? priceCents : null);
+    });
+}
+
+function cssEscape(s) {
+    if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^\w-]/g, (c) => "\\" + c);
 }
 
 function marketFromButton(btn) {
@@ -1001,7 +1089,17 @@ function attachDelegates() {
         const betBtn = t.closest("[data-kalshi-bet]");
         if (betBtn) {
             e.preventDefault();
-            openBetModal(marketFromButton(betBtn), outcomeFromButton(betBtn));
+            // Pull the stake the user typed in the inline calculator
+            // so the modal opens pre-filled with the right contract
+            // count instead of the bare default (1).
+            const row = betBtn.closest("[data-bet-row]");
+            const stakeInput = row?.querySelector("[data-bet-stake]");
+            const stake = parseFloat(stakeInput?.value || "");
+            const priceCents = parseInt(betBtn.getAttribute("data-price-cents") || "", 10);
+            const seed = (Number.isFinite(stake) && Number.isFinite(priceCents) && priceCents > 0)
+                ? { stake_dollars: stake, price_cents: priceCents }
+                : null;
+            openBetModal(marketFromButton(betBtn), outcomeFromButton(betBtn), seed);
             return;
         }
         const refreshBtn = t.closest("[data-kalshi-mybets-refresh]");
@@ -1048,6 +1146,17 @@ function attachDelegates() {
             }
             return;
         }
+    });
+
+    // Stake-input live recompute. Listening at document level so the
+    // markets pane's 8s re-render doesn't drop the handler — and so
+    // the input works in every condensed prop card without per-card
+    // wiring at render time.
+    document.addEventListener("input", (e) => {
+        const stakeInput = e.target.closest("[data-bet-stake]");
+        if (!stakeInput) return;
+        const row = stakeInput.closest("[data-bet-row]");
+        if (row) recomputeRowPayouts(row);
     });
 }
 
@@ -1131,6 +1240,10 @@ root.Kalshi = {
     renderAllBetButtons,
     renderAllMyBets,
     refreshMyBets,
+    // Called by app.js's hydrateKalshiBookCells once the live Kalshi
+    // orderbook quote lands — refreshes the "to win" payout display
+    // on each Buy button without re-rendering the whole pane.
+    updateBetButtonsForTicker,
     toast,
 };
 

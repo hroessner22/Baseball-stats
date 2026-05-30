@@ -5370,9 +5370,16 @@ async function hydrateKalshiBookCells() {
             });
             // Pipe the live YES implied probability into any visible
             // .model-row sharing this ticker so the EDGE pill refreshes.
+            // Also refresh the inline bet-calculator's "to win" payout
+            // on every Buy button bound to this ticker.
             const yesProb = orderbookYesProb(ob);
-            if (yesProb != null && typeof updateModelEdgeForTicker === "function") {
-                updateModelEdgeForTicker(ticker, yesProb);
+            if (yesProb != null) {
+                if (typeof updateModelEdgeForTicker === "function") {
+                    updateModelEdgeForTicker(ticker, yesProb);
+                }
+                if (window.Kalshi?.updateBetButtonsForTicker) {
+                    window.Kalshi.updateBetButtonsForTicker(ticker, yesProb);
+                }
             }
         } catch {
             cellList.forEach((cell) => {
