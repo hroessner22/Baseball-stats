@@ -1040,15 +1040,17 @@ function ensureGlobalStakeWidget() {
     syncGlobalStakeWidgetVisibility();
 }
 
-// Show only when the markets pane is live in the DOM. The renderGame
-// pass blows the markets pane in and out as the user clicks the mode
-// toggle — observe the body for that mutation and toggle visibility.
+// Show whenever there's at least one Kalshi Buy button on screen.
+// That covers the per-game Markets pane, the team page's player/team
+// prop sections, and any future bet-rendering view without needing
+// to enumerate container IDs. MutationObserver re-runs this on any
+// DOM change, so the widget appears/disappears as the user navigates.
 function syncGlobalStakeWidgetVisibility() {
     if (typeof document === "undefined") return;
     const widget = document.getElementById("global-stake-widget");
     if (!widget) return;
-    const marketsOpen = !!document.getElementById("markets-pane");
-    widget.classList.toggle("is-visible", marketsOpen);
+    const hasBetButton = !!document.querySelector(".ks-bet-btn");
+    widget.classList.toggle("is-visible", hasBetButton);
 }
 
 // Recompute every visible Buy button's payout against the current
