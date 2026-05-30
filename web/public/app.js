@@ -1155,6 +1155,13 @@ function renderMarketsDashboardGameCard(g, lookup) {
 // the 10-second dashboard auto-refresh doesn't wipe out what the user
 // typed mid-thought.
 function renderMdBetCalculator(g, kalshiMl) {
+    // In Kalshi-only mode the per-card calculator is dead code — the
+    // global stake widget (top-right) drives every bet on the page,
+    // and onMdOutcomePick opens the Kalshi bet modal directly seeded
+    // with that stake. No need for a per-game stake input + place
+    // button cluttering each card.
+    if (typeof KALSHI_ONLY_MODE !== "undefined" && KALSHI_ONLY_MODE) return "";
+
     const opts = [];
     const pushOpts = (markets, kind, label) => {
         const outcomes = bestOutcomesAcrossSources(markets, kind);
@@ -1311,14 +1318,14 @@ function recomputeMdPayout(calc) {
     if (totalEl) totalEl.textContent = `(pays $${total.toFixed(2)})`;
 }
 
-function onMdOutcomePick(btn) {
+async function onMdOutcomePick(btn) {
     const card = btn.closest(".md-game-card");
     if (!card) return;
 
-    // Kalshi-only mode: skip the inline bet calculator and open the
-    // Kalshi bet modal directly with the clicked side prefilled.
-    // The bet modal has the take/post toggle + live orderbook fetch
-    // already; the calculator was a middle step we no longer need.
+    // Kalshi-only mode: skip the legacy inline bet calculator and
+    // open the Kalshi bet modal directly with the clicked side +
+    // GLOBAL STAKE prefilled. The bet modal handles the take/post
+    // toggle and live orderbook fetch from there.
     if (KALSHI_ONLY_MODE && window.Kalshi && window.Kalshi.openBetModal) {
         const gameKey = card.getAttribute("data-game-key");
         const game = (window._mdGames || {})[gameKey];
@@ -1332,9 +1339,30 @@ function onMdOutcomePick(btn) {
         const outcome = (kalshiMl.outcomes || []).find((o) =>
             (o.name || "").toLowerCase() === wantName.toLowerCase()
         ) || kalshiMl.outcomes?.[0];
-        if (outcome) {
-            window.Kalshi.openBetModal(kalshiMl, outcome);
+        if (!outcome) return;
+        // Seed the modal with the global stake. Pull the side's
+        // current YES price from the orderbook (cached by the
+        // hydrator) so the modal's Contracts field opens at
+        // floor(stake / price) instead of the fallback count=1.
+        const stake = window.Kalshi.getGlobalStake?.() ?? 0.50;
+        let priceCents = null;
+        const idMatch = String(outcome.id || "").match(/^(.*):(yes|no)$/i);
+        const ticker = idMatch ? idMatch[1] : (kalshiMl.raw_market_id || "");
+        const side = idMatch ? idMatch[2].toLowerCase() : "yes";
+        if (ticker && window.Kalshi.getOrderbook) {
+            try {
+                const ob = await window.Kalshi.getOrderbook(ticker);
+                const yesProb = orderbookYesProb(ob);
+                if (yesProb != null) {
+                    const yesCents = Math.max(1, Math.min(99, Math.round(yesProb * 100)));
+                    priceCents = side === "yes" ? yesCents : 100 - yesCents;
+                }
+            } catch { /* fall through with null priceCents */ }
         }
+        const seed = (priceCents != null)
+            ? { stake_dollars: stake, price_cents: priceCents }
+            : null;
+        window.Kalshi.openBetModal(kalshiMl, outcome, seed);
         return;
     }
 
