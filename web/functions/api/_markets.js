@@ -1358,7 +1358,23 @@ async function listPinnacleMlbMarkets() {
             let outcomes = [];
             if (type === "moneyline") {
                 qType = "moneyline";
-                outcomes = prices.map((p) => {
+                // Pinnacle's straight markets endpoint sometimes
+                // returns MULTIPLE prices for the same designation
+                // (alternate moneylines without the isAlternate flag
+                // set). Without de-duping, one Pinnacle moneyline can
+                // emit 50+ outcomes all labelled "Milwaukee Brewers"
+                // at different prices — which then flooded the
+                // dashboard card. Keep only the first price per
+                // designation (home/away) so the market has at most 2
+                // outcomes, matching how every other sportsbook shows
+                // a moneyline.
+                const byDesignation = {};
+                for (const p of prices) {
+                    if (!byDesignation[p.designation]) {
+                        byDesignation[p.designation] = p;
+                    }
+                }
+                outcomes = Object.values(byDesignation).map((p) => {
                     const am = p.price;
                     const decimal = americanToDecimal(am);
                     return {

@@ -944,6 +944,10 @@ function renderMarketsDashboard(d) {
         const tb = b.start_time ? new Date(b.start_time).getTime() : Infinity;
         return ta - tb;
     });
+    // Stash the per-game grouped markets on the window so the
+    // dashboard's inline bet calculator can look up the Kalshi
+    // market for the selected side without re-fetching.
+    stashMdGames(gameList);
 
     return `
       <div class="markets-dashboard">
@@ -1001,22 +1005,25 @@ function renderMarketsDashboardGameCard(g, lookup) {
                     : game?.status === "Final" ? "FINAL"
                     : "";
 
-    const pickMain = (arr) => arr.find((x) => x.is_main_line) || arr[0] || null;
-    const mainMl    = pickMain(m.moneyline);
-    const mainSpread = pickMain(m.spread);
-    const mainTotal  = pickMain(m.total);
-
     const nPp = (m.player_prop || []).length;
     const nTp = (m.team_prop   || []).length;
+    const gameKey = g.key;
+
+    // Whether we have a Kalshi market for this game's moneyline — if
+    // yes, the bet calculator's "Place via Kalshi" button is live.
+    // Polymarket comes in Phase 2 of the trading integration.
+    const kalshiMl = (m.moneyline || []).find((x) => x.source === "kalshi");
 
     return `
-      <a class="md-game-card ${statusLbl ? "md-game-card-" + statusLbl.toLowerCase() : ""}" href="${href}">
+      <article class="md-game-card ${statusLbl ? "md-game-card-" + statusLbl.toLowerCase() : ""}" data-game-key="${escapeHTMLAttr(gameKey)}">
         <header class="md-game-head">
-          <div class="md-game-teams">
-            <span class="md-game-away">${away}</span>
-            <span class="md-game-at">@</span>
-            <span class="md-game-home">${home}</span>
-          </div>
+          <a class="md-game-teams-link" href="${href}">
+            <div class="md-game-teams">
+              <span class="md-game-away">${away}</span>
+              <span class="md-game-at">@</span>
+              <span class="md-game-home">${home}</span>
+            </div>
+          </a>
           <div class="md-game-meta">
             ${statusLbl ? `<span class="md-game-status md-game-status-${statusLbl.toLowerCase()}">${statusLbl}</span>` : ""}
             ${startLbl ? `<span class="md-game-time">${startLbl}</span>` : ""}
@@ -1025,48 +1032,359 @@ function renderMarketsDashboardGameCard(g, lookup) {
         <div class="md-game-lines">
           <div class="md-game-col">
             <div class="md-game-col-label">Moneyline</div>
-            ${renderMdMiniMarket(mainMl)}
+            ${renderMdMiniMarket(m.moneyline, "moneyline")}
           </div>
           <div class="md-game-col">
             <div class="md-game-col-label">Run line</div>
-            ${renderMdMiniMarket(mainSpread)}
+            ${renderMdMiniMarket(m.spread, "spread")}
           </div>
           <div class="md-game-col">
             <div class="md-game-col-label">Total</div>
-            ${renderMdMiniMarket(mainTotal)}
+            ${renderMdMiniMarket(m.total, "total")}
           </div>
         </div>
+        ${renderMdBetCalculator(g, kalshiMl)}
         <footer class="md-game-foot">
           ${nPp ? `<span class="md-game-chip">${nPp} player prop${nPp === 1 ? "" : "s"}</span>` : ""}
           ${nTp ? `<span class="md-game-chip md-game-chip-dim">${nTp} team prop${nTp === 1 ? "" : "s"}</span>` : ""}
-          <span class="md-game-cta">View all markets →</span>
+          <a href="${href}" class="md-game-cta">View all markets →</a>
         </footer>
-      </a>
+      </article>
     `;
 }
 
-// Two-outcome mini-line inside a dashboard game card. Just the rows
-// for the favored + dog with American odds + implied %. No bar.
-function renderMdMiniMarket(market) {
-    if (!market) return `<div class="md-game-empty">—</div>`;
-    const outcomes = (market.outcomes || [])
-        .slice()
-        .sort((a, b) => (b.probability || 0) - (a.probability || 0));
-    if (!outcomes.some((o) => o.probability != null)) {
-        return `<div class="md-game-empty">no quote</div>`;
+// Inline bet calculator under each game card. User picks a side
+// (any of the up-to-6 outcomes — 2 per market), types a stake in $,
+// sees the win / total payout computed live from the American odds,
+// clicks Place if we have a tradeable source (Kalshi today, Polymarket
+// later) hooked up.
+//
+// Standard sportsbook payout formulas:
+//   American +X  (underdog):  win = stake * (X / 100)
+//   American -X  (favorite):  win = stake * (100 / X)
+//   Total return = stake + win
+//
+// State (stake input) is persisted in localStorage per game key so
+// the 10-second dashboard auto-refresh doesn't wipe out what the user
+// typed mid-thought.
+function renderMdBetCalculator(g, kalshiMl) {
+    const opts = [];
+    const pushOpts = (markets, kind, label) => {
+        const outcomes = bestOutcomesAcrossSources(markets, kind);
+        for (const o of outcomes) {
+            const american = o.american != null ? formatAmericanOdds(o.american) : "—";
+            const handicapLbl = o.handicap != null
+                ? (kind === "spread" ? ` ${o.handicap > 0 ? "+" : ""}${o.handicap}` : ` ${o.handicap}`)
+                : "";
+            opts.push({
+                value: `${kind}|${o.name}|${o.american ?? ""}|${o.probability}`,
+                label: `${label}: ${o.name}${handicapLbl} (${american})`,
+                american: o.american,
+                source: o.source,
+            });
+        }
+    };
+    pushOpts(g.markets.moneyline, "moneyline", "Moneyline");
+    pushOpts(g.markets.spread,    "spread",    "Run line");
+    pushOpts(g.markets.total,     "total",     "Total");
+
+    if (!opts.length) return "";
+
+    const optionsHtml = opts.map((o) =>
+        `<option value="${escapeHTMLAttr(o.value)}"
+                 data-am="${escapeHTMLAttr(String(o.american ?? ""))}">${escapeHTML(o.label)}</option>`
+    ).join("");
+
+    const canPlace = !!kalshiMl;
+    const placeLabel = canPlace
+        ? "Place via Kalshi →"
+        : "Place via Kalshi (no market)";
+
+    return `
+      <div class="md-bet-calc" data-md-calc="1" data-game-key="${escapeHTMLAttr(g.key)}">
+        <div class="md-bet-row">
+          <label class="md-bet-side">
+            <span class="md-bet-lbl">Bet on</span>
+            <select data-md-side>${optionsHtml}</select>
+          </label>
+          <label class="md-bet-stake">
+            <span class="md-bet-lbl">Stake</span>
+            <span class="md-bet-stake-wrap">
+              <span class="md-bet-dollar">$</span>
+              <input type="number" min="0" step="1" placeholder="10"
+                     data-md-stake autocomplete="off">
+            </span>
+          </label>
+          <div class="md-bet-payout">
+            <span class="md-bet-lbl">To win</span>
+            <strong data-md-win>$0.00</strong>
+            <span class="md-bet-total" data-md-total>(pays $0.00)</span>
+          </div>
+          <button class="md-bet-place" data-md-place
+                  ${canPlace ? "" : "disabled"}>${placeLabel}</button>
+        </div>
+      </div>
+    `;
+}
+
+// American odds → fractional win-per-$1-stake.
+//   +148 stake $10 → win $14.80
+//   -165 stake $10 → win $6.06
+function americanWinPerDollar(american) {
+    if (american == null || american === "") return 0;
+    const n = typeof american === "string"
+        ? Number(american.replace(/[^\d+-]/g, ""))
+        : Number(american);
+    if (!Number.isFinite(n) || n === 0) return 0;
+    return n > 0 ? n / 100 : 100 / Math.abs(n);
+}
+
+// Wire up the inline bet calculator on every dashboard card. Uses
+// event DELEGATION on marketsView so the handlers stay attached
+// across the dashboard's 10-second auto-refresh.
+//
+// State preserved across re-renders:
+//   - Per-game stake amount, keyed in localStorage by game key.
+//     Selecting a side or typing a stake saves to localStorage; on
+//     re-render we read it back so the user's input doesn't vanish
+//     mid-thought.
+//
+// Place button → opens the Kalshi bet modal (window.Kalshi.openBetModal)
+// when there's a Kalshi market for this game, prefilled with side +
+// stake. Disabled with "no market" otherwise.
+function attachMdBetHandlers() {
+    if (!marketsView) return;
+    // One delegation, all calculators on the page.
+    marketsView.addEventListener("input", (e) => {
+        const stake = e.target.closest("[data-md-stake]");
+        if (stake) { onMdStakeOrSideChange(stake); return; }
+    });
+    marketsView.addEventListener("change", (e) => {
+        const side = e.target.closest("[data-md-side]");
+        if (side) { onMdStakeOrSideChange(side); return; }
+    });
+    marketsView.addEventListener("click", (e) => {
+        const place = e.target.closest("[data-md-place]");
+        if (place) {
+            e.preventDefault();
+            onMdPlaceClick(place);
+            return;
+        }
+        const pick = e.target.closest("[data-md-pick]");
+        if (pick) {
+            // Tapping an outcome button preloads it into the
+            // calculator below as the selected side.
+            e.preventDefault();
+            onMdOutcomePick(pick);
+            return;
+        }
+    });
+
+    // Re-hydrate stakes from localStorage on every render via a
+    // MutationObserver — cheaper than scanning the page on every poll.
+    const observer = new MutationObserver(() => hydrateMdStakes());
+    observer.observe(marketsView, { childList: true, subtree: true });
+    hydrateMdStakes();
+}
+
+function hydrateMdStakes() {
+    document.querySelectorAll("[data-md-calc]").forEach((calc) => {
+        const stake = calc.querySelector("[data-md-stake]");
+        if (!stake || stake.value) return;       // already has user input
+        const key = calc.getAttribute("data-game-key");
+        const cached = localStorage.getItem(`md_stake_${key}`);
+        if (cached) {
+            stake.value = cached;
+            recomputeMdPayout(calc);
+        }
+    });
+}
+
+function onMdStakeOrSideChange(el) {
+    const calc = el.closest("[data-md-calc]");
+    if (!calc) return;
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    const key = calc.getAttribute("data-game-key");
+    try { localStorage.setItem(`md_stake_${key}`, stakeEl.value || ""); } catch {}
+    recomputeMdPayout(calc);
+}
+
+function recomputeMdPayout(calc) {
+    const side = calc.querySelector("[data-md-side]");
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    const winEl = calc.querySelector("[data-md-win]");
+    const totalEl = calc.querySelector("[data-md-total]");
+    const stake = Math.max(0, Number(stakeEl.value) || 0);
+    const selectedOption = side?.selectedOptions?.[0];
+    const american = selectedOption?.getAttribute("data-am") || "";
+    const winPerDollar = americanWinPerDollar(american);
+    const win = stake * winPerDollar;
+    const total = stake + win;
+    if (winEl)   winEl.textContent = `$${win.toFixed(2)}`;
+    if (totalEl) totalEl.textContent = `(pays $${total.toFixed(2)})`;
+}
+
+function onMdOutcomePick(btn) {
+    const card = btn.closest(".md-game-card");
+    if (!card) return;
+    const calc = card.querySelector("[data-md-calc]");
+    if (!calc) return;
+    const side = calc.querySelector("[data-md-side]");
+    if (!side) return;
+    // Find the matching option in the calculator's side dropdown.
+    const wantName = btn.getAttribute("data-name");
+    const wantKind = btn.getAttribute("data-kind");
+    const opts = Array.from(side.options);
+    const match = opts.find((o) => {
+        const [k, n] = o.value.split("|");
+        return k === wantKind && n === wantName;
+    });
+    if (match) {
+        side.value = match.value;
+        recomputeMdPayout(calc);
     }
-    return outcomes.map((o) => {
-        const pct = o.probability_devig ?? o.probability;
+    // Scroll the calculator into view + focus the stake field for
+    // immediate typing.
+    calc.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    setTimeout(() => stakeEl?.focus(), 120);
+}
+
+function onMdPlaceClick(btn) {
+    const calc = btn.closest("[data-md-calc]");
+    if (!calc) return;
+    if (!window.Kalshi || !window.Kalshi.isConnected()) {
+        if (window.Kalshi?.openConnectModal) window.Kalshi.openConnectModal();
+        return;
+    }
+    const side = calc.querySelector("[data-md-side]");
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    const stake = Number(stakeEl.value) || 0;
+    const selected = side?.selectedOptions?.[0];
+    const [kind, name] = String(selected?.value || "").split("|");
+    // Find the Kalshi market for this game + kind so we can hand the
+    // Kalshi bet modal a concrete ticker. We re-fetch the card's game
+    // markets from the dashboard render-time data (cached on the
+    // window for simplicity). Phase 2 will refine this to pick the
+    // best YES/NO side per outcome name.
+    const card = btn.closest(".md-game-card");
+    const gameKey = card?.getAttribute("data-game-key");
+    const game = (window._mdGames || {})[gameKey];
+    const kalshiMl = (game?.markets?.[kind] || []).find((x) => x.source === "kalshi");
+    if (!kalshiMl) {
+        if (window.Kalshi?.toast) {
+            window.Kalshi.toast("No Kalshi market for this question (yet)", "err");
+        }
+        return;
+    }
+    // Find which outcome matches the selected side name.
+    const outcome = (kalshiMl.outcomes || []).find((o) =>
+        (o.name || "").toLowerCase() === (name || "").toLowerCase()
+    ) || kalshiMl.outcomes?.[0];
+    if (!outcome) return;
+    window.Kalshi.openBetModal(kalshiMl, outcome);
+}
+
+// Stash render-time game data on the window so the click handler can
+// look up the Kalshi market without re-fetching. Called from
+// renderMarketsDashboard.
+function stashMdGames(games) {
+    window._mdGames = {};
+    for (const g of games || []) {
+        window._mdGames[g.key] = g;
+    }
+}
+
+attachMdBetHandlers();
+
+// Collapse an array of multi-source markets (e.g. 8 sources all quoting
+// "Astros vs Brewers moneyline") into the at-most-2 unique outcomes
+// with the BEST PRICE for the bettor across every source.
+//
+// "Best price" = lowest implied probability (== highest payout).
+// For spreads/totals, the main line is picked first (most-common
+// handicap across sources) so we're comparing apples-to-apples.
+// Without this, the dashboard showed every source's quote stacked
+// vertically — 19 rows of "Milwaukee Brewers" at +2400, +2528, +2648,
+// ... because Pinnacle was returning 51 prices for one market plus
+// every other source layered on top.
+function bestOutcomesAcrossSources(markets, kind) {
+    if (!markets || !markets.length) return [];
+    let pool = markets;
+    if (kind === "spread" || kind === "total") {
+        // Find the most-common handicap value across sources — that's
+        // the canonical "main line" (e.g., total 8.5 instead of 9.0).
+        // Filter to only markets quoting that line.
+        const counts = {};
+        for (const m of markets) {
+            const h = m.handicap;
+            if (h == null) continue;
+            counts[h] = (counts[h] || 0) + 1;
+        }
+        const mainH = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (mainH != null) {
+            pool = markets.filter((m) => m.handicap != null
+                && String(m.handicap) === String(mainH));
+        }
+    }
+    const byName = {};
+    for (const m of pool) {
+        for (const o of m.outcomes || []) {
+            const name = (o.name || "").trim();
+            if (!name) continue;
+            const probability = o.probability_devig ?? o.probability;
+            if (probability == null) continue;
+            const existing = byName[name];
+            if (!existing || probability < existing.probability) {
+                byName[name] = {
+                    name,
+                    probability,
+                    american: o.american,
+                    source: m.source,
+                    market_title: m.title,
+                    market_url: m.url,
+                    market_id: m.id,
+                    raw_market_id: m.raw_market_id,
+                    point: o.point,
+                    handicap: m.handicap,
+                    market_kind: kind,
+                };
+            }
+        }
+    }
+    return Object.values(byName);
+}
+
+// Two-outcome mini-line inside a dashboard game card. Picks the best
+// price per outcome across every source for that question type, so
+// the card shows two clean rows instead of N source-stacked duplicates.
+function renderMdMiniMarket(markets, kind) {
+    const outcomes = bestOutcomesAcrossSources(markets, kind);
+    if (!outcomes.length) return `<div class="md-game-empty">no quote</div>`;
+    // Two-outcome markets only — sort by probability desc so favored
+    // side is first (matches sportsbook convention).
+    outcomes.sort((a, b) => b.probability - a.probability);
+    return outcomes.slice(0, 2).map((o) => {
         const american = o.american;
-        const isFav = isAmericanFavorite(american) || (o.probability != null && o.probability >= 0.5);
+        const isFav = isAmericanFavorite(american) || o.probability >= 0.5;
+        // Each outcome is a button → opens bet calculator preloaded
+        // with this side (handler in attachMdBetHandlers below).
         return `
-          <div class="md-game-outcome ${isFav ? "is-fav" : ""}">
-            <span class="md-game-out-name">${escapeHTML(o.name || "")}</span>
+          <button class="md-game-outcome ${isFav ? "is-fav" : ""}"
+                  data-md-pick="1"
+                  data-name="${escapeHTMLAttr(o.name)}"
+                  data-american="${escapeHTMLAttr(String(american ?? ""))}"
+                  data-prob="${o.probability}"
+                  data-source="${escapeHTMLAttr(o.source || "")}"
+                  data-kind="${escapeHTMLAttr(kind)}"
+                  data-handicap="${escapeHTMLAttr(String(o.handicap ?? ""))}">
+            <span class="md-game-out-name">${escapeHTML(o.name)}</span>
             <span class="md-game-out-odds">
               ${american != null ? `<span class="md-game-out-am">${formatAmericanOdds(american)}</span>` : ""}
-              ${pct != null ? `<span class="md-game-out-pct">${fmtPct(pct)}</span>` : ""}
+              <span class="md-game-out-pct">${fmtPct(o.probability)}</span>
             </span>
-          </div>
+          </button>
         `;
     }).join("");
 }

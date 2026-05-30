@@ -5948,13 +5948,35 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     margin-bottom: 2px;
 }
+/* Outcome row is now a tappable BUTTON (was a div) — click prefills
+   the inline bet calculator below with this side. Style strips
+   default button chrome so it visually matches the old row. */
+button.md-game-outcome {
+    appearance: none;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 2px 0;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    transition: background 120ms, border-color 120ms, transform 80ms;
+}
+button.md-game-outcome:hover {
+    background: rgba(59, 130, 246, 0.10);
+    border-color: rgba(59, 130, 246, 0.45);
+}
+button.md-game-outcome:active { transform: translateY(1px); }
+
 .md-game-outcome {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     font-size: 12px;
-    padding: 3px 0;
+    padding: 6px 8px;
 }
 .md-game-outcome.is-fav .md-game-out-name { font-weight: 700; }
 .md-game-outcome.is-fav .md-game-out-am { color: var(--accent-win); }
@@ -5989,10 +6011,145 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-style: italic;
     padding: 4px 0;
 }
+/* Inline bet calculator — side selector, $ stake input, live-computed
+   payout, Place via Kalshi button. Standard sportsbook pattern. */
+.md-bet-calc {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: rgba(34, 197, 94, 0.05);
+    border: 1px solid rgba(34, 197, 94, 0.18);
+    border-radius: 8px;
+}
+.md-bet-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 1.0fr) auto;
+    gap: 10px;
+    align-items: end;
+}
+@media (max-width: 720px) {
+    .md-bet-row {
+        grid-template-columns: 1fr;
+    }
+}
+.md-bet-lbl {
+    display: block;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+}
+.md-bet-side, .md-bet-stake {
+    display: flex;
+    flex-direction: column;
+}
+.md-bet-side select {
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.md-bet-side select:focus {
+    outline: none;
+    border-color: var(--accent-action);
+}
+.md-bet-stake-wrap {
+    display: flex;
+    align-items: center;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0 8px;
+}
+.md-bet-stake-wrap:focus-within {
+    border-color: var(--accent-action);
+}
+.md-bet-dollar {
+    color: var(--text-faint);
+    font-size: 13px;
+    margin-right: 2px;
+}
+.md-bet-stake input {
+    appearance: none;
+    -moz-appearance: textfield;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+    font-family: inherit;
+    font-variant-numeric: tabular-nums;
+    padding: 8px 0;
+    width: 100%;
+    min-width: 0;
+}
+.md-bet-stake input::-webkit-inner-spin-button,
+.md-bet-stake input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.md-bet-stake input:focus { outline: none; }
+
+.md-bet-payout {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    font-variant-numeric: tabular-nums;
+    font-size: 14px;
+    color: var(--text);
+}
+.md-bet-payout strong {
+    color: var(--accent-win);
+    font-weight: 800;
+    font-size: 16px;
+}
+.md-bet-total {
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-top: 2px;
+}
+
+.md-bet-place {
+    appearance: none;
+    background: var(--accent-win);
+    color: #0B1220;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    transition: background 120ms, transform 80ms;
+}
+.md-bet-place:hover:not(:disabled) {
+    background: #16A34A;
+    transform: translateY(-1px);
+}
+.md-bet-place:disabled {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-faint);
+    cursor: not-allowed;
+}
+
+.md-game-teams-link {
+    text-decoration: none;
+    color: inherit;
+}
+
 .md-game-foot {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+    margin-top: 10px;
+    align-items: center;
 }
 .md-game-chip {
     font-size: 10px;
