@@ -896,6 +896,13 @@ async function refreshMarketsDashboard() {
         }
         data._game_lookup = gameLookup;
         marketsView.innerHTML = renderMarketsDashboard(data);
+        // The dashboard render replaces the entire innerHTML which
+        // wipes the Kalshi "My Bets" panel back to its loading shell.
+        // Immediately repopulate so the user doesn't stare at
+        // "Loading…" between dashboard polls.
+        if (window.Kalshi && Kalshi.isConnected && Kalshi.isConnected()) {
+            Kalshi.refreshMyBets();
+        }
     } catch (e) {
         // Keep showing the prior render if we have one — only render
         // the empty / error state when there's nothing on screen.

@@ -1008,15 +1008,29 @@ function escapeHtmlAttr(s) { return escapeHtml(s); }
 // ── Bootstrap ───────────────────────────────────────────────────
 
 attachDelegates();
+
+// Initial pull when the page loads while already connected.
 if (isConnected()) {
     getBalance().then(() => { renderAllAccountStrips(); renderAllMyBets(); });
-    setInterval(() => getBalance().then(renderAllAccountStrips), BALANCE_REFRESH_MS);
-    // Open orders auto-refresh — every 20s so the panel stays current
-    // after fills / cancels without a full page reload.
-    myBetsRefreshTimer = setInterval(() => {
-        if (isConnected()) refreshMyBets();
-    }, 20_000);
 }
+
+// Polling intervals run UNCONDITIONALLY — they cheaply no-op when
+// the user isn't connected or when there's no panel slot on the page.
+// Two separate cadences:
+//   - Balance + account strip every 30s (slow-changing).
+//   - Open-orders panel every 5s (the user wants to see fills + status
+//     change without clicking refresh).
+setInterval(() => {
+    if (!isConnected()) return;
+    getBalance().then(renderAllAccountStrips);
+}, BALANCE_REFRESH_MS);
+
+setInterval(() => {
+    if (!isConnected()) return;
+    const slot = document.querySelector("[data-kalshi-mybets]");
+    if (!slot) return;
+    refreshMyBets();
+}, 5_000);
 
 
 // ── Public surface ──────────────────────────────────────────────
