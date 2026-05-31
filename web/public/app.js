@@ -1330,15 +1330,35 @@ async function onMdOutcomePick(btn) {
         const gameKey = card.getAttribute("data-game-key");
         const game = (window._mdGames || {})[gameKey];
         const kind = btn.getAttribute("data-kind") || "moneyline";
-        const wantName = btn.getAttribute("data-name") || "";
-        const kalshiMl = (game?.markets?.[kind] || []).find((x) => x.source === "kalshi");
+        // Each dashboard outcome button knows its EXACT Kalshi
+        // ticker via data-ticker. Spread / total kinds have many
+        // Kalshi markets per game (one per team + per threshold),
+        // so the old 'first kalshi market in this kind' lookup
+        // grabbed the wrong market and the seed math computed
+        // against an unrelated orderbook — which is why the stake
+        // appeared to have no bearing on the bet. Match the exact
+        // market by ticker instead.
+        const wantTicker = btn.getAttribute("data-ticker") || "";
+        const kalshiMkts = (game?.markets?.[kind] || []).filter((x) => x.source === "kalshi");
+        const kalshiMl = kalshiMkts.find((m) => {
+            if (m.raw_market_id === wantTicker) return true;
+            // Some markets store the per-side ticker on outcome ids
+            // (KX...:yes / KX...:no) rather than raw_market_id;
+            // fall back to that lookup so we don't miss a match.
+            return (m.outcomes || []).some((o) => {
+                const idM = String(o.id || "").match(/^(.*):(yes|no)$/i);
+                return idM && idM[1] === wantTicker;
+            });
+        }) || kalshiMkts[0];
         if (!kalshiMl) {
             window.Kalshi.toast("No Kalshi market for that side", "err");
             return;
         }
-        const outcome = (kalshiMl.outcomes || []).find((o) =>
-            (o.name || "").toLowerCase() === wantName.toLowerCase()
-        ) || kalshiMl.outcomes?.[0];
+        // We always render the YES side of each ticker on the
+        // dashboard (see renderMdMiniMarket) so the outcome we
+        // want is the YES one.
+        const outcome = (kalshiMl.outcomes || []).find((o) => /:yes$/i.test(o.id || ""))
+                     || kalshiMl.outcomes?.[0];
         if (!outcome) return;
         // Seed the modal with the global stake. Pull the side's
         // current YES price from the orderbook (cached by the
@@ -1346,16 +1366,13 @@ async function onMdOutcomePick(btn) {
         // floor(stake / price) instead of the fallback count=1.
         const stake = window.Kalshi.getGlobalStake?.() ?? 0.50;
         let priceCents = null;
-        const idMatch = String(outcome.id || "").match(/^(.*):(yes|no)$/i);
-        const ticker = idMatch ? idMatch[1] : (kalshiMl.raw_market_id || "");
-        const side = idMatch ? idMatch[2].toLowerCase() : "yes";
+        const ticker = wantTicker || kalshiMl.raw_market_id || "";
         if (ticker && window.Kalshi.getOrderbook) {
             try {
                 const ob = await window.Kalshi.getOrderbook(ticker);
                 const yesProb = orderbookYesProb(ob);
                 if (yesProb != null) {
-                    const yesCents = Math.max(1, Math.min(99, Math.round(yesProb * 100)));
-                    priceCents = side === "yes" ? yesCents : 100 - yesCents;
+                    priceCents = Math.max(1, Math.min(99, Math.round(yesProb * 100)));
                 }
             } catch { /* fall through with null priceCents */ }
         }
