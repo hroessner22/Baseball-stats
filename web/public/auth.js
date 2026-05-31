@@ -70,9 +70,32 @@ supabase.auth.onAuthStateChange((event, session) => {
     _currentUser = session?.user || null;
     notifyChange();
     renderHeaderWidget();
-    if (event === "SIGNED_IN") toast(`Signed in as ${_currentUser?.email}`, "ok");
+    if (event === "SIGNED_IN") {
+        toast(`Signed in as ${_currentUser?.email}`, "ok");
+        maybeShowKalshiGuideOnSignIn(_currentUser);
+    }
     if (event === "SIGNED_OUT") toast("Signed out", "ok");
 });
+
+// First step after signing in is connecting Kalshi (otherwise there's
+// nothing to bet through). Surface the step-by-step guide automatically
+// in two cases:
+//   - Brand-new sign-up (user.created_at within the last ~60 seconds —
+//     Supabase auto-creates the user on magic-link click for first-
+//     timers, so this is how we detect 'just signed up').
+//   - Returning user who hasn't connected Kalshi yet.
+// Don't auto-open for users who already have Kalshi connected — they
+// can always get to it via the user menu's "How to connect Kalshi".
+function maybeShowKalshiGuideOnSignIn(user) {
+    if (!user || typeof openKalshiGuide !== "function") return;
+    // Kalshi-already-connected → skip
+    if (window.Kalshi && typeof window.Kalshi.isConnected === "function" && window.Kalshi.isConnected()) {
+        return;
+    }
+    // Otherwise show the guide. Small delay so the sign-in toast
+    // appears and settles before the modal pops up.
+    setTimeout(() => openKalshiGuide(), 500);
+}
 
 function notifyChange() {
     for (const cb of _changeListeners) {
