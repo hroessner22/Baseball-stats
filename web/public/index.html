@@ -57,5 +57,9 @@
     <script src="kalshi.js"></script>
     <script src="health.js"></script>
     <script src="app.js"></script>
+    <!-- Loaded as a module so it can import @supabase/supabase-js
+         from the ESM CDN. Exposes window.Auth for any non-module
+         caller that wants to gate behavior on sign-in state. -->
+    <script type="module" src="auth.js"></script>
 </body>
 </html>

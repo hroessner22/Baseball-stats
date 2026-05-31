@@ -428,6 +428,12 @@ function openConnectModal() {
           <li>Click <strong>Create new API key</strong>. Save the key ID (a UUID) and download the private key file (.pem).</li>
           <li>Paste both below.</li>
         </ol>
+        <p class="km-sub km-sub-help">
+          New to Kalshi?
+          <button type="button" class="km-help-link" data-show-kalshi-guide>
+            Full step-by-step guide →
+          </button>
+        </p>
         <p class="km-sub km-sub-trust">
           Your private key stays in your browser — it's imported as a
           non-extractable WebCrypto key and used to RSA-sign each
@@ -466,6 +472,14 @@ function openConnectModal() {
     overlay.querySelector(".km-close").addEventListener("click", close);
     overlay.querySelector(".km-cancel").addEventListener("click", close);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    // "Full step-by-step guide" link — bridges to the auth module's
+    // openKalshiGuide(), which has the full 5-step walkthrough.
+    const helpLink = overlay.querySelector("[data-show-kalshi-guide]");
+    if (helpLink) helpLink.addEventListener("click", () => {
+        if (window.Auth && window.Auth.openKalshiGuide) {
+            window.Auth.openKalshiGuide();
+        }
+    });
 
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
