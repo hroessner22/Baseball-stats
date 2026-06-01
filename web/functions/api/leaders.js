@@ -48,8 +48,8 @@ export async function onRequest(context) {
         ]);
         return new Response(JSON.stringify({
             season,
-            hitting:  reshape(hit, HITTING),
-            pitching: reshape(pit, PITCHING),
+            hitting:  reshape(hit, HITTING,  limit),
+            pitching: reshape(pit, PITCHING, limit),
             fetched_at: new Date().toISOString(),
         }), {
             headers: {
@@ -81,9 +81,16 @@ async function fetchLeaders(group, categories, season, limit) {
     return d.leagueLeaders || [];
 }
 
-function reshape(blocks, ordered) {
+function reshape(blocks, ordered, limit) {
     // The upstream returns categories in its own order; reproject into our
     // canonical order so the UI doesn't have to think about it.
+    //
+    // MLB's leaders API also returns ALL players tied at each rank — so a
+    // top-5 HR card can land with 6 entries when there's a 3-way tie at
+    // rank 4, or top-5 Wins with 10 entries when 5 starters tie at rank 5.
+    // Hard-cap at the requested limit so the cards stay uniform across
+    // categories (the Statcast endpoint already does this naturally).
+    const cap = parseInt(limit, 10) || 5;
     const byKey = Object.fromEntries(
         blocks.map((b) => [b.leaderCategory, b])
     );
@@ -92,7 +99,7 @@ function reshape(blocks, ordered) {
         return {
             category: key,
             label,
-            leaders: (b.leaders || []).map((l) => ({
+            leaders: (b.leaders || []).slice(0, cap).map((l) => ({
                 rank: l.rank,
                 person_id: l.person?.id || null,
                 name: l.person?.fullName || "?",
