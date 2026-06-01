@@ -1068,8 +1068,18 @@ function syncGlobalStakeWidgetVisibility() {
     if (typeof document === "undefined") return;
     const widget = document.getElementById("global-stake-widget");
     if (!widget) return;
-    const hasBetSurface = !!document.querySelector(".ks-bet-btn, .md-game-outcome");
-    widget.classList.toggle("is-visible", hasBetSurface);
+    // The SPA keeps every view mounted (just toggles `hidden`), so a raw
+    // querySelector for .ks-bet-btn lights up even when the bet button
+    // lives in a hidden Markets pane that the user isn't looking at.
+    // That made the widget cover the Leaders toggle. Filter to only
+    // buttons whose offsetParent is non-null — that's the DOM's way of
+    // saying "this element is actually visible right now."
+    const candidates = document.querySelectorAll(".ks-bet-btn, .md-game-outcome");
+    let visible = false;
+    for (const el of candidates) {
+        if (el.offsetParent !== null) { visible = true; break; }
+    }
+    widget.classList.toggle("is-visible", visible);
 }
 
 // Recompute every visible Buy button's payout against the current

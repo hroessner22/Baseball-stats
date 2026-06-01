@@ -8406,6 +8406,192 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text-faint);
     margin-left: 8px;
 }
+
+/* ── Active Bets bottom strip ──────────────────────────────────── */
+/* Slim horizontal strip pinned above the bottom nav. Shows one chip
+   per active position with a DraftKings-style progress fill on
+   player props. Right edge stops at 200px so it doesn't crash into
+   the 🎯 Active Bets launcher at bottom-right. */
+.active-bets-strip {
+    position: fixed;
+    left: 16px;
+    right: 200px;
+    bottom: 84px;
+    z-index: 5000;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px 8px 12px;
+    background: rgba(11, 18, 32, 0.96);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 12px;
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.active-bets-strip.is-visible { display: flex; }
+
+.abs-title {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    white-space: nowrap;
+    padding-right: 10px;
+    border-right: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.abs-chips {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: 1;
+    /* Visible-but-thin custom scrollbar. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+}
+.abs-chips::-webkit-scrollbar { height: 6px; }
+.abs-chips::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.25);
+    border-radius: 3px;
+}
+
+.abs-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms, transform 120ms;
+    white-space: nowrap;
+}
+.abs-chip:hover {
+    background: rgba(51, 65, 85, 0.75);
+    border-color: rgba(148, 163, 184, 0.35);
+    transform: translateY(-1px);
+}
+.abs-chip.is-hit {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.45);
+}
+
+.abs-src {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    min-width: 32px;
+    text-align: center;
+}
+.abs-src-bot {
+    background: rgba(245, 158, 11, 0.18);
+    color: #f59e0b;
+}
+.abs-src-user {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--accent-win);
+}
+
+.abs-label {
+    font-weight: 700;
+    color: var(--text);
+}
+
+/* DraftKings-style progress bar — gradient fill that resolves green
+   when the leg hits its target. */
+.abs-progress {
+    display: inline-block;
+    width: 56px;
+    height: 8px;
+    background: rgba(15, 23, 42, 0.7);
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    position: relative;
+}
+.abs-progress-bar {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-action) 0%, #f59e0b 100%);
+    border-radius: 999px;
+    transition: width 240ms ease-out;
+}
+.abs-progress-bar.hit {
+    background: linear-gradient(90deg, var(--accent-win) 0%, #4ade80 100%);
+}
+.abs-progress-text {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.abs-progress-pending { color: var(--text-faint); }
+
+.abs-price {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0;
+}
+.abs-pl {
+    font-size: 11px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+.abs-pl-pos { color: var(--accent-win); }
+.abs-pl-neg { color: var(--accent-live); }
+.abs-arrow {
+    color: var(--text-faint);
+    font-size: 12px;
+    margin-left: 2px;
+    transition: color 120ms, transform 120ms;
+}
+.abs-chip:hover .abs-arrow {
+    color: var(--accent-action);
+    transform: translateX(2px);
+}
+
+.abs-close {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: color 120ms, background 120ms;
+}
+.abs-close:hover {
+    color: var(--text);
+    background: rgba(148, 163, 184, 0.12);
+}
+
+/* Compact for narrow viewports — chip footprint shrinks but stays
+   readable. The strip is horizontally scrollable so even 10 bets
+   on a phone scroll cleanly. */
+@media (max-width: 900px) {
+    .active-bets-strip { right: 16px; bottom: 76px; }
+    .abs-title { display: none; }
+    .abs-progress { width: 44px; }
+    .abs-label { font-size: 10.5px; }
+}
 .bot-exit-btn, .bot-cancel-btn {
     appearance: none;
     background: rgba(34, 197, 94, 0.14);
