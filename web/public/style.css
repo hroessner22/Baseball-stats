@@ -8432,7 +8432,13 @@ button.md-game-outcome:active { transform: translateY(1px); }
     justify-content: space-between;
     margin-bottom: 8px;
 }
-.bot-clear-log {
+.bot-log-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+.bot-clear-log,
+.bot-export-fires {
     background: transparent;
     border: none;
     color: var(--text-faint);
@@ -8441,8 +8447,14 @@ button.md-game-outcome:active { transform: translateY(1px); }
     letter-spacing: 0.06em;
     text-transform: uppercase;
     cursor: pointer;
+    padding: 0;
 }
-.bot-clear-log:hover { color: var(--text-dim); }
+.bot-clear-log:hover,
+.bot-export-fires:hover { color: var(--text-dim); }
+.bot-export-fires {
+    color: var(--accent-action);
+}
+.bot-export-fires:hover { color: #0EA5E9; }
 .bot-log {
     background: rgba(15, 23, 42, 0.5);
     border: 1px solid var(--border);

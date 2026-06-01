@@ -53,10 +53,20 @@ const DEFAULTS = {
     enabled:               false,
     unit_cents:            50,     // $0.50 per fire (user's spec)
     edge_threshold_pp:     5,      // fire when |edge| >= 5pp
-    require_savant_agree:  true,   // both engines must agree direction
+    // Savant agreement is a SOFT confidence amplifier, not a hard gate.
+    // Three states the bot encounters:
+    //   - Savant agrees direction → fire at base edge_threshold_pp
+    //   - Savant disagrees        → require edge_threshold_pp + savant_disagree_penalty_pp
+    //   - Savant has no data (player props, pregame) → fire at base
+    // As our model accumulates positive results we can drop the penalty
+    // toward 0 — but it costs nothing to use Savant as a tiebreaker
+    // while we're building track record.
+    require_savant_agree:       false,
+    savant_disagree_penalty_pp: 3,
     profit_take_cents:     20,     // cash out at +20¢ on the contract
     daily_loss_limit_cents: 500,   // $5 default — tightened by HARD_CAPS
     open_exposure_max:     2000,   // $20 default
+    bet_player_props:      true,   // scan Kalshi player_prop markets too
 };
 
 const SCAN_INTERVAL_MS    = 30_000;
@@ -115,13 +125,15 @@ function persistDailyLoss() {
 // chokepoint applied on load + on every settings update.
 function clampSettings(s) {
     return {
-        enabled:               !!s.enabled,
-        unit_cents:            clampInt(s.unit_cents, HARD_CAPS.unit_cents_min, HARD_CAPS.unit_cents_max),
-        edge_threshold_pp:     clampInt(s.edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
-        require_savant_agree:  s.require_savant_agree !== false,    // default true
-        profit_take_cents:     clampInt(s.profit_take_cents, 5, 60),
-        daily_loss_limit_cents: clampInt(s.daily_loss_limit_cents, 100, HARD_CAPS.daily_loss_cents_max),
-        open_exposure_max:     clampInt(s.open_exposure_max, 200, HARD_CAPS.open_exposure_max),
+        enabled:                    !!s.enabled,
+        unit_cents:                 clampInt(s.unit_cents, HARD_CAPS.unit_cents_min, HARD_CAPS.unit_cents_max),
+        edge_threshold_pp:          clampInt(s.edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
+        require_savant_agree:       !!s.require_savant_agree,
+        savant_disagree_penalty_pp: clampInt(s.savant_disagree_penalty_pp, 0, 10),
+        profit_take_cents:          clampInt(s.profit_take_cents, 5, 60),
+        daily_loss_limit_cents:     clampInt(s.daily_loss_limit_cents, 100, HARD_CAPS.daily_loss_cents_max),
+        open_exposure_max:          clampInt(s.open_exposure_max, 200, HARD_CAPS.open_exposure_max),
+        bet_player_props:           s.bet_player_props !== false,
     };
 }
 function clampInt(n, lo, hi) {
@@ -244,21 +256,142 @@ async function fetchLiveGames() {
 }
 
 async function scanOneGame(g) {
-    const res = await fetch(`/api/game/${g.game_pk}/markets`);
-    if (!res.ok) throw new Error(`markets HTTP ${res.status}`);
-    const d = await res.json();
+    // Pull markets (for moneyline + player_prop Kalshi quotes) and
+    // model-props (player-level probabilities) in parallel.
+    const [marketsRes, modelPropsRes] = await Promise.all([
+        fetch(`/api/game/${g.game_pk}/markets`),
+        _state.settings.bet_player_props
+            ? fetch(`/api/game/${g.game_pk}/model-props`).catch(() => null)
+            : Promise.resolve(null),
+    ]);
+    if (!marketsRes.ok) throw new Error(`markets HTTP ${marketsRes.status}`);
+    const d = await marketsRes.json();
 
     const ourHome    = d.our_we_home;
     const savantHome = d.savant_we_home;
-    if (ourHome == null) return;     // model didn't score this state
 
-    // For each Kalshi moneyline market (one per team), figure out
-    // which side YES represents, get its live price from the
-    // orderbook, and check the edge.
-    const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
-    for (const m of moneylines) {
-        await checkAndMaybeFire(g, m, ourHome, savantHome);
+    // 1) Moneyline edges (our WE table vs Kalshi, with Savant as a
+    //    confidence amplifier).
+    if (ourHome != null) {
+        const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
+        for (const m of moneylines) {
+            await checkAndMaybeFire(g, m, ourHome, savantHome);
+        }
     }
+
+    // 2) Player-prop edges (our model-props endpoint vs Kalshi).
+    //    Savant doesn't cover player props, so we run those through
+    //    the same fire logic with savantStance = "no_data" (no
+    //    threshold penalty applied).
+    if (_state.settings.bet_player_props && modelPropsRes && modelPropsRes.ok) {
+        try {
+            const mp = await modelPropsRes.json();
+            if (mp.available !== false) {
+                await scanPlayerProps(g, d, mp);
+            }
+        } catch (e) {
+            log("err", `Player-prop scan failed for ${g.away}@${g.home}: ${e.message || e}`);
+        }
+    }
+}
+
+// Player-prop scan: for each Kalshi player_prop market in the game,
+// parse the title for (player name, threshold, stat), look up our
+// model's probability from the model-props payload, and fire if the
+// edge exceeds the base threshold. No Savant gate here — they don't
+// publish player-level probabilities.
+async function scanPlayerProps(g, marketsData, modelProps) {
+    const kalshiPP = (marketsData.markets?.player_prop || []).filter((m) => m.source === "kalshi");
+    if (!kalshiPP.length) return;
+
+    const nameToMlbam = modelProps.name_to_mlbam || {};
+    const modelData   = modelProps.model_props   || {};
+
+    for (const m of kalshiPP) {
+        // Parse "Vinnie Pasquantino: 1+ home runs?" into
+        // (player, threshold, stat).
+        const parsed = parsePropTitle(m.title || "");
+        if (!parsed) continue;
+        const mlbam = nameToMlbam[normName(parsed.player)];
+        if (!mlbam) continue;
+        const ladder = modelData[mlbam]?.[parsed.stat];
+        if (!ladder) continue;
+        const our_p_yes = ladder[parsed.threshold];
+        if (our_p_yes == null) continue;
+
+        // Live YES ask for THIS Kalshi ticker.
+        const idMatch = String(m.outcomes?.[0]?.id || "").match(/^(.*):(yes|no)$/i);
+        const ticker = idMatch ? idMatch[1] : (m.raw_market_id || "");
+        if (!ticker) continue;
+        const ob = await root.Kalshi.getOrderbook(ticker);
+        const yesAskCents = orderbookYesAskCents(ob);
+        if (yesAskCents == null) continue;
+
+        const market_p = yesAskCents / 100;
+        const edgePP = (our_p_yes - market_p) * 100;
+
+        // No Savant signal for player props — fire at base threshold.
+        if (edgePP < _state.settings.edge_threshold_pp) continue;
+
+        const key = `${ticker}:yes`;
+        if (_state.sessionBets.has(key)) continue;
+
+        const contracts = Math.floor(_state.settings.unit_cents / yesAskCents);
+        if (contracts < 1) continue;
+        const tradeCostCents = contracts * yesAskCents;
+        if (computeOpenExposureCents() + tradeCostCents > _state.settings.open_exposure_max) continue;
+
+        try {
+            const result = await root.Kalshi.placeOrder({
+                ticker, side: "yes", count: contracts, price: yesAskCents, action: "buy",
+            });
+            _state.sessionBets.add(key);
+            persistSessionBets();
+            // Capture the FULL context for forward analysis.
+            recordFiredBet({
+                kind:          "player_prop",
+                ticker,
+                side:          "yes",
+                contracts,
+                price_cents:   yesAskCents,
+                our_p:         our_p_yes,
+                savant_p:      null,
+                market_p,
+                edge_pp:       edgePP,
+                game_pk:       g.game_pk,
+                matchup:       `${g.away}@${g.home}`,
+                player:        parsed.player,
+                stat:          parsed.stat,
+                threshold:     parsed.threshold,
+                placed_at:     new Date().toISOString(),
+                order_response: result,
+            });
+            log("buy", `BUY ${contracts}× ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ` +
+                `@ ${yesAskCents}¢ (our ${(our_p_yes*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%, edge ${edgePP.toFixed(1)}pp)`,
+                { ticker, contracts, yesAskCents, our_p_yes, market_p, edgePP });
+            toast(`Bot: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} @ ${yesAskCents}¢`, "ok");
+        } catch (e) {
+            log("err", `Player-prop order failed for ${ticker}: ${e.message || e}`);
+        }
+    }
+}
+
+function parsePropTitle(title) {
+    const m = String(title || "").trim().match(/^(.+?):\s*(\d+)\+\s+(.+?)\??$/);
+    if (!m) return null;
+    const player    = m[1].trim();
+    const threshold = parseInt(m[2], 10);
+    const statText  = m[3].toLowerCase().trim();
+    let stat = null;
+    if (/strikeouts?\b/.test(statText))                  stat = "strikeouts";
+    else if (/home runs?\b|\bhrs?\b/.test(statText))     stat = "home_runs";
+    else if (/total bases?\b/.test(statText))            stat = "total_bases";
+    else if (/hits?\b/.test(statText))                   stat = "hits";
+    if (!stat) return null;
+    return { player, threshold, stat };
+}
+function normName(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 async function checkAndMaybeFire(g, market, ourHome, savantHome) {
@@ -287,19 +420,27 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     const market_p = yesAskCents / 100;
     const edgePP = (our_p - market_p) * 100;
 
-    // Edge must be positive AND above the threshold (our model
-    // thinks YES is too cheap → buy YES).
-    if (edgePP < _state.settings.edge_threshold_pp) return;
-
-    // Savant agreement gate.
-    if (_state.settings.require_savant_agree) {
-        if (savant_p == null) {
-            return;     // pregame / no Savant data → don't fire
-        }
-        if (savant_p <= market_p) {
-            return;     // Savant disagrees direction
-        }
+    // Savant stance — three states:
+    //   "agree"     → Savant also thinks YES is mispriced too cheap
+    //   "disagree"  → Savant thinks the market is right (or YES is overpriced)
+    //   "no_data"   → no Savant WP for this state (pregame or PA gap)
+    let savantStance = "no_data";
+    if (savant_p != null) {
+        savantStance = (savant_p > market_p) ? "agree" : "disagree";
     }
+
+    // HARD-gate mode (when the user explicitly enables
+    // require_savant_agree): keep the original strict behavior.
+    if (_state.settings.require_savant_agree && savantStance !== "agree") {
+        return;
+    }
+
+    // SOFT-gate mode (default): Savant raises the bar when it
+    // disagrees. Our model needs MORE conviction to override.
+    const effectiveThreshold = _state.settings.edge_threshold_pp + (
+        savantStance === "disagree" ? _state.settings.savant_disagree_penalty_pp : 0
+    );
+    if (edgePP < effectiveThreshold) return;
 
     // Already bet this market+side this session?
     const key = `${ticker}:yes`;
@@ -330,15 +471,52 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         });
         _state.sessionBets.add(key);
         persistSessionBets();
-        log("buy", `BUY ${contracts}× ${ticker} YES @ ${yesAskCents}¢` +
+        recordFiredBet({
+            kind:        "moneyline",
+            ticker,
+            side:        "yes",
+            contracts,
+            price_cents: yesAskCents,
+            our_p,
+            savant_p,
+            market_p,
+            edge_pp:     edgePP,
+            savant_stance: savantStance,
+            game_pk:     g.game_pk,
+            matchup:     `${g.away}@${g.home}`,
+            bet_team:    tail,
+            placed_at:   new Date().toISOString(),
+            order_response: result,
+        });
+        log("buy", `BUY ${contracts}× ${tail} YES @ ${yesAskCents}¢` +
             ` (our ${(our_p*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%` +
-            (savant_p != null ? ` / savant ${(savant_p*100).toFixed(1)}%` : "") +
+            (savant_p != null ? ` / savant ${(savant_p*100).toFixed(1)}% [${savantStance}]` : " [no Savant data]") +
             `, edge ${edgePP.toFixed(1)}pp)`,
-            { ticker, contracts, yesAskCents, our_p, savant_p, market_p, edgePP, order: result });
+            { ticker, contracts, yesAskCents, our_p, savant_p, market_p, edgePP, savantStance, order: result });
         toast(`Bot: bought ${contracts}× ${tail} YES @ ${yesAskCents}¢`, "ok");
     } catch (e) {
         log("err", `Order failed for ${ticker}: ${e.message || e}`);
     }
+}
+
+// Persistent record of every bet the bot fires. This is what we'll
+// analyze next week to do a REAL backtest — the model probabilities,
+// the market price at fire-time, the actual outcome. localStorage
+// holds the last 500 fires; export-to-clipboard happens via the
+// drawer's "Export fires (JSON)" button.
+const LS_FIRES = "diamond_context_bot_fires";
+const FIRES_MAX = 500;
+function recordFiredBet(payload) {
+    let arr;
+    try { arr = JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
+    catch { arr = []; }
+    arr.unshift(payload);
+    if (arr.length > FIRES_MAX) arr.length = FIRES_MAX;
+    try { localStorage.setItem(LS_FIRES, JSON.stringify(arr)); } catch {}
+}
+function getFires() {
+    try { return JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
+    catch { return []; }
 }
 
 
@@ -734,22 +912,39 @@ function renderBotPane() {
                    data-bot-setting-dollar="open_exposure_max">
             <small>Total open positions cap · ceiling $${(HARD_CAPS.open_exposure_max/100).toFixed(0)}</small>
           </label>
+          <label>
+            <span>Savant disagrees → +N pp penalty</span>
+            <input type="number" min="0" max="10" step="1"
+                   value="${s.savant_disagree_penalty_pp}"
+                   data-bot-setting="savant_disagree_penalty_pp">
+            <small>When Savant disagrees direction, raise the required edge by N pp. Drop to 0 once we've outperformed Savant.</small>
+          </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.require_savant_agree ? "checked" : ""}
                    data-bot-setting-bool="require_savant_agree">
-            <span>Require Baseball Savant to agree direction</span>
+            <span>Strict mode: REQUIRE Savant to agree (hard gate)</span>
+          </label>
+          <label class="bot-checkbox-label">
+            <input type="checkbox" ${s.bet_player_props ? "checked" : ""}
+                   data-bot-setting-bool="bet_player_props">
+            <span>Also bet player props (HR / Hits / Ks / TB) — no Savant signal applies</span>
           </label>
         </div>
         <p class="bot-settings-note">
-          Only moneyline markets are scanned. The bot won't fire on player props or spreads —
-          those don't have two-engine confirmation, so they ride without a safety net.
+          Moneyline uses Savant as a confidence amplifier (soft gate by default). Player props
+          ride on our matchup-engine alone — Savant doesn't publish player-level probabilities.
+          Every fire writes its full context to localStorage so we can backtest against actual
+          outcomes after a few sessions.
         </p>
       </details>
 
       <div class="bot-section">
         <div class="bot-log-head">
           <h3>Activity</h3>
-          ${logEntries.length ? `<button class="bot-clear-log" data-bot-clear-log>Clear</button>` : ""}
+          <div class="bot-log-actions">
+            <button class="bot-export-fires" data-bot-export-fires>Export fires (${getFires().length})</button>
+            ${logEntries.length ? `<button class="bot-clear-log" data-bot-clear-log>Clear log</button>` : ""}
+          </div>
         </div>
         <div class="bot-log">
           ${logEntries.length
@@ -809,6 +1004,19 @@ function bindBotPaneHandlers(overlay) {
         if (confirm("Clear activity log?")) {
             clearLog();
             refreshDrawerContent();
+        }
+    });
+    overlay.querySelector("[data-bot-export-fires]")?.addEventListener("click", async () => {
+        const fires = getFires();
+        if (!fires.length) { toast("No fires recorded yet", "ok"); return; }
+        const blob = JSON.stringify(fires, null, 2);
+        try {
+            await navigator.clipboard.writeText(blob);
+            toast(`Copied ${fires.length} fires to clipboard`, "ok");
+        } catch {
+            // Fallback: open in a new window so the user can copy.
+            const w = window.open("", "_blank");
+            if (w) { w.document.body.innerText = blob; }
         }
     });
 }
