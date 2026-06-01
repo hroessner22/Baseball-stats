@@ -444,16 +444,38 @@ main.board {
     font-weight: 600;
 }
 
+/* Preview-state tile body: pitchers stacked LEFT, start time RIGHT.
+   Both share the same horizontal row so the time visually pairs
+   with the matchup it labels instead of floating mid-tile. */
+.tile .tile-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: space-between;
+    margin-top: 6px;
+}
+.tile .tile-time-side {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    white-space: nowrap;
+    text-transform: uppercase;
+}
+
 /* Probables: stacked two-row pitcher layout — one row per side,
-   each row [avatar | THROWS + name | optional 'vs']. Both rows
-   share an avatar slot (real photo OR dashed-circle placeholder
-   for TBA) so the rows align vertically across every tile, even
-   when one side hasn't named their starter. */
+   each row [avatar | THROWS + name]. Both rows share an avatar
+   slot (real photo OR dashed-circle placeholder for TBA) so the
+   rows align vertically across every tile, even when one side
+   hasn't named their starter. Left-aligned now so the pitcher
+   block reads as a unit on the left and the time on the right. */
 .tile .tile-extra.probables {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    align-items: center;     /* center the rows in the tile */
+    align-items: flex-start;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 .tile .tile-pitcher-row {
     display: inline-flex;
@@ -463,13 +485,22 @@ main.board {
     line-height: 1.2;
     text-align: left;
     min-height: 26px;        /* match avatar height for alignment */
+    max-width: 100%;
 }
 .tile .tile-pitcher-row.is-tba .tile-pitcher-text {
     color: var(--text-dim);
     font-weight: 600;
 }
+.tile .tile-pitcher-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+/* Hide the "vs" — no longer needed once pitchers are stacked
+   vertically as a clear two-row list. */
 .tile .tile-pitcher-row .dim {
-    margin-left: 4px;
+    display: none;
 }
 .tile .tile-live-photo {
     width: 28px;

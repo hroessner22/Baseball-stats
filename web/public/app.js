@@ -118,11 +118,15 @@ function escapeHTMLAttr(s) {
 
 function handleRoute() {
     const hash = window.location.hash;
-    // Accept numeric MLBAM game_pk or the literal "demo" sentinel.
-    const m = hash.match(/^#game\/(demo|\d+)/);
+    // Accept numeric MLBAM game_pk or the literal "demo" sentinel,
+    // optionally followed by /live, /gamecast, /boxscore, /markets
+    // so deep-links into a specific view work (the dashboard's
+    // "View all markets →" link uses /markets to skip the live tab).
+    const m = hash.match(/^#game\/(demo|\d+)(?:\/(live|gamecast|boxscore|markets))?/);
     if (m) {
-        const id = m[1];
-        if (id !== activeGameId) showGameView(id);
+        const id     = m[1];
+        const mode   = m[2] || null;
+        if (id !== activeGameId || mode) showGameView(id, mode);
         setActiveNav("live");
         return;
     }
@@ -430,6 +434,14 @@ function renderTile(g) {
     const recHome = g.record?.home || "";
     const fmtScore = (s) => g.status === "Preview" ? "—" : s;
 
+    // For Preview games, stack the pitchers on the LEFT with the
+    // start time on the RIGHT — sportsbook layout, cleaner read.
+    // For Live / Final games, keep the original "state on its own
+    // line, body below" arrangement because the live state can
+    // include rich content (count + outs + inning) that benefits
+    // from full-width centering.
+    const previewLayout = g.status === "Preview" && g.probables;
+
     return `
       <a class="tile" href="#game/${g.game_pk}" data-status="${g.status}" data-pk="${g.game_pk}">
         ${hotPill(g)}
@@ -449,8 +461,13 @@ function renderTile(g) {
             <span class="score">${fmtScore(g.home_score)}</span>
           </div>
         </div>
-        <div class="state">${stateLabel(g)}</div>
-        ${tileBody(g)}
+        ${previewLayout
+          ? `<div class="tile-preview-row">
+               ${tileBody(g)}
+               <div class="tile-time-side">${stateLabel(g)}</div>
+             </div>`
+          : `<div class="state">${stateLabel(g)}</div>
+             ${tileBody(g)}`}
         ${tileWeBar(g)}
       </a>
     `;
@@ -623,8 +640,14 @@ function playerHeadshotLarge(mlbam, width = 240) {
 
 // ── GAME VIEW ────────────────────────────────────────────────────────
 
-function showGameView(id) {
+function showGameView(id, initialMode = null) {
     activeGameId = id;
+    // Set the view mode BEFORE rendering so deep-links like
+    // #game/123/markets land on the Markets tab directly, not the
+    // live tab. Valid modes: "live" | "gamecast" | "boxscore" | "markets".
+    if (initialMode && ["live", "gamecast", "boxscore", "markets"].includes(initialMode)) {
+        gameViewMode = initialMode;
+    }
     clearAllTimers();
     hideAllViews();
     gameView.hidden = false;
@@ -1101,7 +1124,12 @@ function renderMarketsDashboardGameCard(g, lookup) {
     const away = g.away || "AWAY";
     const startLbl = g.start_time ? formatGameClockShort(g.start_time) : "";
     const game = lookup[g.key] || null;
-    const href = game?.pk ? `#game/${game.pk}` : `#standings`;
+    // Deep-link straight into the per-game Markets tab so this card
+    // lives up to its 'View all markets' promise. Falls back to the
+    // slate-wide standings only if the game_pk lookup fails (Kalshi
+    // has a market but MLB doesn't show this game in today's slate
+    // — usually a tomorrow-evening game listed early).
+    const href = game?.pk ? `#game/${game.pk}/markets` : `#standings`;
     const statusLbl = game?.status === "Live" ? "LIVE"
                     : game?.status === "Final" ? "FINAL"
                     : "";
