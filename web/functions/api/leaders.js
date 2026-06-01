@@ -12,6 +12,12 @@ const HITTING = [
     ["onBasePlusSlugging",  "OPS"],
     ["stolenBases",         "SB"],
     ["runs",                "R"],
+    // Added to fill the leaders screen with real signal — every
+    // category mapped to a standard MLB Stats API leaderCategory.
+    ["onBasePercentage",    "OBP"],
+    ["sluggingPercentage",  "SLG"],
+    ["hits",                "H"],
+    ["totalBases",          "TB"],
 ];
 
 const PITCHING = [
@@ -20,6 +26,10 @@ const PITCHING = [
     ["strikeouts",                      "K"],
     ["saves",                           "SV"],
     ["walksAndHitsPerInningPitched",    "WHIP"],
+    ["strikeoutsPer9Inn",               "K/9"],
+    ["walksPer9Inn",                    "BB/9"],
+    ["inningsPitched",                  "IP"],
+    ["holds",                           "HLD"],
 ];
 
 export async function onRequest(context) {
