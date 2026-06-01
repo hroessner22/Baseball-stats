@@ -267,13 +267,17 @@ async function getBalance() {
 }
 
 async function placeOrder(opts) {
-    // opts = { ticker, side ("yes"|"no"), count, price (cents 1-99) }
+    // opts = { ticker, side ("yes"|"no"), count, price (cents 1-99),
+    //          action ("buy" | "sell" — defaults to "buy") }
+    // Sell action is how the bot closes out winning positions for an
+    // EV-positive cashout (sell YES at a higher cents value than we
+    // bought) without doubling capital by buying the opposite side.
     const priceKey = opts.side === "yes" ? "yes_price" : "no_price";
     const payload = {
         ticker:          opts.ticker,
         client_order_id: cryptoUuid(),
         type:            "limit",
-        action:          "buy",
+        action:          opts.action || "buy",
         side:            opts.side,
         count:           opts.count,
         [priceKey]:      opts.price,
