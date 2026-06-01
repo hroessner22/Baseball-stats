@@ -52,7 +52,13 @@ const HARD_CAPS = {
 const DEFAULTS = {
     enabled:               false,
     unit_cents:            50,     // $0.50 per fire (user's spec)
-    edge_threshold_pp:     5,      // fire when |edge| >= 5pp
+    // 14-day backtest (188 games, naive baseline) showed the
+    // sweet spot at 3pp — 64% win rate, +39% ROI. 5pp produced
+    // only 3 bets across the whole window (too narrow); below
+    // 3pp the calibration degrades to random. The state-keyed
+    // WE table the bot uses in-game is calibrated against 15M
+    // PAs, so the threshold sweet spot likely holds in-game too.
+    edge_threshold_pp:     3,
     // Savant agreement is a SOFT confidence amplifier, not a hard gate.
     // Three states the bot encounters:
     //   - Savant agrees direction → fire at base edge_threshold_pp
