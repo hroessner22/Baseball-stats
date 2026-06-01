@@ -433,11 +433,43 @@ main.board {
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: var(--bg);
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px dashed rgba(148, 163, 184, 0.25);
+    box-sizing: border-box;
+    display: inline-block;
+    flex-shrink: 0;
 }
 .tile .tile-pitcher-tba {
     color: var(--text-dim);
     font-weight: 600;
+}
+
+/* Probables: stacked two-row pitcher layout — one row per side,
+   each row [avatar | THROWS + name | optional 'vs']. Both rows
+   share an avatar slot (real photo OR dashed-circle placeholder
+   for TBA) so the rows align vertically across every tile, even
+   when one side hasn't named their starter. */
+.tile .tile-extra.probables {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;     /* center the rows in the tile */
+}
+.tile .tile-pitcher-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.2;
+    text-align: left;
+    min-height: 26px;        /* match avatar height for alignment */
+}
+.tile .tile-pitcher-row.is-tba .tile-pitcher-text {
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.tile .tile-pitcher-row .dim {
+    margin-left: 4px;
 }
 .tile .tile-live-photo {
     width: 28px;

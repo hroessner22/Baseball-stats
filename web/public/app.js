@@ -469,15 +469,29 @@ function tileBody(g) {
         `;
     }
     if (g.status === "Preview" && g.probables) {
-        const fmt = (p) => p
-            ? `<span class="tile-pitcher">
-                 ${inlineAvatar(p.id, { size: 28, class: "tile-photo", alt: p.name })}
-                 <span class="tile-pitcher-text">${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}</span>
-               </span>`
-            : `<span class="tile-pitcher-tba">TBA</span>`;
+        // Stacked two-row layout so the avatars/text align cleanly
+        // across every tile — including the case where one side is
+        // TBA. TBA still renders a placeholder photo slot so its row
+        // has the same height + left edge as a known pitcher's row.
+        const row = (p, trailing) => {
+            const photo = p
+                ? inlineAvatar(p.id, { size: 24, class: "tile-photo", alt: p.name })
+                : `<span class="tile-photo-empty" aria-hidden="true"></span>`;
+            const text = p
+                ? `${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}`
+                : "TBA";
+            return `
+              <div class="tile-pitcher-row${p ? "" : " is-tba"}">
+                ${photo}
+                <span class="tile-pitcher-text">${text}</span>
+                ${trailing ? `<span class="dim">vs</span>` : ""}
+              </div>
+            `;
+        };
         return `
           <div class="tile-extra probables">
-            ${fmt(g.probables.away)} <span class="dim">vs</span> ${fmt(g.probables.home)}
+            ${row(g.probables.away, true)}
+            ${row(g.probables.home, false)}
           </div>
         `;
     }
