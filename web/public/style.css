@@ -7622,7 +7622,34 @@ button.md-game-outcome:active { transform: translateY(1px); }
     top: 12px;
     left: 220px;            /* sits next to DIAMOND:CONTEXT logo */
     z-index: 9100;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
+/* "Connect Kalshi →" pill — visible whenever the signed-in user
+   has NOT yet stored Kalshi API credentials. Disappears the moment
+   Kalshi.isConnected() flips to true (a MutationObserver in
+   auth.js re-renders on the credential change). */
+.auth-kalshi-cta {
+    appearance: none;
+    background: rgba(34, 197, 94, 0.14);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    color: var(--accent-win);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 120ms, transform 80ms, border-color 120ms;
+}
+.auth-kalshi-cta:hover {
+    background: rgba(34, 197, 94, 0.22);
+    transform: translateY(-1px);
+}
+.auth-kalshi-cta:active { transform: translateY(0); }
 .auth-signin-btn {
     appearance: none;
     background: transparent;

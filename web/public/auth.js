@@ -77,24 +77,44 @@ supabase.auth.onAuthStateChange((event, session) => {
     if (event === "SIGNED_OUT") toast("Signed out", "ok");
 });
 
-// First step after signing in is connecting Kalshi (otherwise there's
-// nothing to bet through). Surface the step-by-step guide automatically
-// in two cases:
-//   - Brand-new sign-up (user.created_at within the last ~60 seconds —
-//     Supabase auto-creates the user on magic-link click for first-
-//     timers, so this is how we detect 'just signed up').
-//   - Returning user who hasn't connected Kalshi yet.
-// Don't auto-open for users who already have Kalshi connected — they
-// can always get to it via the user menu's "How to connect Kalshi".
+// Show the Kalshi guide automatically ONCE per user, the very first
+// time they sign in. After that we trust they know where to find it
+// (the permanent "Connect Kalshi" pill in the top header, plus the
+// "How to connect Kalshi" item in the user-menu dropdown).
+//
+// Tracking is keyed by user id in localStorage so:
+//   - Sign in fresh on a new browser → guide opens once
+//   - Reload the page (SIGNED_IN re-fires on session hydrate) → no guide
+//   - Sign out + sign back in → no guide (flag persists)
+//   - A different account on the same browser → THAT account gets the
+//     guide on its first sign-in (per-user key)
+const KALSHI_GUIDE_SEEN_KEY = "diamond_context_kalshi_guide_seen";
+function hasSeenKalshiGuide(userId) {
+    try {
+        const raw = localStorage.getItem(KALSHI_GUIDE_SEEN_KEY) || "";
+        return raw.split(",").includes(String(userId));
+    } catch { return false; }
+}
+function markKalshiGuideSeen(userId) {
+    try {
+        const raw = localStorage.getItem(KALSHI_GUIDE_SEEN_KEY) || "";
+        const set = new Set(raw.split(",").filter(Boolean));
+        set.add(String(userId));
+        localStorage.setItem(KALSHI_GUIDE_SEEN_KEY, Array.from(set).join(","));
+    } catch { /* localStorage blocked */ }
+}
 function maybeShowKalshiGuideOnSignIn(user) {
     if (!user || typeof openKalshiGuide !== "function") return;
-    // Kalshi-already-connected → skip
+    // Kalshi-already-connected → never auto-open (they know the drill).
     if (window.Kalshi && typeof window.Kalshi.isConnected === "function" && window.Kalshi.isConnected()) {
         return;
     }
-    // Otherwise show the guide. Small delay so the sign-in toast
-    // appears and settles before the modal pops up.
-    setTimeout(() => openKalshiGuide(), 500);
+    // Per-user "first time" check.
+    if (hasSeenKalshiGuide(user.id)) return;
+    setTimeout(() => {
+        openKalshiGuide();
+        markKalshiGuideSeen(user.id);
+    }, 500);
 }
 
 function notifyChange() {
@@ -243,12 +263,25 @@ function renderHeaderWidget() {
     if (_currentUser) {
         const email = _currentUser.email || "Account";
         const initial = (email[0] || "?").toUpperCase();
+        // Permanent "Connect Kalshi" pill next to the user pill —
+        // visible whenever the user is NOT yet Kalshi-connected, so
+        // the next-step CTA is always one click away (without
+        // having to expand the user menu). Hidden once Kalshi
+        // credentials are stored.
+        const kalshiConnected = !!(window.Kalshi
+            && typeof window.Kalshi.isConnected === "function"
+            && window.Kalshi.isConnected());
         host.innerHTML = `
           <button class="auth-pill" data-auth-menu title="${escapeAttr(email)}">
             <span class="auth-avatar">${escapeText(initial)}</span>
             <span class="auth-email">${escapeText(email)}</span>
             <span class="auth-caret">▾</span>
           </button>
+          ${kalshiConnected ? "" : `
+            <button class="auth-kalshi-cta" data-auth-show-kalshi-guide-top>
+              Connect Kalshi →
+            </button>
+          `}
           <div class="auth-menu" data-auth-menu-panel hidden>
             <div class="auth-menu-email">${escapeText(email)}</div>
             <button type="button" class="auth-menu-item" data-auth-show-kalshi-guide>
@@ -276,12 +309,33 @@ function renderHeaderWidget() {
             panel.hidden = true;
             openKalshiGuide();
         });
+        const topCta = host.querySelector("[data-auth-show-kalshi-guide-top]");
+        if (topCta) topCta.addEventListener("click", openKalshiGuide);
     } else {
         host.innerHTML = `
           <button class="auth-signin-btn" data-auth-signin>Sign in</button>
         `;
         host.querySelector("[data-auth-signin]").addEventListener("click", openSignInModal);
     }
+}
+
+// Re-render the header on any DOM change so the "Connect Kalshi"
+// CTA can disappear the moment Kalshi credentials get stored
+// (which happens inside the Connect Kalshi modal, in a totally
+// separate file). Cheaper than a 1s polling timer, and the
+// MutationObserver runs locally so it doesn't touch the network.
+if (typeof MutationObserver !== "undefined") {
+    let _lastKalshiState = null;
+    const recheckKalshi = () => {
+        const now = !!(window.Kalshi
+            && typeof window.Kalshi.isConnected === "function"
+            && window.Kalshi.isConnected());
+        if (now !== _lastKalshiState) {
+            _lastKalshiState = now;
+            if (_currentUser) renderHeaderWidget();
+        }
+    };
+    new MutationObserver(recheckKalshi).observe(document.body, { childList: true, subtree: true });
 }
 
 
