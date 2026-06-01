@@ -35,7 +35,12 @@ const PITCHING = [
 export async function onRequest(context) {
     const url = new URL(context.request.url);
     const season = url.searchParams.get("season") || String(currentSeason());
-    const limit = url.searchParams.get("limit") || "5";
+    // Default to top 10 entries per category. Bumped from 5 so each
+    // card has more vertical fill on the Leaders view — the section
+    // headers + 19 cards × 5 entries left a lot of empty space below
+    // the pitching row. 10 entries × ~28px row = ~280px card height,
+    // which combined with the 5-col grid below fills the viewport.
+    const limit = url.searchParams.get("limit") || "10";
 
     try {
         const [hit, pit] = await Promise.all([

@@ -720,8 +720,13 @@ main.board {
 
 .leaders-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
-    gap: 12px;
+    /* 5 cards per row at desktop width — 1920px viewport, ~36px page
+       padding, 4 gaps × 14px = 56 → (1920-36-56)/5 = ~366px per card.
+       minmax 320 gives the grid headroom to fit 5 columns on
+       typical desktop. With 10 hitting + 9 pitching cards that's a
+       balanced 5×2 / 5×2 layout that fills the screen. */
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+    gap: 14px;
 }
 
 .leader-card {
@@ -734,12 +739,12 @@ main.board {
     flex-direction: column;
 }
 .leader-head {
-    padding: 9px 14px;
+    padding: 11px 16px;
     background: var(--surface-2);
     border-bottom: 1px solid var(--border);
 }
 .leader-stat {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 800;
     letter-spacing: 0.18em;
     color: var(--text);
@@ -754,11 +759,11 @@ main.board {
 }
 .leader-row {
     display: grid;
-    grid-template-columns: 20px 32px minmax(0, 1fr) auto auto;
+    grid-template-columns: 22px 30px minmax(0, 1fr) auto auto;
     gap: 8px;
     align-items: center;
-    padding: 6px 14px;
-    font-size: 12px;
+    padding: 7px 16px;
+    font-size: 13px;
 }
 .leader-photo {
     width: 32px;
