@@ -8375,6 +8375,37 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-pl-pos { color: var(--accent-win); font-weight: 700; }
 .bot-pl-neg { color: var(--accent-live); font-weight: 700; }
+
+/* Source pill — tags each active bet as bot- or user-placed. */
+.bet-src {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.4;
+    text-align: center;
+    min-width: 32px;
+}
+.bet-src-bot {
+    background: rgba(245, 158, 11, 0.16);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.42);
+}
+.bet-src-user {
+    background: rgba(34, 197, 94, 0.16);
+    color: var(--accent-win);
+    border: 1px solid rgba(34, 197, 94, 0.42);
+}
+.bot-section-sub {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--text-faint);
+    margin-left: 8px;
+}
 .bot-exit-btn, .bot-cancel-btn {
     appearance: none;
     background: rgba(34, 197, 94, 0.14);

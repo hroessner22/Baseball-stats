@@ -677,12 +677,12 @@ function drawerHtml(initialTab) {
     return `
       <div class="bot-drawer" role="dialog" aria-modal="true">
         <header class="bot-drawer-head">
-          <h2>Bets &amp; Bot</h2>
+          <h2>Active Bets</h2>
           <button class="bot-drawer-close" aria-label="Close">×</button>
         </header>
         <nav class="bot-drawer-tabs" role="tablist">
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
-            Open Bets <span class="bot-tab-count" data-bets-count>0</span>
+            Active Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
           <button class="bot-tab ${initialTab === "bot" ? "active" : ""}" data-tab="bot" role="tab">
             Bot
@@ -733,7 +733,7 @@ async function renderOpenBetsPane() {
     if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
         return `
           <div class="bot-empty">
-            <p>Connect Kalshi to see open positions.</p>
+            <p>Connect Kalshi to see your active bets.</p>
           </div>
         `;
     }
@@ -750,12 +750,27 @@ async function renderOpenBetsPane() {
     _state.openPositions = mps;
 
     const resting = (orders || []);
+    const fires   = getFires();
+
+    // Build a map ticker → most-recent bot fire so we can both tag the
+    // row's source AND surface the edge / model probabilities that
+    // triggered it. Manual fills don't pass through recordFiredBet, so
+    // anything NOT in this map is by elimination a user-placed bet.
+    const botByTicker = new Map();
+    for (const f of fires) {
+        if (!f.ticker) continue;
+        if (!botByTicker.has(f.ticker)) botByTicker.set(f.ticker, f);
+    }
+
+    // Counts for the section subtitle.
+    const botCount  = mps.filter((p) => botByTicker.has(p.ticker)).length;
+    const userCount = mps.length - botCount;
 
     if (!mps.length && !resting.length) {
         return `
           <div class="bot-empty">
-            <p>No open positions or resting orders.</p>
-            <p class="bot-empty-sub">Bets you place (manually or via the bot) show up here.</p>
+            <p>No active bets right now.</p>
+            <p class="bot-empty-sub">Every bet — bot or manual — shows up here the moment it fills.</p>
           </div>
         `;
     }
@@ -774,8 +789,13 @@ async function renderOpenBetsPane() {
             ? ((live - entry) * qty / 100)
             : null;
         const plCls = pl == null ? "" : pl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+        const fire  = botByTicker.get(p.ticker);
+        const srcTag = fire
+            ? `<span class="bet-src bet-src-bot" title="Placed by bot${fire.edge_pp != null ? ` · ${fire.edge_pp.toFixed(1)}pp edge` : ""}">BOT</span>`
+            : `<span class="bet-src bet-src-user" title="Placed manually">YOU</span>`;
         return `
           <tr>
+            <td>${srcTag}</td>
             <td class="bot-ticker">${escapeText(p.ticker)}</td>
             <td>${qty}× YES</td>
             <td>${entry}¢</td>
@@ -789,23 +809,34 @@ async function renderOpenBetsPane() {
           </tr>
         `;
     }).join("");
-    const orderRows = resting.map((o) => `
-      <tr>
-        <td class="bot-ticker">${escapeText(o.ticker)}</td>
-        <td>${escapeText(o.action || "?")} ${escapeText(o.side || "?")}</td>
-        <td>${o.yes_price ?? o.no_price ?? "?"}¢</td>
-        <td>${o.remaining_count ?? o.count ?? "?"}</td>
-        <td>
-          <button class="bot-cancel-btn" data-cancel="${escapeText(o.order_id || "")}">Cancel</button>
-        </td>
-      </tr>
-    `).join("");
+    const orderRows = resting.map((o) => {
+        const fire   = botByTicker.get(o.ticker);
+        const srcTag = fire
+            ? `<span class="bet-src bet-src-bot">BOT</span>`
+            : `<span class="bet-src bet-src-user">YOU</span>`;
+        return `
+          <tr>
+            <td>${srcTag}</td>
+            <td class="bot-ticker">${escapeText(o.ticker)}</td>
+            <td>${escapeText(o.action || "?")} ${escapeText(o.side || "?")}</td>
+            <td>${o.yes_price ?? o.no_price ?? "?"}¢</td>
+            <td>${o.remaining_count ?? o.count ?? "?"}</td>
+            <td>
+              <button class="bot-cancel-btn" data-cancel="${escapeText(o.order_id || "")}">Cancel</button>
+            </td>
+          </tr>
+        `;
+    }).join("");
+    const subtitle = mps.length
+        ? `${mps.length} active · ${botCount} bot, ${userCount} manual`
+        : "";
+
     return `
       ${mps.length ? `
         <div class="bot-section">
-          <h3>Positions</h3>
+          <h3>Active positions ${subtitle ? `<span class="bot-section-sub">${subtitle}</span>` : ""}</h3>
           <table class="bot-table">
-            <thead><tr><th>Market</th><th>Side</th><th>Entry</th><th>Live</th><th>P/L</th><th></th></tr></thead>
+            <thead><tr><th>By</th><th>Market</th><th>Side</th><th>Entry</th><th>Live</th><th>P/L</th><th></th></tr></thead>
             <tbody>${posRows}</tbody>
           </table>
         </div>
@@ -814,7 +845,7 @@ async function renderOpenBetsPane() {
         <div class="bot-section">
           <h3>Resting orders</h3>
           <table class="bot-table">
-            <thead><tr><th>Market</th><th>Action</th><th>Price</th><th>Qty</th><th></th></tr></thead>
+            <thead><tr><th>By</th><th>Market</th><th>Action</th><th>Price</th><th>Qty</th><th></th></tr></thead>
             <tbody>${orderRows}</tbody>
           </table>
         </div>
@@ -1047,7 +1078,7 @@ function renderLauncher() {
     btn.title = "Open bets & bot";
     btn.innerHTML = `
       <span class="bot-launcher-icon">🎯</span>
-      <span class="bot-launcher-label">Bets</span>
+      <span class="bot-launcher-label">Active Bets</span>
       <span class="bot-launcher-dot" data-launcher-dot hidden></span>
     `;
     btn.addEventListener("click", () => openDrawer("bets"));
