@@ -153,14 +153,33 @@ function findTricodesInText(text) {
 // ── HTTP helpers ──────────────────────────────────────────────────
 
 async function fetchJson(url, opts = {}) {
-    const res = await fetch(url, {
-        headers: { "User-Agent": UA, ...(opts.headers || {}) },
-        cf: { cacheTtl: opts.cacheTtl ?? 30, cacheEverything: true },
-    });
-    if (!res.ok) {
-        throw new Error(`${url} → HTTP ${res.status}`);
+    // Per-request timeout so ONE slow upstream in a Promise.allSettled
+    // fan-out doesn't hang the whole worker until Cloudflare kills it
+    // (which surfaces as a 5xx on our endpoint and trips the
+    // 'our_markets degraded' banner). 6s is generous for Kalshi / MLB
+    // Stats API responses; anything slower than that we want to skip
+    // rather than wait for. Pass opts.timeoutMs to override.
+    const ctrl = new AbortController();
+    const timeoutMs = opts.timeoutMs ?? 6000;
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, {
+            headers: { "User-Agent": UA, ...(opts.headers || {}) },
+            cf: { cacheTtl: opts.cacheTtl ?? 30, cacheEverything: true },
+            signal: ctrl.signal,
+        });
+        if (!res.ok) {
+            throw new Error(`${url} → HTTP ${res.status}`);
+        }
+        return await res.json();
+    } catch (e) {
+        if (e.name === "AbortError") {
+            throw new Error(`${url} → timeout after ${timeoutMs}ms`);
+        }
+        throw e;
+    } finally {
+        clearTimeout(timer);
     }
-    return res.json();
 }
 
 function parseJsonArray(s) {

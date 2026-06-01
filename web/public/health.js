@@ -164,20 +164,27 @@ function runActiveRecovery(health) {
                 });
             }),
         );
-        // Did anything recover this round? If yes, kick a re-check
-        // immediately AND nudge the markets dashboard to repopulate
-        // from the now-good cache.
+        // Did anything recover this round? If yes, snap the banner
+        // away immediately (don't make the user stare at a stale
+        // 'degraded' label while we wait 30s for the next health
+        // poll to confirm), nudge the dashboard, and re-poll to
+        // confirm everything's actually back.
         const recovered = results.some(
             (r) => r.status === "fulfilled" && r.value.ok,
         );
         if (recovered) {
+            // Optimistic: clear the banner now. If the re-poll
+            // reveals we're still degraded somehow, applyDegradedAdaptations
+            // will put it back.
+            degradedActionsApplied = false;
+            hideDegradedBanner();
             try {
+                if (root.marketsDashboardTimer) clearInterval(root.marketsDashboardTimer);
                 if (typeof root.refreshMarketsDashboard === "function") {
+                    root.marketsDashboardTimer = setInterval(root.refreshMarketsDashboard, 10_000);
                     root.refreshMarketsDashboard();
                 }
             } catch { /* best-effort */ }
-            // Re-poll health right away so the banner clears as
-            // soon as possible.
             checkHealth({ noSchedule: true });
         }
     };
@@ -205,8 +212,16 @@ function showDegradedBanner() {
         Degraded: <strong>${failed.join(", ") || "system slow"}</strong>.
         Slowed auto-refresh to 30s while we recover.
       </span>
-      <button class="hdb-dismiss" onclick="this.parentElement.remove()">×</button>
+      <button class="hdb-dismiss" aria-label="Dismiss">×</button>
     `;
+    // User-dismiss should ALSO reset degradedActionsApplied so the
+    // banner can re-show if the system re-degrades. Otherwise the
+    // 'isOk && degradedActionsApplied' branch in applyDegradedAdaptations
+    // never triggers because applied is true but the banner is gone.
+    banner.querySelector(".hdb-dismiss").addEventListener("click", () => {
+        banner.remove();
+        degradedActionsApplied = false;
+    });
 }
 
 function hideDegradedBanner() {
