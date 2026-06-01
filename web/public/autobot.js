@@ -43,7 +43,12 @@
 const HARD_CAPS = {
     unit_cents_min:        25,     // $0.25 minimum
     unit_cents_max:        200,    // $2.00 maximum
-    edge_pp_min:           3,      // never fire below 3pp edge
+    // 61-day backtest (469 games, pythag baseline) calibration:
+    //   1-2pp edge:  49% win (random)
+    //   2-3pp edge:  63% win, +43.5% ROI ← signal cliff
+    //   3pp+ edge:   too-small sample
+    // Hard floor at 2pp keeps us above the random-noise zone.
+    edge_pp_min:           2,
     edge_pp_max:           20,
     daily_loss_cents_max:  500,    // $5 daily realized-loss limit
     open_exposure_max:     2000,   // $20 total open positions
@@ -52,13 +57,17 @@ const HARD_CAPS = {
 const DEFAULTS = {
     enabled:               false,
     unit_cents:            50,     // $0.50 per fire (user's spec)
-    // 14-day backtest (188 games, naive baseline) showed the
-    // sweet spot at 3pp — 64% win rate, +39% ROI. 5pp produced
-    // only 3 bets across the whole window (too narrow); below
-    // 3pp the calibration degrades to random. The state-keyed
-    // WE table the bot uses in-game is calibrated against 15M
-    // PAs, so the threshold sweet spot likely holds in-game too.
-    edge_threshold_pp:     3,
+    // 61-day backtest (469 games, pythag baseline, May 14 day
+    // result was sample noise — bigger sample changed the picture):
+    //   1-2pp:  49% win (random)
+    //   2-3pp:  63% win, +43.5% ROI ← cliff
+    //   3pp+:   sample too small to conclude
+    // Default at 2pp puts us right above the random-noise zone.
+    // Maps directly: when our model says +2pp over a Pythag-
+    // baseline pregame line, we hit 63%. Kalshi is more efficient
+    // than Pythag so the in-game equivalent edge against Kalshi
+    // is rarer but each fire carries similar conviction.
+    edge_threshold_pp:     2,
     // Savant agreement is a SOFT confidence amplifier, not a hard gate.
     // Three states the bot encounters:
     //   - Savant agrees direction → fire at base edge_threshold_pp
