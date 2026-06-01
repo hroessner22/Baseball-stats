@@ -679,10 +679,10 @@ main.board {
 .leaders-view {
     flex: 1;
     overflow: auto;
-    padding: 12px 22px 14px;
+    padding: 8px 16px 10px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 6px;
 }
 .leaders-view .empty { padding: 48px 16px; }
 
@@ -708,21 +708,22 @@ main.board {
 .leaders-section {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
 }
 .leaders-section-label {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text-dim);
     text-transform: uppercase;
     margin-bottom: 0;
+    line-height: 1.4;
 }
 
 .leaders-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+    gap: 6px;
 }
 
 .leader-card {
@@ -735,14 +736,14 @@ main.board {
     flex-direction: column;
 }
 .leader-head {
-    padding: 6px 12px;
+    padding: 4px 10px;
     background: var(--surface-2);
     border-bottom: 1px solid var(--border);
 }
 .leader-stat {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 800;
-    letter-spacing: 0.16em;
+    letter-spacing: 0.14em;
     color: var(--text);
     text-transform: uppercase;
     font-variant-numeric: tabular-nums;
@@ -750,28 +751,29 @@ main.board {
 
 .leader-list {
     list-style: none;
-    padding: 2px 0;
+    padding: 1px 0;
     margin: 0;
 }
 .leader-row {
     display: grid;
-    grid-template-columns: 16px 22px minmax(0, 1fr) auto auto;
-    gap: 7px;
+    grid-template-columns: 14px 18px minmax(0, 1fr) auto auto;
+    gap: 6px;
     align-items: center;
-    padding: 3px 12px;
-    font-size: 11px;
+    padding: 2px 10px;
+    font-size: 10.5px;
+    line-height: 1.2;
 }
 .leader-photo {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
     object-position: center top;
 }
 .leader-photo-empty {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: var(--bg);
 }
@@ -793,7 +795,7 @@ main.board {
 }
 .leader-team {
     color: var(--text-dim);
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.06em;
 }
@@ -802,8 +804,9 @@ main.board {
     font-weight: 800;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.01em;
-    min-width: 42px;
+    min-width: 38px;
     text-align: right;
+    font-size: 11px;
 }
 .leader-empty {
     padding: 14px;
