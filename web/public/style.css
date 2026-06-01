@@ -7070,7 +7070,10 @@ button.md-game-outcome:active { transform: translateY(1px); }
    DOM (handled by syncGlobalStakeWidgetVisibility). */
 .global-stake-widget {
     position: fixed;
-    top: 16px;
+    /* Slide below the page header (~48px tall — 12px padding + 24px
+       content + 12px padding) so the LIVE pill at the top-right
+       stays clickable. Was top: 16px, which laid right over it. */
+    top: 64px;
     right: 16px;
     z-index: 9000;
     display: none;
