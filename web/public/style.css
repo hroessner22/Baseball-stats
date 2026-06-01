@@ -8553,3 +8553,304 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-log-err  .bot-log-msg { color: var(--accent-live); }
 .bot-log-halt .bot-log-msg { color: var(--accent-live); font-weight: 700; }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   Home-screen hero — branded landing block at the top of the LIVE
+   board. Sits above the date bar + game tiles. Renders only on
+   today's slate.
+   ═══════════════════════════════════════════════════════════════ */
+
+.home-hero {
+    position: relative;
+    margin: 14px 18px 22px;
+    padding: 30px 32px 28px;
+    border-radius: 14px;
+    background: linear-gradient(
+        130deg,
+        rgba(15, 23, 42, 0.95) 0%,
+        rgba(15, 23, 42, 0.75) 45%,
+        rgba(56, 189, 248, 0.10) 100%
+    );
+    border: 1px solid rgba(56, 189, 248, 0.18);
+    overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+/* Soft animated diamond pattern in the background — subtle, dark
+   enough to stay out of the way of the foreground text. */
+.home-hero-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.16;
+    background-image:
+        radial-gradient(circle at 12% 8%,  rgba(34, 197, 94, 0.45) 0%, transparent 38%),
+        radial-gradient(circle at 92% 78%, rgba(56, 189, 248, 0.40) 0%, transparent 42%),
+        radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0.18) 0%, transparent 55%);
+    animation: hero-drift 18s ease-in-out infinite;
+}
+@keyframes hero-drift {
+    0%, 100% { transform: translate(0,    0)    scale(1); }
+    50%      { transform: translate(-2%, -1%) scale(1.04); }
+}
+
+.home-hero-content {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 28px;
+    align-items: start;
+}
+
+.home-hero-greeting {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-action);
+    margin-bottom: 8px;
+    opacity: 0.85;
+}
+.home-hero-title {
+    font-size: 38px;
+    font-weight: 900;
+    letter-spacing: 0.01em;
+    color: var(--text);
+    margin: 0 0 10px;
+    line-height: 1;
+    text-shadow: 0 2px 18px rgba(56, 189, 248, 0.20);
+}
+.home-hero-title .hero-colon {
+    color: var(--accent-win);
+    animation: hero-colon-pulse 2.4s ease-in-out infinite;
+}
+@keyframes hero-colon-pulse {
+    0%, 100% { opacity: 1; text-shadow: 0 0 8px rgba(34, 197, 94, 0.4); }
+    50%      { opacity: 0.55; text-shadow: 0 0 16px rgba(34, 197, 94, 0.8); }
+}
+.home-hero-tagline {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    margin: 0 0 22px;
+    max-width: 520px;
+}
+
+.home-hero-ctas {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.home-hero-cta {
+    appearance: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
+    border-radius: 10px;
+    padding: 12px 18px;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 2px;
+    transition: transform 120ms, box-shadow 120ms, background 120ms;
+}
+.home-hero-cta-label {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+}
+.home-hero-cta-meta {
+    font-size: 10px;
+    font-weight: 600;
+    opacity: 0.75;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.home-hero-cta-primary {
+    background: var(--accent-action);
+    color: #0B1220;
+}
+.home-hero-cta-primary:hover {
+    background: #0EA5E9;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(56, 189, 248, 0.4);
+}
+.home-hero-cta-secondary {
+    background: rgba(34, 197, 94, 0.16);
+    color: var(--accent-win);
+    border: 1px solid rgba(34, 197, 94, 0.35);
+}
+.home-hero-cta-secondary:hover {
+    background: rgba(34, 197, 94, 0.24);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(34, 197, 94, 0.25);
+}
+.home-hero-cta-tertiary {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding-top: 16px;     /* match height of two-line CTAs */
+    padding-bottom: 16px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.home-hero-cta-tertiary:hover {
+    color: var(--text);
+    border-color: var(--accent-action);
+}
+
+/* Stat tiles — sits on the right side of the hero in 2x2 grid. */
+.home-hero-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    align-self: center;
+}
+.home-hero-stat {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    min-width: 130px;
+    text-align: center;
+    backdrop-filter: blur(2px);
+}
+.home-hero-stat-value {
+    font-size: 26px;
+    font-weight: 900;
+    color: var(--text);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+.home-hero-stat-label {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+.home-hero-stat-hint {
+    font-size: 9px;
+    color: var(--text-faint);
+    margin-top: 2px;
+}
+.home-hero-stat-live .home-hero-stat-value {
+    color: var(--accent-live);
+    text-shadow: 0 0 12px rgba(239, 68, 68, 0.35);
+}
+.home-hero-stat-live .home-hero-stat-label {
+    color: var(--accent-live);
+}
+
+/* Featured game card — full-width strip across the bottom of the hero. */
+.home-hero-featured {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-top: 22px;
+    padding: 16px 20px;
+    border-radius: 12px;
+    background: rgba(11, 18, 32, 0.9);
+    border: 1px solid var(--border);
+    text-decoration: none;
+    color: inherit;
+    transition: transform 120ms, border-color 120ms, box-shadow 120ms;
+}
+.home-hero-featured:hover {
+    border-color: var(--accent-action);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(56, 189, 248, 0.18);
+}
+.home-hero-feat-tag {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    min-width: 160px;
+}
+.home-hero-feat-tag.is-live { color: var(--accent-live); }
+.home-hero-feat-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-live);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+.home-hero-feat-matchup {
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 14px;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: var(--text);
+}
+.home-hero-feat-at {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-dim);
+}
+.home-hero-feat-score {
+    margin-left: auto;
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--accent-action);
+    font-variant-numeric: tabular-nums;
+}
+.home-hero-feat-score .hero-score-sep {
+    color: var(--text-faint);
+    margin: 0 6px;
+    font-weight: 400;
+}
+.home-hero-feat-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    flex: 0 0 auto;
+}
+.home-hero-feat-cta {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent-action);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-left: 14px;
+    flex: 0 0 auto;
+}
+
+/* Below ~860px viewport, flatten to single column. */
+@media (max-width: 860px) {
+    .home-hero {
+        padding: 22px 20px;
+    }
+    .home-hero-content {
+        grid-template-columns: 1fr;
+    }
+    .home-hero-stats {
+        grid-template-columns: repeat(4, 1fr);
+        margin-top: 12px;
+    }
+    .home-hero-stat {
+        min-width: 0;
+        padding: 10px 8px;
+    }
+    .home-hero-stat-value { font-size: 20px; }
+    .home-hero-title { font-size: 28px; }
+    .home-hero-featured {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .home-hero-feat-matchup { font-size: 18px; }
+}
+
