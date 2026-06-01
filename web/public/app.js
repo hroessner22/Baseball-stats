@@ -777,9 +777,22 @@ function showLeaders() {
     leadersTimer = setInterval(refreshLeaders, LEADERS_REFRESH_MS);
 }
 
+// Leaders mode: 'standard' = MLB Stats API counting stats / rate stats
+//                'advanced' = Baseball Savant Statcast (xBA, xSLG, barrel%,
+//                              hard-hit%, xERA, etc.)
+// Persists across the 30s refresh + tab switches via localStorage so
+// the user's pick survives a page reload too.
+let leadersMode = (() => {
+    try { return localStorage.getItem("diamond_context_leaders_mode") || "standard"; }
+    catch { return "standard"; }
+})();
+
 async function refreshLeaders() {
+    const endpoint = leadersMode === "advanced"
+        ? "/api/leaders/advanced"
+        : "/api/leaders";
     try {
-        const res = await fetch("/api/leaders");
+        const res = await fetch(endpoint);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!data.hitting && !data.pitching) {
@@ -787,16 +800,25 @@ async function refreshLeaders() {
             return;
         }
         leadersView.innerHTML = renderLeaders(data);
+        bindLeadersToggle();
     } catch (e) {
         renderEmpty(leadersView, "Could not load leaders.", `${e.message || e}`);
     }
 }
 
 function renderLeaders(data) {
+    const isAdv = leadersMode === "advanced";
+    const sourceTag = isAdv ? "Baseball Savant" : `${data.season} season`;
     return `
       <header class="leaders-head">
         <h2>LEADERS</h2>
-        <span class="leaders-meta">${data.season} season · top 5</span>
+        <span class="leaders-meta">${sourceTag} · top 5</span>
+        <div class="leaders-mode-toggle" role="tablist">
+          <button type="button" role="tab" class="leaders-mode-btn ${isAdv ? "" : "active"}"
+                  data-leaders-mode="standard">Standard</button>
+          <button type="button" role="tab" class="leaders-mode-btn ${isAdv ? "active" : ""}"
+                  data-leaders-mode="advanced">Statcast</button>
+        </div>
       </header>
       <section class="leaders-section">
         <h3 class="leaders-section-label">Hitting</h3>
@@ -811,6 +833,19 @@ function renderLeaders(data) {
         </div>
       </section>
     `;
+}
+
+function bindLeadersToggle() {
+    document.querySelectorAll("[data-leaders-mode]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const next = btn.dataset.leadersMode;
+            if (next === leadersMode) return;
+            leadersMode = next;
+            try { localStorage.setItem("diamond_context_leaders_mode", next); } catch {}
+            renderEmpty(leadersView, "Loading leaders…", "");
+            refreshLeaders();
+        });
+    });
 }
 
 function renderLeaderCard(cat) {

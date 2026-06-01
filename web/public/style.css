@@ -688,8 +688,36 @@ main.board {
 
 .leaders-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 14px;
+}
+.leaders-mode-toggle {
+    margin-left: auto;
+    display: inline-flex;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px;
+}
+.leaders-mode-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 120ms, color 120ms;
+}
+.leaders-mode-btn:hover { color: var(--text); }
+.leaders-mode-btn.active {
+    background: var(--accent-action);
+    color: #0B1220;
 }
 .leaders-head h2 {
     font-size: 18px;
