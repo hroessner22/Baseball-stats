@@ -369,12 +369,7 @@ async function refreshBoard() {
             return;
         }
 
-        // Hero shows ONLY on today's slate (not when browsing historical
-        // dates) — it's the home-screen welcome, not a per-day chrome.
-        const isToday = !boardDate || boardDate === todayInET();
-        const hero    = isToday ? renderHomeHero(sorted) : "";
-
-        board.innerHTML = hero + header + sorted.map(renderTile).join("");
+        board.innerHTML = header + sorted.map(renderTile).join("");
 
         // Live tiles need batter + pitcher names — the schedule endpoint
         // doesn't carry those. Fire one fetch per live tile in parallel;
@@ -385,131 +380,6 @@ async function refreshBoard() {
     } catch (e) {
         renderEmpty(board, "Could not load today's games.", `${e.message || e}`);
     }
-}
-
-// Home-screen hero: branded header at the top of today's slate.
-// Shows the wordmark, a tagline, live stats (games / live / model
-// calibration), and a featured "Game of the Night" card pulled
-// from the highest-leverage live game (or the first scheduled
-// game if nothing's live yet). CTAs to the Markets dashboard and
-// to open the Bet drawer.
-//
-// Renders nothing when the user is browsing a historical date —
-// the hero is the home-screen welcome, not generic board chrome.
-function renderHomeHero(sortedGames) {
-    const liveGames    = sortedGames.filter((g) => g.status === "Live");
-    const previewGames = sortedGames.filter((g) => g.status === "Preview");
-    const finalGames   = sortedGames.filter((g) => g.status === "Final");
-    const total        = sortedGames.length;
-
-    // Pick the featured game: highest-leverage live game; falls
-    // back to the earliest pregame game; falls back to first final.
-    const featured = liveGames[0] || previewGames[0] || finalGames[0] || null;
-
-    // Branded tagline that rotates by daypart so the page feels
-    // alive on every visit without needing JS animation.
-    const hour    = new Date().getHours();
-    const greeting = hour < 6  ? "Late night."
-                  :  hour < 12 ? "Good morning."
-                  :  hour < 17 ? "Good afternoon."
-                  :  hour < 21 ? "Game time."
-                  :              "Late innings.";
-
-    // Stats strip. Brier + top-pick come from the footer model
-    // line; mirror them here so the hero shows the receipts.
-    const stats = [
-        { label: "GAMES TONIGHT",     value: String(total) },
-        { label: "LIVE NOW",          value: String(liveGames.length), tint: liveGames.length ? "live" : "" },
-        { label: "MODEL TOP-PICK",    value: "46%",  hint: "over 206k PAs" },
-        { label: "MODEL BRIER",       value: "0.69", hint: "v4 · daily 10×" },
-    ];
-
-    return `
-      <section class="home-hero">
-        <div class="home-hero-bg" aria-hidden="true"></div>
-        <div class="home-hero-content">
-          <div class="home-hero-head">
-            <div class="home-hero-greeting">${escapeHTMLAttr(greeting)}</div>
-            <h1 class="home-hero-title">
-              DIAMOND<span class="hero-colon">:</span>CONTEXT
-            </h1>
-            <p class="home-hero-tagline">
-              Every MLB game in progress. Live win expectancy. Real Kalshi odds. Our edge, your bet.
-            </p>
-            <div class="home-hero-ctas">
-              <a class="home-hero-cta home-hero-cta-primary" href="#markets">
-                <span class="home-hero-cta-label">Tonight's lines</span>
-                <span class="home-hero-cta-meta">${liveGames.length ? `${liveGames.length} live` : `${previewGames.length} on deck`}</span>
-              </a>
-              <button type="button" class="home-hero-cta home-hero-cta-secondary" data-open-bot>
-                <span class="home-hero-cta-label">🎯 Open bet drawer</span>
-                <span class="home-hero-cta-meta">stake · open bets · bot</span>
-              </button>
-              <a class="home-hero-cta home-hero-cta-tertiary" href="#about">
-                How it works →
-              </a>
-            </div>
-          </div>
-          <div class="home-hero-stats">
-            ${stats.map((s) => `
-              <div class="home-hero-stat ${s.tint ? `home-hero-stat-${s.tint}` : ""}">
-                <div class="home-hero-stat-value">${escapeHTML(s.value)}</div>
-                <div class="home-hero-stat-label">${escapeHTML(s.label)}</div>
-                ${s.hint ? `<div class="home-hero-stat-hint">${escapeHTML(s.hint)}</div>` : ""}
-              </div>
-            `).join("")}
-          </div>
-        </div>
-        ${featured ? renderHomeHeroFeatured(featured) : ""}
-      </section>
-    `;
-}
-
-// Featured-game card inside the hero. Highest-leverage live game
-// becomes the marquee — bigger team display, live score, "watch
-// this one" CTA. For pregame, shows probable pitchers + start time.
-function renderHomeHeroFeatured(g) {
-    const isLive    = g.status === "Live";
-    const isPreview = g.status === "Preview";
-    const isFinal   = g.status === "Final";
-    const label = isLive    ? "LIVE NOW · highest leverage"
-                : isPreview ? "FIRST PITCH · upcoming"
-                :             "MOST RECENT · final";
-    const sub = isLive
-        ? `${arrowHalf(g.half)} ${ordinalSuffix(g.inning)} · ${g.outs} out${g.outs === 1 ? "" : "s"}`
-        : isPreview
-            ? formatGameClockShort(g.start_time)
-            : `Final`;
-    const scoreLine = (isLive || isFinal)
-        ? `<span class="home-hero-feat-score">${g.away_score ?? 0}<span class="hero-score-sep">·</span>${g.home_score ?? 0}</span>`
-        : "";
-    return `
-      <a class="home-hero-featured" href="#game/${g.game_pk}">
-        <div class="home-hero-feat-tag ${isLive ? "is-live" : ""}">
-          ${isLive ? `<span class="home-hero-feat-dot"></span>` : ""}
-          ${label}
-        </div>
-        <div class="home-hero-feat-matchup">
-          <span class="home-hero-feat-team">${escapeHTML(g.away || "AWY")}</span>
-          <span class="home-hero-feat-at">@</span>
-          <span class="home-hero-feat-team">${escapeHTML(g.home || "HOM")}</span>
-          ${scoreLine}
-        </div>
-        <div class="home-hero-feat-sub">${escapeHTML(sub)}</div>
-        <div class="home-hero-feat-cta">${isLive ? "Open the live tracker →" : "Open game view →"}</div>
-      </a>
-    `;
-}
-
-// Wire the "Open bet drawer" hero button (delegated so it survives
-// board re-renders).
-if (typeof document !== "undefined") {
-    document.addEventListener("click", (e) => {
-        const btn = e.target.closest("[data-open-bot]");
-        if (!btn) return;
-        e.preventDefault();
-        if (window.AutoBot?.openDrawer) window.AutoBot.openDrawer("bets");
-    });
 }
 
 // Sort the slate so the most interesting games come first: live games by
