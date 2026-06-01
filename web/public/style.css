@@ -34,12 +34,14 @@
     --dirt-dark:   #8B6F47;
     --chalk:       #E8E8E8;
 
-    /* Sized for a 15-game slate to fill a desktop viewport at
-       5 columns × 3 rows. 1920px - 36px padding - 48px gaps = 1836px
-       → 367px per tile, rounded down for breathing room. Smaller
-       viewports get fewer columns via the grid's auto-fill, so this
-       scales down to 4-col / 3-col / 2-col / 1-col on its own. */
-    --tile-w: 360px;
+    /* Sized for a max 15-game slate to fill a desktop viewport at
+       5 columns × 3 rows. ~1920-2000px viewport - 36px page padding
+       - 48px gaps = ~1900px / 5 = 380px tile width. Tile height also
+       grows (see .tile min-height below) so the 3 rows fill the
+       available vertical instead of stacking small cards in a sea
+       of white. Smaller viewports get fewer columns via auto-fill. */
+    --tile-w: 380px;
+    --tile-min-h: 320px;
     --radius: 8px;
 }
 
@@ -251,13 +253,14 @@ main.board {
 
 .tile {
     width: var(--tile-w);
+    min-height: var(--tile-min-h);
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 10px 14px 12px;
+    padding: 16px 22px 18px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     text-decoration: none;
     color: inherit;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -290,33 +293,33 @@ main.board {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    padding: 6px 0;
+    padding: 10px 0;
     border-bottom: 1px solid var(--border);
 }
-.tile .team:last-child { border-bottom: none; padding-bottom: 4px; }
-.tile .team:first-child { padding-top: 4px; }
+.tile .team:last-child { border-bottom: none; padding-bottom: 6px; }
+.tile .team:first-child { padding-top: 6px; }
 
 .tile .team .team-id {
     display: inline-flex;
     align-items: baseline;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
 }
 .tile .team .name {
-    font-size: 14px;
-    font-weight: 700;
+    font-size: 19px;
+    font-weight: 800;
     color: var(--text);
-    letter-spacing: -0.005em;
+    letter-spacing: -0.01em;
 }
 .tile .team .rec {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
 }
 .tile .team .score {
-    font-size: 22px;
+    font-size: 30px;
     font-weight: 800;
     color: var(--text);
     font-variant-numeric: tabular-nums;
@@ -328,12 +331,13 @@ main.board {
 }
 
 .tile .state {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     text-align: center;
     color: var(--text-dim);
+    margin-top: 4px;
 }
 .tile[data-status="Live"] .state {
     color: var(--accent-live);
@@ -427,16 +431,16 @@ main.board {
     vertical-align: middle;
 }
 .tile .tile-photo {
-    width: 26px;
-    height: 26px;
+    width: 34px;
+    height: 34px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
     object-position: center top;
 }
 .tile .tile-photo-empty {
-    width: 26px;
-    height: 26px;
+    width: 34px;
+    height: 34px;
     border-radius: 50%;
     background: rgba(148, 163, 184, 0.12);
     border: 1px dashed rgba(148, 163, 184, 0.25);
@@ -455,12 +459,13 @@ main.board {
 .tile .tile-preview-row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 14px;
     justify-content: space-between;
-    margin-top: 6px;
+    margin-top: 10px;
+    flex: 1;
 }
 .tile .tile-time-side {
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.06em;
     color: var(--text-dim);
@@ -485,11 +490,11 @@ main.board {
 .tile .tile-pitcher-row {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    line-height: 1.2;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.3;
     text-align: left;
-    min-height: 26px;        /* match avatar height for alignment */
+    min-height: 34px;        /* match avatar height for alignment */
     max-width: 100%;
 }
 .tile .tile-pitcher-row.is-tba .tile-pitcher-text {
