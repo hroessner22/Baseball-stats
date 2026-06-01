@@ -34,7 +34,12 @@
     --dirt-dark:   #8B6F47;
     --chalk:       #E8E8E8;
 
-    --tile-w: 220px;
+    /* Sized for a 15-game slate to fill a desktop viewport at
+       5 columns × 3 rows. 1920px - 36px padding - 48px gaps = 1836px
+       → 367px per tile, rounded down for breathing room. Smaller
+       viewports get fewer columns via the grid's auto-fill, so this
+       scales down to 4-col / 3-col / 2-col / 1-col on its own. */
+    --tile-w: 360px;
     --radius: 8px;
 }
 
