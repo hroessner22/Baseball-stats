@@ -377,6 +377,12 @@ async function scanPlayerProps(g, marketsData, modelProps) {
     const nameToMlbam = modelProps.name_to_mlbam || {};
     const modelData   = modelProps.model_props   || {};
 
+    // Identify each side's starter for the pitcher_id used by the
+    // recent-form factor. Lineups payload from model-props has both.
+    const lineups = modelProps.lineups || {};
+    const homePitcher = lineups.home?.pitcher_id || null;
+    const awayPitcher = lineups.away?.pitcher_id || null;
+
     for (const m of kalshiPP) {
         // Parse "Vinnie Pasquantino: 1+ home runs?" into
         // (player, threshold, stat).
@@ -400,10 +406,49 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const market_p = yesAskCents / 100;
         const edgePP = (our_p_yes - market_p) * 100;
 
+        // Determine opposing pitcher for hitter props (used by H2H
+        // factor); the K-prop path already targets the SAME pitcher.
+        let oppPitcherId = null;
+        let pitcherId    = null;
+        if (parsed.stat === "strikeouts") {
+            pitcherId = mlbam;   // bet IS this pitcher
+        } else {
+            // Hitter prop — find which lineup the batter is on,
+            // opposing pitcher is the OTHER side's starter.
+            const onHome = (lineups.home?.batters || []).some((b) => String(b.mlbam) === String(mlbam));
+            oppPitcherId = onHome ? awayPitcher : homePitcher;
+        }
+
+        // Build scored opportunity (multi-factor) before fire/skip
+        // gates so every consideration is logged.
+        const score = root.BotScoring ? await root.BotScoring.scoreBet({
+            kind:          "player_prop",
+            game_pk:       g.game_pk,
+            matchup:       `${g.away}@${g.home}`,
+            ticker,
+            side:          "yes",
+            market_p,
+            yes_ask_cents: yesAskCents,
+            our_p:         our_p_yes,
+            savant_p:      null,
+            player:        parsed.player,
+            stat:          parsed.stat,
+            threshold:     parsed.threshold,
+            batter_id:     parsed.stat === "strikeouts" ? null : mlbam,
+            pitcher_id:    pitcherId || oppPitcherId,
+            game_state:    modelProps.game_state || null,
+        }) : null;
+
         // No Savant signal for player props, no maturity track record
         // — use the SEPARATE prop threshold (default 7pp, higher than
         // the 5pp moneyline bar) until we've earned confidence.
-        if (edgePP < _state.settings.player_prop_edge_threshold_pp) continue;
+        if (edgePP < _state.settings.player_prop_edge_threshold_pp) {
+            if (score) root.BotScoring.logScoredDecision(score, {
+                action: "skip", reason: "edge_below_threshold",
+                threshold_pp: _state.settings.player_prop_edge_threshold_pp,
+            });
+            continue;
+        }
 
         const key = `${ticker}:yes`;
         if (_state.sessionBets.has(key)) continue;
@@ -443,6 +488,9 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 threshold:     parsed.threshold,
                 placed_at:     new Date().toISOString(),
                 order_response: result,
+            });
+            if (score) root.BotScoring.logScoredDecision(score, {
+                action: "fire", ticker, contracts, price_cents: yesAskCents,
             });
             log("buy", `BUY ${contracts}× ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ` +
                 `@ ${yesAskCents}¢ (our ${(our_p_yes*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%, edge ${edgePP.toFixed(1)}pp)`,
@@ -1842,6 +1890,17 @@ function showEodReportModal(report) {
             <td>${r.would_be_win_rate != null ? (r.would_be_win_rate * 100).toFixed(0) + "%" : "—"}</td>
           </tr>
         `).join("");
+    const suggestionRows = (report.suggestions || []).length
+        ? report.suggestions.map((s) => `
+          <tr>
+            <td>${escapeText(s.factor)}</td>
+            <td>${escapeText(s.action)}</td>
+            <td>${s.sample_size}</td>
+            <td>${(s.win_rate*100).toFixed(0)}%</td>
+            <td>${escapeText(s.reason)}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="5">No tuning suggestions yet (need ≥30 settled bets per factor)</td></tr>`;
     m.innerHTML = `
       <div class="bot-eod-content">
         <header>
@@ -1864,6 +1923,11 @@ function showEodReportModal(report) {
         <table class="bot-table">
           <thead><tr><th>Reason</th><th>Missed wins</th><th>Avoided losses</th><th>Unsettled</th><th>Would-be win rate</th></tr></thead>
           <tbody>${skipRows || `<tr><td colspan="5">No skips with settled would-be outcomes yet</td></tr>`}</tbody>
+        </table>
+        <h4>Auto-tuning suggestions <span class="bot-section-sub">factor weights to nudge based on observed performance</span></h4>
+        <table class="bot-table">
+          <thead><tr><th>Factor</th><th>Action</th><th>Sample</th><th>Win rate</th><th>Reason</th></tr></thead>
+          <tbody>${suggestionRows}</tbody>
         </table>
       </div>
     `;

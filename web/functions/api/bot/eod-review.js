@@ -49,13 +49,53 @@ export async function onRequest(context) {
     // Top-line: fired vs settled vs P&L.
     const summary = summarize(graded);
 
+    // Auto-tuning suggestor: which factor weights should we
+    // nudge based on observed performance? Conservative — only
+    // emits when sample ≥ 30 per factor.
+    const suggestions = suggestWeightAdjustments(factorRollup);
+
     return jsonResponse({
         date_range:    body.date_range || null,
         summary,
         factor_rollup: factorRollup,
         skip_analysis: skipAnalysis,
+        suggestions,
         graded,
     });
+}
+
+function suggestWeightAdjustments(factorRollup) {
+    const byName = {};
+    for (const r of (factorRollup || [])) {
+        if (r.dir !== "pos") continue;
+        byName[r.name] = (byName[r.name] || { wins: 0, losses: 0 });
+        byName[r.name].wins   += r.wins;
+        byName[r.name].losses += r.losses;
+    }
+    const out = [];
+    for (const [name, agg] of Object.entries(byName)) {
+        const total = agg.wins + agg.losses;
+        if (total < 30) continue;
+        const winRate = agg.wins / total;
+        let action = null, reason = null;
+        if (winRate < 0.45) {
+            action = "decrease_weight";
+            reason = `Pos-dir win rate ${(winRate*100).toFixed(0)}% over ${total} bets — signal underperforming; recommend reducing weight by 15%`;
+        } else if (winRate > 0.65) {
+            action = "increase_weight";
+            reason = `Pos-dir win rate ${(winRate*100).toFixed(0)}% over ${total} bets — signal strong; recommend increasing weight by 15%`;
+        }
+        if (action) {
+            out.push({
+                factor: name,
+                action,
+                reason,
+                sample_size: total,
+                win_rate: Math.round(winRate * 100) / 100,
+            });
+        }
+    }
+    return out;
 }
 
 function grade(decision, settleByTicker) {
