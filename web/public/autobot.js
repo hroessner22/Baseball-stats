@@ -3004,6 +3004,9 @@ function renderBotPane() {
               if needed.
             </div>
             <div class="bot-kill-actions">
+              <button class="bot-emergency-sellall" data-bot-emergency-sellall>
+                Sell ALL positions at market bid
+              </button>
               <button class="bot-emergency-cancel" data-bot-emergency-cancel>
                 Cancel ALL resting orders
               </button>
@@ -3012,6 +3015,11 @@ function renderBotPane() {
                  target="_blank" rel="noopener">
                 Open Kalshi portfolio →
               </a>
+            </div>
+            <div class="bot-kill-warning">
+              Sell-all uses live bid for each held side. Thin markets
+              may show 0¢ bid — those positions can't auto-exit and
+              need manual action on Kalshi.
             </div>
           </div>
         `
@@ -3228,6 +3236,65 @@ function bindBotPaneHandlers(overlay) {
             persistSettings();
             refreshDrawerContent();
         });
+    });
+    overlay.querySelector("[data-bot-emergency-sellall]")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        if (!confirm(
+            "Sell EVERY held position at the current best bid for that side?\n\n" +
+            "This is the nuclear-exit. Thin markets may pay you very little, but " +
+            "you'll be flat. Existing resting orders are NOT touched — use the " +
+            "other button for those."
+        )) return;
+        btn.disabled = true;
+        btn.textContent = "Selling…";
+        try {
+            const data = await root.Kalshi.getPositions();
+            const mps  = (data?.market_positions || []).filter((p) => (p.position || 0) !== 0);
+            if (!mps.length) {
+                toast("No held positions to sell", "ok");
+                btn.disabled = false;
+                btn.textContent = "Sell ALL positions at market bid";
+                return;
+            }
+            let sold = 0, failed = 0, noBid = 0;
+            for (const p of mps) {
+                const heldSide = p.position > 0 ? "yes" : "no";
+                const qty      = Math.abs(p.position);
+                try {
+                    const ob  = await root.Kalshi.getOrderbook(p.ticker);
+                    const bid = heldSide === "yes"
+                        ? orderbookYesBidCents(ob)
+                        : orderbookNoBidCents(ob);
+                    if (bid == null || bid < 1) {
+                        log("err", `Sell-all skipped ${p.ticker} ${heldSide.toUpperCase()}: no bid`);
+                        noBid++;
+                        continue;
+                    }
+                    await root.Kalshi.placeOrder({
+                        ticker: p.ticker,
+                        side:   heldSide,
+                        count:  qty,
+                        price:  bid,
+                        action: "sell",
+                    });
+                    log("sell", `Sell-all: ${qty}× ${p.ticker} ${heldSide.toUpperCase()} @ ${bid}¢`);
+                    sold++;
+                } catch (err) {
+                    log("err", `Sell-all failed ${p.ticker}: ${err.message || err}`);
+                    failed++;
+                }
+            }
+            const msg = `Sold ${sold}/${mps.length}` + (noBid ? `, ${noBid} skipped (no bid)` : "") + (failed ? `, ${failed} failed` : "");
+            toast(msg, sold === mps.length ? "ok" : "err");
+            log("bot", `Emergency sell-all: ${msg}`);
+            btn.disabled = false;
+            btn.textContent = "Sell ALL positions at market bid";
+            refreshDrawerContent();
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = "Sell ALL positions at market bid";
+            toast(`Sell-all failed: ${err.message || err}`, "err");
+        }
     });
     overlay.querySelector("[data-bot-emergency-cancel]")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget;
