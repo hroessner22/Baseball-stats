@@ -98,11 +98,34 @@ header {
     flex-shrink: 0;
 }
 
+/* Header brand: logo mark + wordmark wrapped in an <a> that links
+   home. Reads as one unit ("the brand"), clickable from any view. */
+header .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: inherit;
+}
+header .brand-mark {
+    width: 22px;
+    height: 22px;
+    color: var(--text);
+    transition: transform 240ms ease;
+    flex-shrink: 0;
+}
+header .brand:hover .brand-mark {
+    /* Subtle tilt on hover — same visual language as a rotating
+       knob, reads as 'clickable.' */
+    transform: rotate(8deg);
+}
+
 header h1 {
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text);
+    margin: 0;
 }
 header h1 .colon { color: var(--accent-win); }
 

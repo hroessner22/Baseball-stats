@@ -14,10 +14,22 @@
          discrete weight. -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/svg+xml" href="logo.svg">
 </head>
 <body>
     <header>
-        <h1>DIAMOND<span class="colon">:</span>CONTEXT</h1>
+        <a class="brand" href="#live" aria-label="DIAMOND:CONTEXT home">
+            <!-- Inline SVG so the logo renders without an extra
+                 HTTP request and inherits currentColor for the
+                 stroke (white in the header; works on any bg). -->
+            <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M 12 2.5 L 21.5 12 L 12 21.5 L 2.5 12 Z"
+                      fill="none" stroke="currentColor"
+                      stroke-width="1.8" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="2.5" fill="#22C55E"/>
+            </svg>
+            <h1>DIAMOND<span class="colon">:</span>CONTEXT</h1>
+        </a>
         <div class="live-indicator" aria-label="Live">
             <span class="dot"></span><span class="label">LIVE</span>
         </div>
@@ -69,13 +81,13 @@
          so the bot can call scoreBet() / logScoredDecision().
          Query-string version pins Cloudflare cache so a fresh deploy
          doesn't serve stale JS from CDN edge. */ -->
-    <script src="bot-scoring.js?v=20260602g"></script>
+    <script src="bot-scoring.js?v=20260602h"></script>
     <!-- AutoBot: edge-detection bot + Open Bets drawer. Loads last
          so it can read window.Kalshi (must already be initialized). -->
-    <script src="autobot.js?v=20260602g"></script>
+    <script src="autobot.js?v=20260602h"></script>
     <!-- Active Bets strip: slim bottom widget showing every active
          position with deep-links + DraftKings-style progress bars
          on player props. Reads window.Kalshi and the bot fires log. -->
-    <script src="active-bets-strip.js?v=20260602g"></script>
+    <script src="active-bets-strip.js?v=20260602h"></script>
 </body>
 </html>
