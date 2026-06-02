@@ -546,7 +546,9 @@ function livePlayersHTML(detail) {
         const handStr = p[hand] ? p[hand] : "";
         return (
             `<span class="pname">${escapeHTML(nameStr)}</span>` +
-            (handStr ? ` <span class="phand">${escapeHTML(handStr)}</span>` : "")
+            (handStr
+                ? ` <span class="phand" data-hand="${escapeHTMLAttr(handStr)}">${escapeHTML(handStr)}</span>`
+                : "")
         );
     };
     const photo = (p) => inlineAvatar(p?.id, { size: 28, class: "tile-live-photo", alt: p?.name });

@@ -418,11 +418,12 @@ main.board {
     flex: 1;
 }
 .tile .tile-players .player-row .pname {
-    /* MLB At Bat convention: player name sits at a clean medium
-       weight (550) with slightly tightened tracking — reads as
-       a name, not a label. Inherit the row's 14px size. */
+    /* Player name reads as the primary glyph: full content weight
+       (650) with slightly tightened tracking. Sportsbook + MLB
+       At Bat broadcast graphics use this look — a name reads,
+       not announces. */
     color: var(--text);
-    font-weight: 550;
+    font-weight: 650;
     letter-spacing: -0.005em;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -430,22 +431,37 @@ main.board {
     min-width: 0;
 }
 .tile .tile-players .player-row .phand {
-    /* Bat/throw hand is a quiet meta tag — same lineup-card
-       grammar MLB At Bat uses (small, dimmer, semi-bold). Parens
-       are added by CSS ::before/::after so the renderer can stay
-       hand-letter-only. */
+    /* Bat-/throw-hand as a true sportsbook BADGE rather than text.
+       Same grammar DK / FD / MLB At Bat lineup cards use — a small
+       pill with the L or R letter, no parens. Visually distinct
+       from the name so the eye treats it as metadata. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 14px;
+    padding: 0 4px;
+    background: rgba(148, 163, 184, 0.18);
     color: var(--text-dim);
-    font-weight: 700;
-    font-size: 0.78em;
-    letter-spacing: 0.04em;
+    font-weight: 800;
+    font-size: 0.72em;
+    letter-spacing: 0.05em;
+    border-radius: 3px;
+    line-height: 1;
     flex-shrink: 0;
+    margin-left: 1px;
 }
-.tile .tile-players .player-row .phand::before { content: "("; }
-.tile .tile-players .player-row .phand::after  { content: ")"; }
+/* Left-handed = blue-ish accent; right-handed = neutral. Most
+   broadcast graphics use a subtle differentiation so the eye can
+   pick out lefty matchups at a glance. */
+.tile .tile-players .player-row .phand[data-hand="L"] {
+    background: rgba(56, 189, 248, 0.18);
+    color: var(--accent-action);
+}
 .tile .tile-players .player-row.dim .pname,
 .tile .tile-players .player-row.dim .phand {
     color: var(--text-dim);
-    opacity: 0.6;
+    opacity: 0.55;
 }
 
 /* Sportsbook-style WE bar across the tile bottom. Hidden for pregame since
