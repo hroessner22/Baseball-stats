@@ -53,6 +53,35 @@ export async function onRequest(context) {
     if (!String(path).startsWith("/trade-api/v2/")) {
         return jsonResponse({ error: "path must start with /trade-api/v2/" }, 400);
     }
+
+    // ── SERVER-SIDE BUY KILL ─────────────────────────────────────────
+    // Set to true to refuse every BUY order placement at the proxy,
+    // regardless of which client or which cached version sent it. The
+    // browser-side BOT_KILLED flag only protects the tab it's loaded
+    // in; stale tabs with running timers from before a kill ship can
+    // still place bets. This is the bypass-proof seal.
+    //
+    // What's blocked: POST /trade-api/v2/portfolio/orders with action
+    // 'buy' in the body. SELLS still pass (so existing positions can
+    // be exited). Everything else (positions, fills, balance, etc.)
+    // passes normally.
+    //
+    // To re-enable BUY placement: set BUYS_KILLED = false and deploy.
+    const BUYS_KILLED = true;
+    if (BUYS_KILLED
+        && String(method).toUpperCase() === "POST"
+        && String(path).includes("/portfolio/orders")) {
+        let parsedBody = null;
+        try { parsedBody = body && typeof body === "string" ? JSON.parse(body) : body; }
+        catch { parsedBody = null; }
+        const action = String(parsedBody?.action || "").toLowerCase();
+        if (action === "buy") {
+            return jsonResponse({
+                error: "BUY orders are disabled server-side",
+                hint:  "All bot BUY placements are blocked at the proxy. SELL orders (cash-out) still work.",
+            }, 503);
+        }
+    }
     // Auth headers are OPTIONAL — public Kalshi endpoints like
     // /markets/{ticker}/orderbook work without them. If any of the
     // three are present, all three must be present (partial auth would

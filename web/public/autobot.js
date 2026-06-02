@@ -1,16 +1,9 @@
 // ═════════════════════════════════════════════════════════════════
-// GLOBAL KILL SWITCH — set true to disable ALL bot operations
-// regardless of localStorage settings. Set 2026-06-02 in response
-// to user 'TURN THE BOT OFF. PULL ALL BETS RIGHT NOW.'
-//
-// Effect when true:
-//   - enable() refuses (forces persisted setting to false)
-//   - runScan() / runCashoutCheck() bail before any work
-//   - placeOrder is never invoked from the bot path
-//   - Drawer surfaces a banner so the user can see the kill is on
-//
-// To re-enable bot trading: flip this constant to `false`, deploy,
-// hard-refresh. Local settings are preserved through the kill.
+// CLIENT-SIDE KILL (rarely needed — prefer the server-side
+// BUYS_KILLED in functions/api/kalshi/proxy.js because that one
+// can't be bypassed by stale tabs running old code). Left here for
+// emergencies where we need to disable scanning + cash-out on the
+// browser side too.
 // ═════════════════════════════════════════════════════════════════
 const BOT_KILLED = false;
 
@@ -3129,55 +3122,26 @@ function renderBotPane() {
         ? `${Math.round((Date.now() - _state.lastScanAt)/1000)}s ago`
         : "never";
     const logEntries = getLog();
-    const killBanner = BOT_KILLED
-        ? `
-          <div class="bot-kill-banner">
-            <div class="bot-kill-title">⚠️ BOT IS GLOBALLY KILLED</div>
-            <div class="bot-kill-body">
-              No new bets will be placed regardless of toggle state.
-              Cash-out checks continue so existing positions can still
-              lock in profit. Use the buttons below to flat the book
-              if needed.
-            </div>
-            <div class="bot-kill-actions">
-              <button class="bot-emergency-sellall" data-bot-emergency-sellall>
-                Sell ALL positions at market bid
-              </button>
-              <button class="bot-emergency-cancel" data-bot-emergency-cancel>
-                Cancel ALL resting orders
-              </button>
-              <a class="bot-emergency-kalshi"
-                 href="https://kalshi.com/portfolio"
-                 target="_blank" rel="noopener">
-                Open Kalshi portfolio →
-              </a>
-            </div>
-            <div class="bot-kill-warning">
-              Sell-all uses live bid for each held side. Thin markets
-              may show 0¢ bid — those positions can't auto-exit and
-              need manual action on Kalshi.
-            </div>
-          </div>
-        `
-        : "";
     return `
-      ${killBanner}
       <div class="bot-section">
-        <div class="bot-toggle-row">
-          <label class="bot-toggle">
-            <input type="checkbox" ${s.enabled ? "checked" : ""} data-bot-toggle ${BOT_KILLED ? "disabled" : ""}>
-            <span class="bot-toggle-slider"></span>
-            <span class="bot-toggle-label">${BOT_KILLED ? "Bot is KILLED" : (s.enabled ? "Bot is ON" : "Bot is OFF")}</span>
-          </label>
-          ${s.enabled && !BOT_KILLED
-            ? `<button class="bot-kill" data-bot-kill>STOP NOW</button>`
-            : ""}
+        <div class="bot-onoff">
+          <button class="bot-onoff-btn ${s.enabled ? "is-on" : "is-off"}" data-bot-toggle-btn>
+            ${s.enabled ? "BOT ON · click to stop" : "BOT OFF · click to start"}
+          </button>
         </div>
         <p class="bot-status-line">
           ${s.enabled
             ? `Scanning every ${SCAN_INTERVAL_MS/1000}s · last scan ${lastScan} · daily P/L: <strong>-$${(_state.dailyLoss.cents/100).toFixed(2)}</strong> / $${(s.daily_loss_limit_cents/100).toFixed(2)} cap`
-            : `Turn ON to start scanning for edges. Bot fires moneyline bets when our model AND Baseball Savant disagree with Kalshi in the same direction by more than the threshold.`}
+            : `Unit $${(s.unit_cents/100).toFixed(2)} · daily loss limit $${(s.daily_loss_limit_cents/100).toFixed(2)} · exposure cap $${(s.open_exposure_max/100).toFixed(2)}`}
         </p>
+        <details class="bot-emergency-fold">
+          <summary>Emergency actions</summary>
+          <div class="bot-emergency-actions">
+            <button class="bot-emergency-sellall" data-bot-emergency-sellall>Sell ALL positions at bid</button>
+            <button class="bot-emergency-cancel" data-bot-emergency-cancel>Cancel ALL resting orders</button>
+            <a class="bot-emergency-kalshi" href="https://kalshi.com/portfolio" target="_blank" rel="noopener">Open Kalshi →</a>
+          </div>
+        </details>
       </div>
 
       <details class="bot-section bot-settings" ${s.enabled ? "" : "open"}>
@@ -3325,6 +3289,17 @@ function renderBotPane() {
 }
 
 function bindBotPaneHandlers(overlay) {
+    // New simple ON/OFF button. One click = toggle.
+    const togBtn = overlay.querySelector("[data-bot-toggle-btn]");
+    if (togBtn) togBtn.addEventListener("click", () => {
+        if (_state.settings.enabled) {
+            disable();
+        } else {
+            enable();
+        }
+        refreshDrawerContent();
+    });
+    // Legacy checkbox toggle — kept for any cached UI / muscle memory.
     const tog = overlay.querySelector("[data-bot-toggle]");
     if (tog) tog.addEventListener("change", () => {
         if (tog.checked) {
