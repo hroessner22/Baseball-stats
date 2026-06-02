@@ -128,6 +128,18 @@ const DEFAULTS = {
     daily_loss_limit_cents: 500,   // $5 default — tightened by HARD_CAPS
     open_exposure_max:     2000,   // $20 default
     bet_player_props:      true,   // scan Kalshi player_prop markets too
+    // TRUE-ADVANTAGE GATE — required confidence from the multi-factor
+    // scoring framework. score.confidence is normalized 0..1 (2 factors
+    // of full weight = max). 0.40 ≈ model_edge + one more confirming
+    // factor, which is what 'we have a real edge here' looks like in
+    // practice. Set lower for more shots, higher for fewer/better.
+    min_conviction:        0.40,
+    // MONEYLINE BUDGET RESERVE — cents reserved EXCLUSIVELY for
+    // moneyline (win-expectancy) fires. Player-prop fires must leave
+    // at least this much headroom under open_exposure_max so a WE
+    // signal can always trade even when prop opportunities saturate
+    // the rest of the cap.
+    moneyline_reserve_cents: 500,   // $5 reserved for WE bets
 };
 
 const SCAN_INTERVAL_MS    = 30_000;
@@ -197,6 +209,8 @@ function clampSettings(s) {
         live_ev_take_pct:           clampFloat(s.live_ev_take_pct, 0.2, 0.95),
         daily_loss_limit_cents:     clampInt(s.daily_loss_limit_cents, 100, HARD_CAPS.daily_loss_cents_max),
         open_exposure_max:          clampInt(s.open_exposure_max, 200, HARD_CAPS.open_exposure_max),
+        min_conviction:             clampFloat(s.min_conviction, 0, 1),
+        moneyline_reserve_cents:    clampInt(s.moneyline_reserve_cents, 0, HARD_CAPS.open_exposure_max),
         bet_player_props:           s.bet_player_props !== false,
     };
 }
@@ -480,13 +494,41 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // No Savant signal for player props, no maturity track record
         // — use the SEPARATE prop threshold (default 7pp, higher than
         // the 5pp moneyline bar) until we've earned confidence.
-        if (edgePP < _state.settings.player_prop_edge_threshold_pp) {
+        const propThreshold = _state.settings.player_prop_edge_threshold_pp;
+        if (edgePP < propThreshold) {
             if (score) root.BotScoring.logScoredDecision(score, {
                 action: "skip", reason: "edge_below_threshold",
-                threshold_pp: _state.settings.player_prop_edge_threshold_pp,
+                threshold_pp: propThreshold,
                 side,
             });
             continue;
+        }
+
+        // TRUE-ADVANTAGE GATE (props) — same multi-factor gate the
+        // moneyline path uses. Adjusted edge from scoreBet sums
+        // model_edge + pitch_count (Ks) / pa_remaining (hitters) +
+        // pitcher_recent_form + batter_recent_form + h2h. When all
+        // those factors point the same direction as the model, the
+        // adjusted edge is stronger than the raw 7pp; when they
+        // disagree the bot would be guessing — refuse the trade.
+        if (score) {
+            const adjEdge = Number(score.edge_pp) || 0;
+            const conf    = Number(score.confidence) || 0;
+            const minConf = _state.settings.min_conviction;
+            if (adjEdge < propThreshold) {
+                root.BotScoring.logScoredDecision(score, {
+                    action: "skip", reason: "adjusted_edge_below_threshold",
+                    threshold_pp: propThreshold, raw_edge_pp: edgePP, side,
+                });
+                continue;
+            }
+            if (conf < minConf) {
+                root.BotScoring.logScoredDecision(score, {
+                    action: "skip", reason: "confidence_below_min_conviction",
+                    min_conviction: minConf, side,
+                });
+                continue;
+            }
         }
 
         // Session key includes the side so we don't re-fire after
@@ -497,7 +539,21 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const contracts = Math.floor(_state.settings.unit_cents / askCents);
         if (contracts < 1) continue;
         const tradeCostCents = contracts * askCents;
-        if (computeOpenExposureCents() + tradeCostCents > _state.settings.open_exposure_max) continue;
+        // MONEYLINE BUDGET RESERVE — player props must leave at least
+        // `moneyline_reserve_cents` of headroom under the open-exposure
+        // cap so a WE signal can always fire even when 40 props worth
+        // of edge are all crying out at once. Moneyline path has no
+        // such reservation (it CAN use the full cap including the
+        // reserved portion).
+        const propsCapCents = _state.settings.open_exposure_max - _state.settings.moneyline_reserve_cents;
+        if (computeOpenExposureCents() + tradeCostCents > propsCapCents) {
+            if (score) root.BotScoring.logScoredDecision(score, {
+                action: "skip", reason: "moneyline_reserve_protected",
+                reserve_cents: _state.settings.moneyline_reserve_cents,
+                side,
+            });
+            continue;
+        }
         // Same hard balance guard as moneyline path — refuse to even
         // submit the order if Kalshi balance can't cover it.
         if (!(await canAfford(tradeCostCents))) {
@@ -662,6 +718,38 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             threshold_pp: effectiveThreshold,
         });
         return;
+    }
+
+    // TRUE-ADVANTAGE GATE — the raw model edge cleared the bar, but
+    // we ALSO require the multi-factor framework to confirm. score
+    // sums up model_edge + savant + pitcher_recent_form (others
+    // are prop-only). When factors agree, score.edge_pp >= raw
+    // edge AND confidence climbs. When they disagree, the adjusted
+    // edge shrinks toward zero and we want NO TRADE — disagreement
+    // is the bot betting against itself.
+    //
+    // Two conditions both required:
+    //   (a) adjusted edge after factor weighting still ≥ threshold
+    //   (b) confidence ≥ min_conviction (default 0.40 = ~2 medium
+    //       factors firing, or model_edge + one strong confirmation)
+    if (score) {
+        const adjEdge   = Number(score.edge_pp) || 0;
+        const conf      = Number(score.confidence) || 0;
+        const minConf   = _state.settings.min_conviction;
+        if (adjEdge < effectiveThreshold) {
+            root.BotScoring.logScoredDecision(score, {
+                action: "skip", reason: "adjusted_edge_below_threshold",
+                threshold_pp: effectiveThreshold, raw_edge_pp: edgePP,
+            });
+            return;
+        }
+        if (conf < minConf) {
+            root.BotScoring.logScoredDecision(score, {
+                action: "skip", reason: "confidence_below_min_conviction",
+                min_conviction: minConf,
+            });
+            return;
+        }
     }
 
     // Already bet this market+side this session?
@@ -871,12 +959,19 @@ async function runCashoutCheck() {
         let hitLiveEv = false;
         let liveEvDetail = "";
         if (fire?.kind === "player_prop" && fire.game_pk && fire.player && fire.stat && fire.threshold) {
-            const livePCents = await getLivePlayerPropPCents(fire);
+            // getLivePlayerPropPCents returns the YES-side tail
+            // probability. For a NO holding, our side's fair value
+            // is (100 - YES). Previous code compared YES-fair to
+            // the NO-bid which fired premature sells on every NO
+            // position. Side-aware now.
+            const livePCentsYes = await getLivePlayerPropPCents(fire);
+            const livePCents = livePCentsYes == null ? null
+                             : (heldSide === "no" ? 100 - livePCentsYes : livePCentsYes);
             if (livePCents != null && profitPerContract > 0) {
                 const liveEdgeRemaining = livePCents - yesBidCents;
                 if (liveEdgeRemaining <= 3) {
                     hitLiveEv = true;
-                    liveEvDetail = `live ${livePCents}¢ vs mkt ${yesBidCents}¢, only ${liveEdgeRemaining}¢ left`;
+                    liveEvDetail = `live ${livePCents}¢ vs mkt ${yesBidCents}¢ (${heldSide.toUpperCase()}), only ${liveEdgeRemaining}¢ left`;
                 }
             }
         }
@@ -902,8 +997,14 @@ async function runCashoutCheck() {
         // profile (rookies, no starts logged this season).
         let hitPitchCount = false;
         let pitchCountDetail = "";
+        // NO-side K-props ('under N K') want the pitcher pulled
+        // EARLY — that resolves YES under, making our NO worth ~100¢.
+        // Selling on pitch-count would cash out before the upside
+        // arrives. Skip this trigger for NO holdings; T1 / T2 will
+        // still cover legitimate take-profits.
         if (fire?.kind === "player_prop"
             && fire.stat === "strikeouts"
+            && heldSide === "yes"
             && fire.game_pk
             && fire.player
             && profitPerContract >= 5) {
@@ -950,14 +1051,19 @@ async function runCashoutCheck() {
             && fire.game_pk
             && fire.player
             && profitPerContract > 0) {
-            const livePCents = await getLivePlayerPropPCents(fire);
+            // Side-aware fair value: livePCentsYes is the YES tail;
+            // for NO holdings our side's fair is (100 - YES).
+            // fire.our_p is ALREADY side-correct (set at entry).
+            const livePCentsYes = await getLivePlayerPropPCents(fire);
+            const livePCents = livePCentsYes == null ? null
+                             : (heldSide === "no" ? 100 - livePCentsYes : livePCentsYes);
             const gameInfo   = await getLiveGameState(fire.game_pk);
             if (livePCents != null) {
                 // Case a) live prob ≥ 90% AND market paying ≥ 88¢
-                // (lock in the cushion).
+                // for our side (lock in the cushion).
                 if (livePCents >= 90 && yesBidCents >= 88) {
                     hitHitterSell = true;
-                    hitterSellDetail = `live ${livePCents}¢ — threshold met, lock in`;
+                    hitterSellDetail = `live ${livePCents}¢ (${heldSide.toUpperCase()}) — threshold met, lock in`;
                 }
                 // Case b) live prob has dropped MORE than 10pp below
                 // entry our_p AND we still have profit. The market
@@ -966,7 +1072,7 @@ async function runCashoutCheck() {
                     const ourPCentsEntry = Math.round(fire.our_p * 100);
                     if (livePCents <= ourPCentsEntry - 10) {
                         hitHitterSell = true;
-                        hitterSellDetail = `live ${livePCents}¢ vs entry-fair ${ourPCentsEntry}¢ — model cooled, lock`;
+                        hitterSellDetail = `live ${livePCents}¢ vs entry-fair ${ourPCentsEntry}¢ (${heldSide.toUpperCase()}) — model cooled, lock`;
                     }
                 }
                 // Case c) it's late (8th+) AND batter has no more
@@ -2456,6 +2562,20 @@ function renderBotPane() {
             <small>Total open positions cap · ceiling $${(HARD_CAPS.open_exposure_max/100).toFixed(0)}</small>
           </label>
           <label>
+            <span>Moneyline reserve ($)</span>
+            <input type="number" min="0" max="${HARD_CAPS.open_exposure_max/100}" step="1"
+                   value="${(s.moneyline_reserve_cents/100).toFixed(0)}"
+                   data-bot-setting-dollar="moneyline_reserve_cents">
+            <small>Reserved exclusively for WE bets — player props must leave this much under the cap so a moneyline can always fire</small>
+          </label>
+          <label>
+            <span>Min conviction (0–1)</span>
+            <input type="number" min="0" max="1" step="0.05"
+                   value="${s.min_conviction.toFixed(2)}"
+                   data-bot-setting-float="min_conviction">
+            <small>Multi-factor confirmation required (0.40 ≈ model edge + one corroborating factor) · raise = fewer/better fires</small>
+          </label>
+          <label>
             <span>Savant disagrees → +N pp penalty</span>
             <input type="number" min="0" max="10" step="1"
                    value="${s.savant_disagree_penalty_pp}"
@@ -2546,6 +2666,15 @@ function bindBotPaneHandlers(overlay) {
         inp.addEventListener("change", () => {
             const k = inp.dataset.botSettingPct;
             const v = parseFloat(inp.value) / 100;
+            _state.settings = clampSettings({ ..._state.settings, [k]: v });
+            persistSettings();
+            refreshDrawerContent();
+        });
+    });
+    overlay.querySelectorAll("[data-bot-setting-float]").forEach((inp) => {
+        inp.addEventListener("change", () => {
+            const k = inp.dataset.botSettingFloat;
+            const v = parseFloat(inp.value);
             _state.settings = clampSettings({ ..._state.settings, [k]: v });
             persistSettings();
             refreshDrawerContent();
