@@ -339,6 +339,19 @@ async function getSettlements() {
     } catch { return []; }
 }
 
+// Every executed trade Kalshi has on record for this account —
+// buys AND sells, taker AND maker, current AND historical.
+// Position-net masks fills (a buy+sell at the same ticker yields
+// position=0 even though two real trades happened), so we pull
+// fills directly to surface "what actually went down on Kalshi."
+async function getFills() {
+    if (!isConnected()) return [];
+    try {
+        const data = await callKalshi("GET", "/trade-api/v2/portfolio/fills?limit=200");
+        return data.fills || [];
+    } catch { return []; }
+}
+
 // Public Kalshi orderbook — used by "take existing offer" mode to
 // figure out what's actually available to fill against.
 //
@@ -1377,6 +1390,7 @@ root.Kalshi = {
     getOpenOrders,
     getPositions,
     getSettlements,
+    getFills,
     getOrderbook,
     placeOrder,
     cancelOrder,

@@ -8765,6 +8765,26 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--accent-live);
     border: 1px solid rgba(239, 68, 68, 0.4);
 }
+
+/* Action pills on the Kalshi fills table — BUY in action-blue,
+   SELL in accent-win green so the pair reads as 'entered/exited.' */
+.bot-fill-action {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.4;
+}
+.bot-fill-buy {
+    background: rgba(56, 189, 248, 0.18);
+    color: var(--accent-action);
+}
+.bot-fill-sell {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--accent-win);
+}
 .bot-time-ago {
     font-size: 10px;
     color: var(--text-faint);

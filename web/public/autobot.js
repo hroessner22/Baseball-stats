@@ -659,7 +659,31 @@ async function runCashoutCheck() {
             && captureFraction >= _state.settings.live_ev_take_pct
             && profitPerContract > 0;
 
-        if (!hitAbsolute && !hitEvCapture) continue;
+        // THIRD trigger — LIVE EV. The previous two use the model
+        // probability at FIRE TIME (fire.our_p). That's stale once
+        // the game has moved on: a "Chourio 5+ TB" bet that was a
+        // 15% shot pregame might be 75% after he banks 3 TB by the
+        // 5th inning. The market will have caught up too.
+        //
+        // For player props, refetch our live model probability for
+        // the current state, and sell when the market price has
+        // moved within `live_ev_take_cents` of that LIVE fair value.
+        // No edge left → take the locked-in profit and free capital
+        // for the next scan to redeploy.
+        let hitLiveEv = false;
+        let liveEvDetail = "";
+        if (fire?.kind === "player_prop" && fire.game_pk && fire.player && fire.stat && fire.threshold) {
+            const livePCents = await getLivePlayerPropPCents(fire);
+            if (livePCents != null && profitPerContract > 0) {
+                const liveEdgeRemaining = livePCents - yesBidCents;
+                if (liveEdgeRemaining <= 3) {
+                    hitLiveEv = true;
+                    liveEvDetail = `live ${livePCents}¢ vs mkt ${yesBidCents}¢, only ${liveEdgeRemaining}¢ left`;
+                }
+            }
+        }
+
+        if (!hitAbsolute && !hitEvCapture && !hitLiveEv) continue;
         // Already have a sell order resting?
         if (await hasOpenSellOrder(p.ticker)) continue;
 
@@ -672,11 +696,11 @@ async function runCashoutCheck() {
                 price:  yesBidCents,
                 action: "sell",
             });
-            const triggerTag = hitAbsolute && hitEvCapture
-                ? "+ev/+abs"
-                : hitAbsolute
-                ? "+abs"
-                : `+ev ${(captureFraction*100).toFixed(0)}%`;
+            const triggerParts = [];
+            if (hitAbsolute)  triggerParts.push("+abs");
+            if (hitEvCapture) triggerParts.push(`+ev ${(captureFraction*100).toFixed(0)}%`);
+            if (hitLiveEv)    triggerParts.push(`+live (${liveEvDetail})`);
+            const triggerTag = triggerParts.join(" / ");
             log("sell", `SELL ${qty}× ${p.ticker} YES @ ${yesBidCents}¢` +
                 ` (entry ${entryCents}¢, +${profitPerContract}¢/contract = $${((profitPerContract*qty)/100).toFixed(2)} profit, trigger: ${triggerTag})`,
                 { ticker: p.ticker, qty, yesBidCents, entryCents,
@@ -720,6 +744,40 @@ async function canAfford(costCents) {
         if (balance == null) return true;
         return balance >= costCents;
     } catch { return true; }
+}
+
+// Live model-props lookup for cash-out — same /api/game/{id}/model-props
+// the bot uses to fire props, but called against a HELD position so we
+// can compare our updated probability to the live market price.
+// Result is the probability times 100 (cents-equivalent fair value),
+// or null when we can't resolve the player's lineup id or the stat
+// isn't supported. Cached per game_pk for 30s to avoid hammering.
+const _livePropsCache = new Map();   // game_pk → { t, data }
+const LIVE_PROPS_TTL_MS = 30000;
+async function getLivePlayerPropPCents(fire) {
+    if (!fire || !fire.game_pk || !fire.player || !fire.stat || !fire.threshold) return null;
+    let data = null;
+    const cached = _livePropsCache.get(fire.game_pk);
+    if (cached && Date.now() - cached.t < LIVE_PROPS_TTL_MS) {
+        data = cached.data;
+    } else {
+        try {
+            const res = await fetch(`/api/game/${fire.game_pk}/model-props`);
+            if (!res.ok) return null;
+            data = await res.json();
+            _livePropsCache.set(fire.game_pk, { t: Date.now(), data });
+        } catch { return null; }
+    }
+    if (!data?.model_props || !data?.name_to_mlbam) return null;
+    const mlbam = data.name_to_mlbam[normName(fire.player)];
+    if (!mlbam) return null;
+    const stats = data.model_props[mlbam];
+    if (!stats) return null;
+    const tail = stats[fire.stat];
+    if (!tail) return null;
+    const p = tail[`${fire.threshold}+`];
+    if (typeof p !== "number") return null;
+    return Math.round(p * 100);
 }
 
 
@@ -844,11 +902,16 @@ async function renderOpenBetsPane() {
           </div>
         `;
     }
-    let positions, orders;
+    let positions, orders, fills;
     try {
-        [positions, orders] = await Promise.all([
+        [positions, orders, fills] = await Promise.all([
             root.Kalshi.getPositions(),
             root.Kalshi.getOpenOrders(),
+            // /portfolio/fills lists every trade execution Kalshi
+            // has for the account, current AND historical. Pulled
+            // here so the user sees what ACTUALLY happened on
+            // Kalshi's side — not just net position state.
+            root.Kalshi.getFills ? root.Kalshi.getFills() : Promise.resolve([]),
         ]);
     } catch (e) {
         return `<div class="bot-empty"><p>Couldn't load positions: ${escapeText(e.message || e)}</p></div>`;
@@ -857,6 +920,7 @@ async function renderOpenBetsPane() {
     _state.openPositions = mps;
 
     const resting = (orders || []);
+    const allFills = (fills || []);
     const fires   = getFires();
 
     // Build a map ticker → most-recent bet record so we can both tag
@@ -883,15 +947,15 @@ async function renderOpenBetsPane() {
     const userCount = mps.length - botCount;
 
     // Top-of-pane status banner — appears whether or not the user has
-    // active positions. Surfaces what we know: connection state, a
-    // raw position count straight from Kalshi (so a "0 positions but
-    // I placed bets" case is visible as data, not a missing UI), and
-    // how many bet records we have locally.
+    // active positions. Surfaces what we know: connection state, the
+    // raw position / order / fill counts from Kalshi (so a
+    // "0 positions but I placed bets" case is visible as data, not
+    // a missing UI), and how many bet records we have locally.
     const statusBanner = `
       <div class="bot-status-banner">
         <span class="bot-status-row">
           <span class="bot-status-dot bot-status-ok"></span>
-          Kalshi: connected · ${mps.length} open position${mps.length === 1 ? "" : "s"}, ${resting.length} resting order${resting.length === 1 ? "" : "s"} · ${fires.length} bet${fires.length === 1 ? "" : "s"} in local history
+          Kalshi: connected · ${mps.length} open, ${resting.length} resting, ${allFills.length} fills · ${fires.length} bets in local history
         </span>
       </div>
     `;
@@ -902,11 +966,12 @@ async function renderOpenBetsPane() {
         // case where the user says "I placed bets, why don't I see
         // them" — Kalshi may have settled / cashed out a position
         // off the list while the record persists locally.
-        if (fires.length) {
+        if (fires.length || allFills.length) {
             return `
               ${statusBanner}
-              ${renderRecentSection(fires, mps, resting, sourceTag,
-                  "Recently placed — none of these currently show as a held position or resting order on Kalshi")}
+              ${allFills.length ? renderFillsSection(allFills) : ""}
+              ${fires.length ? renderRecentSection(fires, mps, resting, sourceTag,
+                  "Local fire log — bets the bot or you placed from this browser") : ""}
             `;
         }
         return `
@@ -989,8 +1054,46 @@ async function renderOpenBetsPane() {
           </table>
         </div>
       ` : ""}
+      ${allFills.length ? renderFillsSection(allFills) : ""}
       ${fires.length ? renderRecentSection(fires, mps, resting, sourceTag,
           "Recent activity — last 10 from your local bet log") : ""}
+    `;
+}
+
+// Render the Kalshi-fills section. Each fill is one actual trade
+// execution — pair of buy + sell at the same ticker means the
+// position is closed (net zero on positions endpoint but the
+// trades are real). This section is what answers "did my orders
+// actually go through" when /positions reports empty.
+function renderFillsSection(fills) {
+    if (!fills.length) return "";
+    const rows = fills.slice(0, 30).map((f) => {
+        const t = f.ticker || "";
+        const trimmed = t.length > 36 ? t.slice(0, 36) + "…" : t;
+        const action = (f.action || "?").toLowerCase();
+        const side   = (f.side || "?").toLowerCase();
+        const actionCls = action === "sell" ? "bot-fill-sell" : "bot-fill-buy";
+        const priceCents = (side === "yes") ? f.yes_price : f.no_price;
+        const dt = f.created_time ? new Date(f.created_time) : null;
+        const ago = dt ? formatTimeAgo(dt) : "—";
+        return `
+          <tr>
+            <td><span class="bot-fill-action ${actionCls}">${action.toUpperCase()}</span></td>
+            <td class="bot-ticker">${escapeText(trimmed)}</td>
+            <td>${(f.count || 0)}× ${side.toUpperCase()}</td>
+            <td>${priceCents != null ? priceCents + "¢" : "—"}</td>
+            <td class="bot-time-ago">${ago}</td>
+          </tr>
+        `;
+    }).join("");
+    return `
+      <div class="bot-section">
+        <h3>Kalshi fills <span class="bot-section-sub">last ${Math.min(fills.length, 30)} executed trades — buys + sells from your account</span></h3>
+        <table class="bot-table bot-table-history">
+          <thead><tr><th>Action</th><th>Market</th><th>Side</th><th>Price</th><th>When</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     `;
 }
 
@@ -1005,7 +1108,11 @@ async function renderOpenBetsPane() {
 function renderRecentSection(fires, mps, resting, sourceTag, heading) {
     const activeTickers  = new Set(mps.map((p) => p.ticker));
     const restingTickers = new Set((resting || []).map((o) => o.ticker));
-    const rows = fires.slice(0, 10).map((f) => {
+    // Show up to 50 — user explicitly asked to see ALL bets from
+    // local history, not just the most recent 10. The full log is
+    // capped at 500 entries by recordPlacedBet, and the much-deeper
+    // History tab still shows up to 200 with settlement results.
+    const rows = fires.slice(0, 50).map((f) => {
         let label;
         if (f.kind === "player_prop" && f.player) {
             const stat = shortStatLabel(f.stat);
