@@ -144,6 +144,14 @@ const DEFAULTS = {
     // Defaults to 0.50 per user direction: 'set it at 50% available
     // on player props and 50% on WE bets.'
     moneyline_reserve_pct: 0.50,
+    // HUGE-EDGE OVERRIDE — when a player prop's factor-adjusted edge
+    // clears huge_edge_pp, the props cap temporarily lifts from the
+    // normal (1 - reserve) to huge_edge_cap_pct. Special-circumstance
+    // budget for exceptional convictions only — the multi-factor gate
+    // still requires min_conviction, so this kicks in when both edge
+    // AND confidence are well above normal.
+    huge_edge_pp:          12,     // adjusted edge ≥ 12pp = 'huge'
+    huge_edge_cap_pct:     0.60,   // cap moves 50% → 60% on those
 };
 
 const SCAN_INTERVAL_MS    = 30_000;
@@ -215,6 +223,8 @@ function clampSettings(s) {
         open_exposure_max:          clampInt(s.open_exposure_max, 200, HARD_CAPS.open_exposure_max),
         min_conviction:             clampFloat(s.min_conviction, 0, 1),
         moneyline_reserve_pct:      clampFloat(s.moneyline_reserve_pct, 0, 0.95),
+        huge_edge_pp:               clampInt(s.huge_edge_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
+        huge_edge_cap_pct:          clampFloat(s.huge_edge_cap_pct, 0.20, 0.95),
         bet_player_props:           s.bet_player_props !== false,
     };
 }
@@ -585,21 +595,40 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         if (contracts < 1) continue;
         const tradeCostCents = contracts * askCents;
         // MONEYLINE BUDGET RESERVE — player props cap at
-        // (1 - reserve_pct) × open_exposure_max. Moneyline path has
-        // no such reservation (it can use the full cap including the
-        // reserved portion). With 50% reserve and $20 cap: props get
-        // up to $10 open, WE can still use the full $20.
-        const reservePct    = _state.settings.moneyline_reserve_pct;
-        const reserveCents  = Math.round(_state.settings.open_exposure_max * reservePct);
-        const propsCapCents = _state.settings.open_exposure_max - reserveCents;
+        // (1 - reserve_pct) × open_exposure_max NORMALLY. HUGE-EDGE
+        // OVERRIDE: when the factor-adjusted edge for this prop is
+        // big enough (≥ huge_edge_pp, default 12pp), the cap lifts
+        // to huge_edge_cap_pct (default 60%) so genuinely strong
+        // signals aren't blocked just to protect the WE budget.
+        //
+        // Multi-factor gate above already required min_conviction +
+        // adjusted edge ≥ 7pp, so a 12pp adjusted edge means several
+        // factors are strongly confirming. Safe to push harder.
+        //
+        // Moneyline path has no reservation — it can still use the
+        // full cap including the reserved half.
+        const adjEdgePP    = score ? (Number(score.edge_pp) || edgePP) : edgePP;
+        const isHugeEdge   = adjEdgePP >= _state.settings.huge_edge_pp;
+        const propsCapPct  = isHugeEdge
+            ? _state.settings.huge_edge_cap_pct
+            : (1 - _state.settings.moneyline_reserve_pct);
+        const propsCapCents = Math.round(_state.settings.open_exposure_max * propsCapPct);
         if (computeOpenExposureCents() + tradeCostCents > propsCapCents) {
             if (score) root.BotScoring.logScoredDecision(score, {
                 action: "skip", reason: "moneyline_reserve_protected",
-                reserve_cents: reserveCents,
-                reserve_pct:   reservePct,
+                cap_cents:     propsCapCents,
+                cap_pct:       propsCapPct,
+                is_huge_edge:  isHugeEdge,
+                adjusted_edge_pp: adjEdgePP,
                 side,
             });
             continue;
+        }
+        // Log when we INVOKE the huge-edge override so it shows up in
+        // EOD review — special circumstance, want to see how often
+        // it fires and whether those bets actually win.
+        if (isHugeEdge) {
+            log("buy", `HUGE EDGE override — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} adj ${adjEdgePP.toFixed(1)}pp, props cap raised to ${(propsCapPct*100).toFixed(0)}%`);
         }
         // Same hard balance guard as moneyline path — refuse to even
         // submit the order if Kalshi balance can't cover it.
@@ -2760,6 +2789,19 @@ function renderBotPane() {
                    value="${Math.round(s.moneyline_reserve_pct * 100)}"
                    data-bot-setting-pct="moneyline_reserve_pct">
             <small>= $${(s.open_exposure_max * s.moneyline_reserve_pct / 100).toFixed(2)} reserved for WE bets · player props cap at $${(s.open_exposure_max * (1 - s.moneyline_reserve_pct) / 100).toFixed(2)} open</small>
+          </label>
+          <label>
+            <span>Huge-edge override at (pp)</span>
+            <input type="number" min="${HARD_CAPS.edge_pp_min}" max="${HARD_CAPS.edge_pp_max}" step="1"
+                   value="${s.huge_edge_pp}" data-bot-setting="huge_edge_pp">
+            <small>Adjusted edge ≥ this lifts the props cap (special circumstance) — default 12pp ≈ '5pp more than the normal bar'</small>
+          </label>
+          <label>
+            <span>Huge-edge props cap (% of cap)</span>
+            <input type="number" min="20" max="95" step="5"
+                   value="${Math.round(s.huge_edge_cap_pct * 100)}"
+                   data-bot-setting-pct="huge_edge_cap_pct">
+            <small>Props cap when huge edge fires · = $${(s.open_exposure_max * s.huge_edge_cap_pct / 100).toFixed(2)} max open on the exceptional bet</small>
           </label>
           <label>
             <span>Min conviction (0–1)</span>
