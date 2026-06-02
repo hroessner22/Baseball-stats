@@ -65,6 +65,10 @@
          from the ESM CDN. Exposes window.Auth for any non-module
          caller that wants to gate behavior on sign-in state. -->
     <script type="module" src="auth.js"></script>
+    <!-- Bot scoring framework — multi-factor scoring of buy / cash-out
+         decisions. Exposes window.BotScoring; loaded BEFORE autobot.js
+         so the bot can call scoreBet() / logScoredDecision(). -->
+    <script src="bot-scoring.js"></script>
     <!-- AutoBot: edge-detection bot + Open Bets drawer. Loads last
          so it can read window.Kalshi (must already be initialized). -->
     <script src="autobot.js"></script>

@@ -507,9 +507,27 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         savantStance = (savant_p > market_p) ? "agree" : "disagree";
     }
 
+    // Build the scored decision early — used both to gate the
+    // fire AND to log every considered opportunity (fired or not).
+    const score = root.BotScoring ? await root.BotScoring.scoreBet({
+        kind:          "moneyline",
+        game_pk:       g.game_pk,
+        matchup:       `${g.away}@${g.home}`,
+        ticker,
+        side:          "yes",
+        market_p,
+        yes_ask_cents: yesAskCents,
+        our_p,
+        savant_p,
+        inning:        g.inning || null,
+    }) : null;
+
     // HARD-gate mode (when the user explicitly enables
     // require_savant_agree): keep the original strict behavior.
     if (_state.settings.require_savant_agree && savantStance !== "agree") {
+        if (score) root.BotScoring.logScoredDecision(score, {
+            action: "skip", reason: "savant_disagree_hard_gate",
+        });
         return;
     }
 
@@ -518,7 +536,13 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     const effectiveThreshold = _state.settings.edge_threshold_pp + (
         savantStance === "disagree" ? _state.settings.savant_disagree_penalty_pp : 0
     );
-    if (edgePP < effectiveThreshold) return;
+    if (edgePP < effectiveThreshold) {
+        if (score) root.BotScoring.logScoredDecision(score, {
+            action: "skip", reason: "edge_below_threshold",
+            threshold_pp: effectiveThreshold,
+        });
+        return;
+    }
 
     // Already bet this market+side this session?
     const key = `${ticker}:yes`;
@@ -573,6 +597,12 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             bet_team:    tail,
             placed_at:   new Date().toISOString(),
             order_response: result,
+        });
+        if (score) root.BotScoring.logScoredDecision(score, {
+            action:      "fire",
+            ticker,
+            contracts,
+            price_cents: yesAskCents,
         });
         log("buy", `BUY ${contracts}× ${tail} YES @ ${yesAskCents}¢` +
             ` (our ${(our_p*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%` +
@@ -1660,6 +1690,7 @@ function renderBotPane() {
         <div class="bot-log-head">
           <h3>Activity</h3>
           <div class="bot-log-actions">
+            <button class="bot-eod-review" data-bot-eod-review>EOD review</button>
             <button class="bot-export-fires" data-bot-export-fires>Export fires (${getFires().length})</button>
             ${logEntries.length ? `<button class="bot-clear-log" data-bot-clear-log>Clear log</button>` : ""}
           </div>
@@ -1746,6 +1777,99 @@ function bindBotPaneHandlers(overlay) {
             if (w) { w.document.body.innerText = blob; }
         }
     });
+    overlay.querySelector("[data-bot-eod-review]")?.addEventListener("click", async () => {
+        await runEodReview();
+    });
+}
+
+// End-of-day review — gathers every SCORED decision (fire + skip)
+// from the client log, pulls today's Kalshi settlements, POSTs both
+// to /api/bot/eod-review, then renders the analysis. The report is
+// what makes the user's directive 'no bet should be a loss — we
+// either make money or learn' actually possible.
+async function runEodReview() {
+    if (!root.BotScoring) { toast("Scoring framework not loaded", "err"); return; }
+    const decisions = root.BotScoring.getScoredDecisions(2000);
+    if (!decisions.length) {
+        toast("No scored decisions yet — let the bot run first", "ok");
+        return;
+    }
+    let settlements = [];
+    try {
+        if (root.Kalshi && root.Kalshi.getSettlements) {
+            settlements = await root.Kalshi.getSettlements();
+        }
+    } catch { /* fall through with empty list */ }
+    toast(`Reviewing ${decisions.length} decisions, ${settlements.length} settlements…`, "ok");
+    let report = null;
+    try {
+        const res = await fetch("/api/bot/eod-review", {
+            method:  "POST",
+            headers: { "content-type": "application/json" },
+            body:    JSON.stringify({ decisions, settlements }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        report = await res.json();
+    } catch (e) {
+        toast(`Review failed: ${e.message || e}`, "err");
+        return;
+    }
+    showEodReportModal(report);
+}
+
+function showEodReportModal(report) {
+    const old = document.querySelector(".bot-eod-modal");
+    if (old) old.remove();
+    const m = document.createElement("div");
+    m.className = "bot-eod-modal";
+    const s = report.summary || {};
+    const factorRows = (report.factor_rollup || [])
+        .map((r) => `
+          <tr>
+            <td>${escapeText(r.name)}</td>
+            <td>${escapeText(r.dir)}</td>
+            <td>${r.wins}-${r.losses}</td>
+            <td>${(r.win_rate * 100).toFixed(0)}%</td>
+          </tr>
+        `).join("");
+    const skipRows = (report.skip_analysis || [])
+        .map((r) => `
+          <tr>
+            <td>${escapeText(r.reason)}</td>
+            <td>${r.missed_wins}</td>
+            <td>${r.avoided_losses}</td>
+            <td>${r.unsettled}</td>
+            <td>${r.would_be_win_rate != null ? (r.would_be_win_rate * 100).toFixed(0) + "%" : "—"}</td>
+          </tr>
+        `).join("");
+    m.innerHTML = `
+      <div class="bot-eod-content">
+        <header>
+          <h3>End-of-Day Review</h3>
+          <button class="bot-eod-close" aria-label="Close">×</button>
+        </header>
+        <section class="bot-eod-summary">
+          <div><strong>${s.fires || 0}</strong> fires</div>
+          <div><strong>${s.wins || 0}-${s.losses || 0}</strong> settled</div>
+          <div>Win rate: <strong>${s.win_rate != null ? (s.win_rate * 100).toFixed(0) + "%" : "—"}</strong></div>
+          <div>Net P/L: <strong class="${s.net_pnl_cents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${s.net_pnl_cents >= 0 ? "+" : ""}$${(s.net_pnl_dollars || 0).toFixed(2)}</strong></div>
+          <div>${s.skips || 0} skips considered</div>
+        </section>
+        <h4>Factor calibration <span class="bot-section-sub">which signals predicted wins</span></h4>
+        <table class="bot-table">
+          <thead><tr><th>Factor</th><th>Dir</th><th>W-L</th><th>Win rate</th></tr></thead>
+          <tbody>${factorRows || `<tr><td colspan="4">No settled fires yet</td></tr>`}</tbody>
+        </table>
+        <h4>Skip analysis <span class="bot-section-sub">would-be outcomes by reason</span></h4>
+        <table class="bot-table">
+          <thead><tr><th>Reason</th><th>Missed wins</th><th>Avoided losses</th><th>Unsettled</th><th>Would-be win rate</th></tr></thead>
+          <tbody>${skipRows || `<tr><td colspan="5">No skips with settled would-be outcomes yet</td></tr>`}</tbody>
+        </table>
+      </div>
+    `;
+    document.body.appendChild(m);
+    m.querySelector(".bot-eod-close")?.addEventListener("click", () => m.remove());
+    m.addEventListener("click", (e) => { if (e.target === m) m.remove(); });
 }
 
 
