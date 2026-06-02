@@ -2087,7 +2087,7 @@ function bindBotPaneHandlers(overlay) {
             if (!fires.length) { toast("No fires recorded yet", "ok"); return; }
             const blob = JSON.stringify(fires, null, 2);
             await navigator.clipboard.writeText(blob);
-            toast(`Copied ${fires.length} fires to clipboard`, "ok");
+            toast(`✓ Exported ${fires.length} fires — copied to clipboard, paste anywhere`, "ok");
         } catch (err) {
             console.error("[bot] export-fires failed", err);
             toast(`Copy failed: ${err?.message || err}`, "err");
@@ -2108,7 +2108,7 @@ function bindBotPaneHandlers(overlay) {
             if (!decisions.length) { toast("No decisions logged yet (bot needs to run with fresh JS first)", "ok"); return; }
             const blob = JSON.stringify(decisions, null, 2);
             await navigator.clipboard.writeText(blob);
-            toast(`Copied ${decisions.length} decisions to clipboard`, "ok");
+            toast(`✓ Exported ${decisions.length} decisions — copied to clipboard, paste anywhere`, "ok");
         } catch (err) {
             console.error("[bot] export-decisions failed", err);
             toast(`Copy failed: ${err?.message || err}`, "err");
@@ -2145,7 +2145,7 @@ function bindBotPaneHandlers(overlay) {
             };
             const blob = JSON.stringify(bundle, null, 2);
             await navigator.clipboard.writeText(blob);
-            toast(`Copied: ${fires.length} fires, ${decisions.length} decisions, ${logRows.length} log rows`, "ok");
+            toast(`✓ Copied to clipboard — ${fires.length} fires, ${decisions.length} decisions, ${logRows.length} log rows. Paste in chat.`, "ok");
         } catch (err) {
             const msg = err?.message || String(err);
             console.error("[bot] copy-all failed", err);
