@@ -83,15 +83,27 @@ const DEFAULTS = {
     //   - Savant has no data      → fire at base
     require_savant_agree:       false,
     savant_disagree_penalty_pp: 3,
-    // Cash-out tightened — sell sooner, lock in more wins.
-    // 15¢ absolute profit target (was 20) means we close winners
-    // faster; the live-EV capture trigger picks up partial wins
-    // we wouldn't otherwise touch.
-    profit_take_cents:     15,
-    // EV-capture trigger: sell when market has moved this fraction
-    // of the way to our model's fair value. Lowered 0.55 → 0.45 so
-    // we exit more positions before they round-trip back to entry.
-    live_ev_take_pct:      0.45,
+    // Cash-out at 20¢ absolute is the safety-net trigger — locks
+    // any 20¢+ winner regardless of edge math. NOT the primary
+    // exit mechanism; the smarter game-state triggers below
+    // (live-EV, pitch-count, hitter-late-inning) do most of the
+    // work.
+    profit_take_cents:     20,
+    // EV-capture sell — sell when we've captured this fraction of
+    // the original edge. At 0.55, lock-in slightly exceeds
+    // remaining expected edge under our model:
+    //   entry 35¢, fair 50¢ (15¢ edge)
+    //   cash out at 35 + 0.55×15 = 43.25¢ → lock 8.25¢
+    //   remaining edge from 43.25¢ to fair 50¢ = 6.75¢
+    //   8.25 > 6.75 → leans slightly toward sell in EV terms.
+    // Lower than this (0.45) sells BEFORE crossing the EV
+    // breakeven — locking certain gain less than the remaining
+    // expected gain. That trades EV for variance reduction and
+    // capital recycling, which is fine for a risk-averse trader
+    // but it IS giving up theoretical EV. Default stays at 0.55
+    // — backed by the math above, not by 'we feel like we should
+    // sell sooner.'
+    live_ev_take_pct:      0.55,
     daily_loss_limit_cents: 500,   // $5 default — tightened by HARD_CAPS
     open_exposure_max:     2000,   // $20 default
     bet_player_props:      true,   // scan Kalshi player_prop markets too
