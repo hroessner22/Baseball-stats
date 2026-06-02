@@ -445,10 +445,15 @@ function renderTile(g) {
     return `
       <a class="tile" href="#game/${g.game_pk}" data-status="${g.status}" data-pk="${g.game_pk}">
         ${hotPill(g)}
+        ${previewLayout ? "" : `
+          <div class="tile-top">
+            <span class="state">${stateLabel(g)}</span>
+          </div>
+        `}
         <div class="matchup">
           <div class="team">
             <span class="team-id">
-              ${inlineTeamLogo(g.away, { size: 20, class: "team-logo" })}
+              ${inlineTeamLogo(g.away, { size: 24, class: "team-logo" })}
               <span class="name">${g.away}</span>
               ${recAway ? `<span class="rec">${recAway}</span>` : ""}
             </span>
@@ -456,7 +461,7 @@ function renderTile(g) {
           </div>
           <div class="team">
             <span class="team-id">
-              ${inlineTeamLogo(g.home, { size: 20, class: "team-logo" })}
+              ${inlineTeamLogo(g.home, { size: 24, class: "team-logo" })}
               <span class="name">${g.home}</span>
               ${recHome ? `<span class="rec">${recHome}</span>` : ""}
             </span>
@@ -468,8 +473,7 @@ function renderTile(g) {
                ${tileBody(g)}
                <div class="tile-time-side">${stateLabel(g)}</div>
              </div>`
-          : `<div class="state">${stateLabel(g)}</div>
-             ${tileBody(g)}`}
+          : tileBody(g)}
         ${tileWeBar(g)}
       </a>
     `;

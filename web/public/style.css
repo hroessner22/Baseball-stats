@@ -52,8 +52,13 @@
        --tile-w sits at the lower bound so auto-fill packs 5 at the
        narrow end; max-width on main.board caps the row to exactly 5
        at the wide end so it doesn't sprawl to 6-7 cols on ultrawide. */
-    --tile-w: 220px;
-    --tile-min-h: 160px;
+    /* Wider tile (220 → 260) — MLB.com / At Bat keep their game
+       cards around 280-340px so the inning header + team rows +
+       player blocks read at one glance, not packed. We split the
+       difference: 260px is wide enough for a clear hierarchy
+       while still fitting 5 per row at 1500-1620px viewport. */
+    --tile-w: 260px;
+    --tile-min-h: 175px;
     --radius: 8px;
 }
 
@@ -330,6 +335,33 @@ main.board {
 }
 .tile[data-status="Final"] .team .name { font-weight: 700; }   /* was 800 */
 .tile[data-status="Final"] .team .rec  { opacity: 0.7; }
+
+/* MLB.com / At Bat style header — inning + situation read as a
+   thin uppercase label across the top of the tile with a divider
+   beneath, instead of being buried between the matchup and the
+   batter/pitcher rows. Anchors the eye on game state first. */
+.tile .tile-top {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 1px 0 5px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+.tile .tile-top .state {
+    margin-top: 0;
+    text-align: left;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    font-weight: 800;
+    color: var(--text);
+}
+.tile[data-status="Live"] .tile-top .state {
+    color: var(--accent-live);
+}
+.tile[data-status="Final"] .tile-top .state {
+    color: var(--text-dim);
+}
 
 .tile .matchup {
     display: flex;
