@@ -13,7 +13,6 @@ const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
-const edgesView = document.getElementById("edges-view");
 const teamView = document.getElementById("team-view");
 
 const BOARD_REFRESH_MS = 30_000;
@@ -26,10 +25,6 @@ const STANDINGS_REFRESH_MS = 5 * 60_000;
 const LEADERS_REFRESH_MS = 5 * 60_000;
 const MVP_REFRESH_MS = 5 * 60_000;
 const HOT_REFRESH_MS = 15_000;
-// Edges refresh every 30s. Slower than HOT (which polls live game
-// state) because our model probabilities only meaningfully shift
-// between PAs and Kalshi prices follow a similar cadence.
-const EDGES_REFRESH_MS = 30_000;
 // Markets dashboard polls every 20s — sportsbook lines move on that
 // order, and the upstream /api/markets is edge-cached for 30s anyway.
 const MARKETS_REFRESH_MS = 10_000;  // dashboard poll; per-game pane uses its own 8s timer
@@ -40,7 +35,6 @@ let standingsTimer = null;
 let leadersTimer = null;
 let mvpTimer = null;
 let hotTimer = null;
-let edgesTimer = null;
 let marketsDashboardTimer = null;
 let activeGameId = null;
 
@@ -147,11 +141,20 @@ function handleRoute() {
         return;
     }
     if (hash === "#mvp") {
-        showMVP();
-        setActiveNav("mvp");
+        // Legacy / deep-link route — MVP is now a tab inside Leaders.
+        // Force the leaders-mode toggle to 'mvp', then re-route to
+        // #leaders so the nav highlight + URL stay consistent.
+        leadersMode = "mvp";
+        try { localStorage.setItem("diamond_context_leaders_mode", "mvp"); } catch {}
+        window.location.hash = "#leaders";
         return;
     }
-    if (hash === "#markets") {
+    if (hash === "#markets" || hash.startsWith("#markets/")) {
+        // Markets now has a sub-tab: 'lines' (default) vs 'edges'.
+        // /#markets        → game lines (the existing dashboard)
+        // /#markets/edges  → the EDGES list
+        const sub = hash === "#markets/edges" ? "edges" : "lines";
+        try { localStorage.setItem("diamond_context_markets_sub", sub); } catch {}
         showMarketsDashboard();
         setActiveNav("markets");
         return;
@@ -169,8 +172,10 @@ function handleRoute() {
         return;
     }
     if (hash === "#edges") {
-        showEdges();
-        setActiveNav("edges");
+        // Legacy / deep-link route — Edges is now a sub-tab of Markets.
+        // Set the markets sub-view to 'edges' and re-route.
+        try { localStorage.setItem("diamond_context_markets_sub", "edges"); } catch {}
+        window.location.hash = "#markets/edges";
         return;
     }
     const playerMatch = hash.match(/^#player\/(\d+)/);
@@ -320,7 +325,6 @@ function hideAllViews() {
     hotView.hidden = true;
     playerView.hidden = true;
     marketsView.hidden = true;
-    edgesView.hidden = true;
     teamView.hidden = true;
 }
 
@@ -333,7 +337,6 @@ function clearAllTimers() {
     if (leadersTimer)   { clearInterval(leadersTimer);   leadersTimer = null; }
     if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
-    if (edgesTimer)     { clearInterval(edgesTimer);     edgesTimer = null; }
     if (marketsDashboardTimer) { clearInterval(marketsDashboardTimer); marketsDashboardTimer = null; }
     if (teamTimer)      { clearInterval(teamTimer);      teamTimer = null; activeTeamTricode = null; }
     stopMarketsPoll();
@@ -842,6 +845,12 @@ function renderTeamRow(t, isLeader) {
 function showLeaders() {
     activeGameId = null;
     clearAllTimers();
+    // MVP race is now a tab WITHIN Leaders — when the user's saved
+    // mode is 'mvp', route to the MVP view but keep the unified
+    // mode toggle. The nav highlight stays on Leaders either way.
+    if (leadersMode === "mvp") {
+        return showMVP();
+    }
     hideAllViews();
     leadersView.hidden = false;
     renderEmpty(leadersView, "Loading leaders…", "");
@@ -885,12 +894,7 @@ function renderLeaders(data) {
       <header class="leaders-head">
         <h2>LEADERS</h2>
         <span class="leaders-meta">${sourceTag} · top 5</span>
-        <div class="leaders-mode-toggle" role="tablist">
-          <button type="button" role="tab" class="leaders-mode-btn ${isAdv ? "" : "active"}"
-                  data-leaders-mode="standard">Standard</button>
-          <button type="button" role="tab" class="leaders-mode-btn ${isAdv ? "active" : ""}"
-                  data-leaders-mode="advanced">Statcast</button>
-        </div>
+        ${renderLeadersModeToggle()}
       </header>
       <section class="leaders-section">
         <h3 class="leaders-section-label">Hitting</h3>
@@ -907,6 +911,24 @@ function renderLeaders(data) {
     `;
 }
 
+// Shared 3-way toggle rendered in BOTH the Leaders header and the
+// MVP header. Clicking 'MVP Race' switches the view to mvpView,
+// clicking 'Standard' or 'Statcast' switches back to leadersView.
+// Keeps the user oriented across the two sibling views — they
+// feel like tabs of one section.
+function renderLeadersModeToggle() {
+    return `
+      <div class="leaders-mode-toggle" role="tablist">
+        <button type="button" role="tab" class="leaders-mode-btn ${leadersMode === "standard" ? "active" : ""}"
+                data-leaders-mode="standard">Standard</button>
+        <button type="button" role="tab" class="leaders-mode-btn ${leadersMode === "advanced" ? "active" : ""}"
+                data-leaders-mode="advanced">Statcast</button>
+        <button type="button" role="tab" class="leaders-mode-btn ${leadersMode === "mvp" ? "active" : ""}"
+                data-leaders-mode="mvp">MVP Race</button>
+      </div>
+    `;
+}
+
 function bindLeadersToggle() {
     document.querySelectorAll("[data-leaders-mode]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -914,8 +936,14 @@ function bindLeadersToggle() {
             if (next === leadersMode) return;
             leadersMode = next;
             try { localStorage.setItem("diamond_context_leaders_mode", next); } catch {}
-            renderEmpty(leadersView, "Loading leaders…", "");
-            refreshLeaders();
+            // Route to the matching view. MVP mode swaps to the
+            // mvpView; the other two stay on leadersView.
+            if (next === "mvp") {
+                showMVP();
+            } else {
+                renderEmpty(leadersView, "Loading leaders…", "");
+                showLeaders();
+            }
         });
     });
 }
@@ -1064,7 +1092,44 @@ async function fetchWithRetry(url, maxRetries = 3, baseDelayMs = 500) {
     throw lastErr || new Error("network failed after retries");
 }
 
+// Markets view now has a sub-tab: 'lines' (default — every game's
+// Kalshi quotes) vs 'edges' (the ranked list of mispriced props
+// our model disagrees with). The sub-tab is rendered as a toggle
+// in the markets header.
+function getMarketsSub() {
+    try { return localStorage.getItem("diamond_context_markets_sub") || "lines"; }
+    catch { return "lines"; }
+}
+function renderMarketsSubToggle() {
+    const sub = getMarketsSub();
+    return `
+      <div class="markets-sub-toggle" role="tablist">
+        <button type="button" role="tab" class="markets-sub-btn ${sub === "lines" ? "active" : ""}"
+                data-markets-sub="lines">Game Lines</button>
+        <button type="button" role="tab" class="markets-sub-btn ${sub === "edges" ? "active" : ""}"
+                data-markets-sub="edges">Edges</button>
+      </div>
+    `;
+}
+function bindMarketsSubToggle() {
+    document.querySelectorAll("[data-markets-sub]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const sub = btn.dataset.marketsSub;
+            if (sub === getMarketsSub()) return;
+            try { localStorage.setItem("diamond_context_markets_sub", sub); } catch {}
+            window.location.hash = sub === "edges" ? "#markets/edges" : "#markets";
+            renderEmpty(marketsView, "Loading…", "");
+            refreshMarketsDashboard();
+        });
+    });
+}
+
 async function refreshMarketsDashboard() {
+    // Branch on sub-tab. Edges has its own (much lighter) fetch
+    // path; lines uses the existing aggregated markets endpoint.
+    if (getMarketsSub() === "edges") {
+        return refreshMarketsEdges();
+    }
     try {
         // Two parallel fetches: today's game-day markets AND the day's
         // schedule. The schedule gives us the game_pk → team-pair lookup
@@ -1090,6 +1155,7 @@ async function refreshMarketsDashboard() {
         filterToKalshi(data);
         marketsView.innerHTML = renderMarketsDashboard(data);
         hydrateKalshiBookCells();
+        bindMarketsSubToggle();
         // The dashboard render replaces the entire innerHTML which
         // wipes the Kalshi "My Bets" panel back to its loading shell.
         // Immediately repopulate so the user doesn't stare at
@@ -1127,6 +1193,62 @@ async function refreshMarketsDashboard() {
 // fast retry when the markets endpoint comes back from a failure.
 if (typeof window !== "undefined") {
     window.refreshMarketsDashboard = refreshMarketsDashboard;
+}
+
+// Render the EDGES sub-view inside the Markets chrome. Same
+// container, header, and sub-tab toggle as the Lines view — just
+// different body content (a ranked list of mispriced props).
+async function refreshMarketsEdges() {
+    try {
+        const res = await fetch("/api/edges");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (marketsView.hidden) return;
+        marketsView.innerHTML = renderMarketsEdges(data);
+        bindMarketsSubToggle();
+    } catch (e) {
+        renderEmpty(marketsView, "Couldn't load edges.", `${e.message || e}`);
+    }
+}
+
+function renderMarketsEdges(data) {
+    const edges = data.edges || [];
+    const games = data.counted_games || 0;
+    const fetchedAt = data.fetched_at ? formatRelativeTime(data.fetched_at) : "just now";
+    const body = edges.length
+        ? `<ol class="edges-list">${edges.map(renderEdgeRow).join("")}</ol>`
+        : `<div class="empty" style="padding:48px 16px;text-align:center;color:var(--text-dim);">
+             <strong style="display:block;color:var(--text);font-size:14px;margin-bottom:8px;">
+               No edges right now
+             </strong>
+             Scanned ${games} live games. The bot only sees a mispricing
+             when our model disagrees with Kalshi's price — and right now,
+             it agrees on every prop. Check back after the next PA.
+           </div>`;
+    return `
+      <div class="markets-dashboard">
+        <header class="md-header">
+          <h2 class="md-title">Mispriced markets — our model vs Kalshi</h2>
+          ${renderMarketsSubToggle()}
+          <div class="md-sub">
+            ${edges.length} mispriced prop${edges.length === 1 ? "" : "s"} across ${games} live game${games === 1 ? "" : "s"}
+            · sorted by |our model − market|
+          </div>
+          <div class="md-meta">
+            Auto-refreshes every 30s · Pulled ${fetchedAt}
+          </div>
+        </header>
+        ${body}
+        ${edges.length ? `
+          <footer class="edges-foot">
+            Edge = absolute difference between our tail probability and
+            Kalshi's implied probability, in percentage points.
+            A 5pp+ edge is the bot's default fire threshold for player
+            props (7pp for the auto-bot).
+          </footer>
+        ` : ""}
+      </div>
+    `;
 }
 
 function renderMarketsDashboard(d) {
@@ -1177,6 +1299,7 @@ function renderMarketsDashboard(d) {
       <div class="markets-dashboard">
         <header class="md-header">
           <h2 class="md-title">Tonight's MLB game-day lines</h2>
+          ${renderMarketsSubToggle()}
           <div class="md-sub">${totalLine}</div>
           <div class="md-sources">${sourceChips}</div>
           <div class="md-meta">
@@ -3019,61 +3142,11 @@ function hotReason(g) {
     return `${diff === 0 ? "Tied" : `${diff}-run game`} in the ${inn}`;
 }
 
-// ── EDGES VIEW ──────────────────────────────────────────────────
-// Ranked list of EVERY player-prop where our model's tail
-// probability disagrees with the market. Parallel to HOT (which
-// ranks live games by leverage) — EDGES ranks live props by our
-// edge magnitude. Sourced from /api/edges, which joins per-game
-// markets + model-props server-side and returns a flat sorted list.
-
-function showEdges() {
-    activeGameId = null;
-    clearAllTimers();
-    hideAllViews();
-    edgesView.hidden = false;
-    renderEmpty(edgesView, "Loading edges…", "");
-    refreshEdges();
-    edgesTimer = setInterval(refreshEdges, EDGES_REFRESH_MS);
-}
-
-async function refreshEdges() {
-    try {
-        const res = await fetch("/api/edges");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const edges = data.edges || [];
-        if (!edges.length) {
-            renderEmpty(edgesView,
-                "No edges right now.",
-                `Scanned ${data.counted_games || 0} games. The bot only sees mispricings when our model disagrees with Kalshi's price — and right now, it agrees with the market on every prop. Check back after the next PA.`,
-            );
-            return;
-        }
-        edgesView.innerHTML = renderEdges(edges, data);
-    } catch (e) {
-        renderEmpty(edgesView, "Couldn't load edges.", `${e.message || e}`);
-    }
-}
-
-function renderEdges(edges, data) {
-    const rows = edges.map(renderEdgeRow).join("");
-    return `
-      <header class="edges-head">
-        <h2>EDGES</h2>
-        <span class="edges-meta">
-          ${edges.length} mispriced prop${edges.length === 1 ? "" : "s"} across ${data.counted_games || 0} games
-          · sorted by |our model − market|
-        </span>
-      </header>
-      <ol class="edges-list">
-        ${rows}
-      </ol>
-      <footer class="edges-foot">
-        Edge = absolute difference between our tail probability and Kalshi's implied probability,
-        in percentage points. A 5pp+ edge is the bot's default fire threshold for player props.
-      </footer>
-    `;
-}
+// ── EDGES SUB-VIEW (rendered inside the Markets dashboard) ──────
+// renderEdgeRow + shortStatLabel are shared with refreshMarketsEdges
+// above. The standalone showEdges / refreshEdges / renderEdges
+// functions were removed when EDGES became a sub-tab of Markets
+// (cleaner nav: LIVE / HOT / MARKETS / STANDINGS / LEADERS).
 
 function renderEdgeRow(e) {
     const statLabel = shortStatLabel(e.stat);
@@ -3318,6 +3391,7 @@ async function refreshMVP() {
             return;
         }
         mvpView.innerHTML = renderMVP(data, batterWpa, pitcherWpa);
+        bindLeadersToggle();   // re-wire shared toggle (Standard / Statcast / MVP Race)
     } catch (e) {
         renderEmpty(mvpView, "Could not load MVP race.", `${e.message || e}`);
     }
@@ -3326,8 +3400,9 @@ async function refreshMVP() {
 function renderMVP(data, batterWpa, pitcherWpa) {
     return `
       <header class="mvp-head">
-        <h2>MVP RACE</h2>
-        <span class="mvp-meta">${data.season} season</span>
+        <h2>LEADERS</h2>
+        <span class="mvp-meta">${data.season} MVP race</span>
+        ${renderLeadersModeToggle()}
       </header>
       ${renderWpaBand(batterWpa, pitcherWpa, data.season)}
       <div class="mvp-section-head">League leaders by traditional stats</div>

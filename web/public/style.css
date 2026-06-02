@@ -9380,41 +9380,42 @@ button.md-game-outcome:active { transform: translateY(1px); }
     transition: background 120ms, border-color 120ms, box-shadow 120ms;
 }
 
-/* ── EDGES VIEW ─────────────────────────────────────────────────
+/* ── EDGES (rendered inside the Markets dashboard) ──────────────
    Ranked list of mispriced player props. Each row is a clickable
    link into the game's Markets tab. Tier-colored magnitude badge
    on the right (strong / moderate / marginal). */
 
-.edges-view {
-    flex: 1;
-    overflow: auto;
-    padding: 14px 24px 100px;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    max-width: 1100px;
-    margin: 0 auto;
-    width: 100%;
+/* Sub-tab toggle in the Markets header — switches between
+   'Game Lines' (the existing dashboard) and 'Edges' (this list).
+   Same visual language as the Leaders mode toggle. */
+.markets-sub-toggle {
+    display: inline-flex;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px;
+    margin: 0 0 0 12px;
+    align-self: flex-start;
 }
-.edges-view .empty { padding: 48px 16px; }
-
-.edges-head {
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    flex-wrap: wrap;
-}
-.edges-head h2 {
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    color: var(--text);
-}
-.edges-head .edges-meta {
-    font-size: 11px;
-    font-weight: 500;
+.markets-sub-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
     color: var(--text-dim);
-    letter-spacing: 0.04em;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 120ms, color 120ms;
+}
+.markets-sub-btn:hover { color: var(--text); }
+.markets-sub-btn.active {
+    background: var(--accent-action);
+    color: #0B1220;
 }
 
 .edges-list {
