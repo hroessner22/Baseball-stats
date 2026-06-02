@@ -100,7 +100,7 @@ header {
 
 header h1 {
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text);
 }
@@ -114,7 +114,7 @@ header h1 .colon { color: var(--accent-win); }
     background: var(--accent-live);
     border-radius: 20px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     color: white;
 }
@@ -181,7 +181,7 @@ main.board {
     color: var(--accent-action);
     text-decoration: none;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     padding: 4px 6px;
     border-radius: 4px;
@@ -224,13 +224,13 @@ main.board {
     color: white;
     border-radius: 4px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.16em;
     line-height: 1;
 }
 .board-datebar .bd-today-link {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     color: var(--accent-action);
     text-decoration: none;
@@ -243,7 +243,7 @@ main.board {
 }
 .board-datebar .bd-date {
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     letter-spacing: -0.005em;
 }
@@ -268,7 +268,7 @@ main.board {
 }
 .empty .sub {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.15em;
     color: var(--accent-win);
     margin-top: 12px;
@@ -333,7 +333,7 @@ main.board {
 .tile[data-status="Final"] .team .score {
     color: var(--text-dim);
 }
-.tile[data-status="Final"] .team .name { font-weight: 700; }   /* was 800 */
+.tile[data-status="Final"] .team .name { font-weight: 600; }   /* was 800 */
 .tile[data-status="Final"] .team .rec  { opacity: 0.7; }
 
 /* MLB.com / At Bat style header — inning + situation read as a
@@ -353,7 +353,7 @@ main.board {
     text-align: left;
     font-size: 10px;
     letter-spacing: 0.14em;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
 }
 .tile[data-status="Live"] .tile-top .state {
@@ -385,33 +385,42 @@ main.board {
     min-width: 0;
 }
 .tile .team .name {
-    font-size: 13px;
-    font-weight: 800;
+    font-size: 14px;
+    /* MLB.com / At Bat render team names in MEDIUM weight (600,
+       not 700-800) so they read as a 'team' not a 'header'. The
+       score column on the right carries the eye instead. */
+    font-weight: 600;
     color: var(--text);
     letter-spacing: -0.01em;
 }
 .tile .team .rec {
-    font-size: 10px;
-    font-weight: 500;
+    font-size: 11px;
+    /* Lighter still — the record is informational, not a focal
+       point. MLB uses near-regular weight (450) in light gray. */
+    font-weight: 450;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
 }
 .tile .team .score {
-    font-size: 17px;
-    font-weight: 800;
+    font-size: 18px;
+    /* Score gets the bold weight (700), not the team name. This
+       inverts the previous emphasis and matches every modern
+       sportsbook + MLB scoreboard convention: team is name-weight,
+       score is the focal glyph. */
+    font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     line-height: 1;
 }
 .tile[data-status="Preview"] .team .score {
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
 }
 
 .tile .state {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.10em;
     text-transform: uppercase;
     text-align: center;
@@ -462,7 +471,7 @@ main.board {
 .tile .tile-players .player-row .label {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.10em;
     text-transform: uppercase;
 }
@@ -486,7 +495,7 @@ main.board {
        At Bat broadcast graphics use this look — a name reads,
        not announces. */
     color: var(--text);
-    font-weight: 650;
+    font-weight: 550;
     letter-spacing: -0.005em;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -500,7 +509,7 @@ main.board {
        uppercase, dim, letter-spaced. Reads as metadata adjacent
        to the name, not a separate UI element. */
     color: var(--text-dim);
-    font-weight: 700;
+    font-weight: 600;
     font-size: 0.72em;
     letter-spacing: 0.10em;
     text-transform: uppercase;
@@ -542,7 +551,7 @@ main.board {
     display: flex;
     justify-content: space-between;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
@@ -564,7 +573,7 @@ main.board {
 }
 .tile .tile-extra .dim {
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.05em;
 }
 .tile .tile-pitcher,
@@ -600,7 +609,7 @@ main.board {
 }
 .tile .tile-pitcher-tba {
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
 }
 
 /* Preview-state tile body: pitchers stacked LEFT, start time RIGHT.
@@ -616,7 +625,7 @@ main.board {
 }
 .tile .tile-time-side {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--text-dim);
     white-space: nowrap;
@@ -649,7 +658,7 @@ main.board {
 }
 .tile .tile-pitcher-row.is-tba .tile-pitcher-text {
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
 }
 .tile .tile-pitcher-text {
     overflow: hidden;
@@ -694,7 +703,7 @@ main.board {
     background: var(--accent-live);
     color: #fff;
     font-size: 8px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     line-height: 1;
     box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
@@ -731,13 +740,13 @@ main.board {
 }
 .standings-head h2 {
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text);
 }
 .standings-head .standings-meta {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.12em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -750,7 +759,7 @@ main.board {
 }
 .league-label {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.18em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -776,7 +785,7 @@ main.board {
 }
 .division-name {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.15em;
     color: var(--text);
     text-transform: uppercase;
@@ -792,7 +801,7 @@ main.board {
     /* Was 9 — too small next to 12 cells. 10 sits a clean step
        below the cell text without losing the "label" feel. */
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -815,17 +824,17 @@ main.board {
 .standings-table td.col-team {
     text-align: left;
     padding-left: 14px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.01em;
 }
 .standings-table tr.leader td.col-team strong {
     color: var(--accent-win);
 }
 
-.standings-table .streak-win { color: var(--accent-win); font-weight: 700; }
-.standings-table .streak-loss { color: var(--accent-live); font-weight: 700; }
-.standings-table .rd-pos { color: var(--accent-win); font-weight: 600; }
-.standings-table .rd-neg { color: var(--accent-live); font-weight: 600; }
+.standings-table .streak-win { color: var(--accent-win); font-weight: 600; }
+.standings-table .streak-loss { color: var(--accent-live); font-weight: 600; }
+.standings-table .rd-pos { color: var(--accent-win); font-weight: 550; }
+.standings-table .rd-neg { color: var(--accent-live); font-weight: 550; }
 
 /* ── LEADERS VIEW ──────────────────────────────────────────────── */
 
@@ -864,7 +873,7 @@ main.board {
     color: var(--text-dim);
     font: inherit;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.10em;
     text-transform: uppercase;
     padding: 5px 12px;
@@ -879,13 +888,13 @@ main.board {
 }
 .leaders-head h2 {
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--text);
 }
 .leaders-head .leaders-meta {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.12em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -898,7 +907,7 @@ main.board {
 }
 .leaders-section-label {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.18em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -930,7 +939,7 @@ main.board {
     /* Stat-name header (HR, AVG, OPS…) — 11px reads cleanly and
        sits even with the 11px row text. */
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text);
     text-transform: uppercase;
@@ -971,7 +980,7 @@ main.board {
 .leader-rank {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
 .leader-row[data-rank="1"] .leader-rank {
@@ -979,7 +988,7 @@ main.board {
 }
 .leader-name {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -989,12 +998,12 @@ main.board {
     /* Was 9px — too small next to the 11px name. 10px reads as a
        quiet secondary at the right edge without looking faded. */
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
 }
 .leader-value {
     color: var(--text);
-    font-weight: 800;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.01em;
     min-width: 38px;
@@ -1035,13 +1044,13 @@ main.board {
 }
 .mvp-head h2 {
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text);
 }
 .mvp-head .mvp-meta {
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.10em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1059,7 +1068,7 @@ main.board {
    the WPA section above feels distinct, not just "more leaders." */
 .mvp-section-head {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.16em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1087,13 +1096,13 @@ main.board {
 }
 .wpa-band .wpa-band-title {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--accent-win);
     letter-spacing: -0.005em;
 }
 .wpa-band .wpa-band-meta {
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.08em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1128,7 +1137,7 @@ main.board {
 }
 .wpa-band .wpa-title {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.10em;
     color: var(--text);
     text-transform: uppercase;
@@ -1178,12 +1187,12 @@ main.board {
 .wpa-band .wpa-rank {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     text-align: right;
 }
 .wpa-band .wpa-name {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
     text-decoration: none;
     border-bottom: 1px dotted var(--text-dim);
     white-space: nowrap;
@@ -1202,7 +1211,7 @@ main.board {
 }
 .wpa-band .wpa-val {
     text-align: right;
-    font-weight: 800;
+    font-weight: 700;
     font-size: 11px;
 }
 .wpa-band .wpa-pos { color: var(--accent-win);  }
@@ -1233,7 +1242,7 @@ main.board {
 }
 .race-title {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     color: var(--text);
     text-transform: uppercase;
@@ -1294,14 +1303,14 @@ main.board {
 .cand-rank {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
     min-width: 14px;
 }
 .cand-row[data-rank="1"] .cand-rank { color: var(--accent-win); }
 .cand-name {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1310,7 +1319,7 @@ main.board {
 .cand-team {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
 }
 
@@ -1327,13 +1336,13 @@ main.board {
 }
 .cand-stat-value {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
 }
 .cand-stat-label {
     font-size: 9px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.10em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1341,7 +1350,7 @@ main.board {
 }
 .cand-stat.primary .cand-stat-value {
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--accent-win);
 }
 .race-card[data-group="pitching"] .cand-stat.primary .cand-stat-value {
@@ -1363,7 +1372,7 @@ nav .nav-item {
     color: var(--text-dim);
     text-decoration: none;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     transition: color 120ms ease, background 120ms ease;
 }
@@ -1443,7 +1452,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     justify-content: center;
     color: var(--text-dim);
     font-size: 34px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: -0.02em;
     text-transform: uppercase;
     pointer-events: none;
@@ -1467,14 +1476,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .ph-name {
     font-size: 36px;
     line-height: 1;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--text);
     margin: 0;
 }
 .ph-jersey {
     font-size: 17px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--text-dim);
 }
@@ -1484,7 +1493,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 6px;
     flex-wrap: wrap;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.04em;
     color: var(--text-dim);
 }
@@ -1540,7 +1549,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-when {
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--accent-win);
@@ -1552,7 +1561,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-tag {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text);
@@ -1595,7 +1604,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
    language so the projected stats read as parallel to season stats. */
 .player-tonight .pt-expected-head {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1615,14 +1624,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-stat-val {
     font-size: 20px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     line-height: 1.1;
 }
 .player-tonight .pt-stat-key {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1635,7 +1644,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-expected-meta strong {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
 }
 .player-tonight .pt-expected-empty {
     font-size: 12px;
@@ -1657,7 +1666,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-prop-strip-head {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1679,7 +1688,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
     text-decoration: none;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
     transition: border-color 80ms ease;
 }
 .player-tonight .pt-prop-chip:hover {
@@ -1695,11 +1704,11 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .player-tonight .pt-prop-chip-pct {
     font-variant-numeric: tabular-nums;
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
 }
 .player-tonight .pt-prop-chip-src {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-faint);
@@ -1720,7 +1729,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .player-tonight .pt-recent-head,
 .player-tonight .pt-h2h-head {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1743,7 +1752,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-recent-label {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1753,7 +1762,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-tonight .pt-recent-line strong {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
 }
 .player-tonight .pt-recent-dim .pt-recent-line {
     color: var(--text-dim);
@@ -1790,7 +1799,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     align-items: center;
     gap: 4px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--text);
     background: rgba(148, 163, 184, 0.1);
@@ -1820,7 +1829,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .slash-strip .ss-label {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -1845,7 +1854,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .slash-strip .ss-tile-counter { background: rgba(34, 197, 94, 0.08); }
 .slash-strip .ss-val {
     font-size: 22px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
@@ -1853,7 +1862,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .slash-strip .ss-key {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1870,7 +1879,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .slash-strip .ss-counts strong {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
 }
 .slash-strip .ss-dot {
     color: var(--text-dim);
@@ -1889,7 +1898,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .matchup-band .mb-band-title {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -1898,7 +1907,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .matchup-band .mb-section + .mb-section { margin-top: 14px; }
 .matchup-band .mb-section-head {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1927,7 +1936,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .matchup-band .mb-label {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text);
@@ -1947,7 +1956,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .matchup-band .mb-slash-val {
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
 }
 .matchup-band .mb-slash-sep {
@@ -1965,7 +1974,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .matchup-band .mb-row strong {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
 
@@ -1980,7 +1989,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .rate-profile .rp-head {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -1994,7 +2003,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .rate-profile .rp-table thead th {
     text-align: right;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -2011,7 +2020,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .rate-profile .rp-table tbody td {
     text-align: right;
     padding: 7px 8px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
 }
@@ -2031,7 +2040,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .outcome-breakdown .ob-head {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -2065,14 +2074,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .career-split .cs-label {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text);
     text-transform: uppercase;
 }
 .career-split .cs-pa {
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
@@ -2100,11 +2109,11 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .cs-row:first-of-type .cs-bar > span { background: var(--accent-win); }
 .cs-row:first-of-type .cs-outcome,
-.cs-row:first-of-type .cs-pct { color: var(--accent-win); font-weight: 700; }
+.cs-row:first-of-type .cs-pct { color: var(--accent-win); font-weight: 600; }
 .cs-pct {
     color: var(--text);
     text-align: right;
-    font-weight: 600;
+    font-weight: 550;
 }
 .cs-n {
     color: var(--text-dim);
@@ -2161,7 +2170,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .hot-head h2 {
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text);
     display: inline-flex;
@@ -2226,7 +2235,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .hot-rank {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--accent-action);
     font-variant-numeric: tabular-nums;
@@ -2236,7 +2245,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .hot-reason {
     flex: 1;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2244,7 +2253,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .hot-lev {
     font-size: 9px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -2267,13 +2276,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .hot-team-name {
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     letter-spacing: -0.005em;
 }
 .hot-team-score {
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     line-height: 1;
@@ -2281,7 +2290,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .hot-state {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.10em;
     text-transform: uppercase;
     text-align: center;
@@ -2312,7 +2321,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     display: flex;
     justify-content: space-between;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
@@ -2363,7 +2372,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     font-family: inherit;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     padding: 7px 14px;
@@ -2435,7 +2444,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     padding: 6px 16px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     border-radius: calc(var(--radius) - 4px);
@@ -2470,29 +2479,29 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     background: var(--bg);
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     border-bottom: 1px solid var(--border);
 }
 .bs-linescore th.ls-tot-h {
     color: var(--text);
-    font-weight: 800;
+    font-weight: 700;
     background: var(--bg);
 }
 .bs-linescore .ls-team {
     text-align: left;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
 }
 .bs-linescore td.ls-tot {
-    font-weight: 700;
+    font-weight: 600;
     background: rgba(255, 255, 255, 0.02);
     border-left: 1px solid var(--border);
 }
 .bs-linescore td.ls-tot-r {
     color: var(--accent-win);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 14px;
     border-left: 1px solid var(--border);
 }
@@ -2512,7 +2521,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 10px 14px;
     margin: 0;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -2533,7 +2542,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .bs-table thead th {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -2543,7 +2552,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .bs-table tfoot td {
     border-top: 1px solid var(--border);
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
     background: var(--bg);
 }
 .bs-table .bs-order {
@@ -2556,7 +2565,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .bs-table .bs-name {
     text-align: left;
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
     white-space: nowrap;
 }
 .bs-table .bs-name-wrap {
@@ -2594,7 +2603,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .bs-table .bs-pos {
     margin-left: 6px;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text-dim);
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -2602,7 +2611,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .bs-table .bs-decision {
     margin-left: 6px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--accent-action);
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -2652,7 +2661,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .pa-inning {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.16em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -2690,7 +2699,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .pa-score {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     padding: 2px 6px;
@@ -2700,7 +2709,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .pa-outcome-badge {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text);
@@ -2723,7 +2732,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
    WE_TABLE_V2 lookups for the state before and after the PA. */
 .pa-we-delta {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     padding: 3px 7px;
@@ -2753,7 +2762,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .pa-section-head {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -2795,15 +2804,15 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .pa-pred-pct {
     color: var(--text);
     text-align: right;
-    font-weight: 600;
+    font-weight: 550;
 }
 .pa-pred-check {
     color: var(--accent-win);
-    font-weight: 800;
+    font-weight: 700;
     text-align: center;
 }
 .pa-pred-row.actual .pa-pred-label,
-.pa-pred-row.actual .pa-pred-pct { color: var(--accent-win); font-weight: 700; }
+.pa-pred-row.actual .pa-pred-pct { color: var(--accent-win); font-weight: 600; }
 .pa-pred-row.actual .pa-pred-bar > span { background: var(--accent-win); }
 
 /* Pitch-by-pitch — number, type, velocity, result, count-after. */
@@ -2825,22 +2834,22 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .pa-pitch-num {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     text-align: right;
 }
 .pa-pitch-type {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
 }
 .pa-pitch-velo {
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
     text-align: right;
 }
 .pa-pitch-velo .dim {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     margin-left: 2px;
 }
 .pa-pitch-result {
@@ -2850,7 +2859,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .pa-pitch-count {
     color: var(--text-dim);
     text-align: right;
-    font-weight: 600;
+    font-weight: 550;
     font-size: 10px;
 }
 
@@ -2881,7 +2890,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .about-head h1 {
     font-size: 22px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: -0.005em;
     margin-bottom: 8px;
 }
@@ -2894,7 +2903,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .about-doc h2 {
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.16em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -2963,7 +2972,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .about-glossary dt {
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
     font-size: 12px;
     letter-spacing: 0.04em;
 }
@@ -3045,7 +3054,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .page-footer .version {
     font-variant-numeric: tabular-nums;
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
 }
 
@@ -3065,7 +3074,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .page-footer .model-accuracy strong {
     color: var(--accent-win);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
 }
 .page-footer .model-accuracy .ma-dot {
     width: 6px;
@@ -3104,7 +3113,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--accent-action);
     text-decoration: none;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     padding: 0 32px 10px;
     align-self: flex-start;
@@ -3173,7 +3182,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     justify-content: space-between;
     gap: 8px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.15;
 }
 .ticker-game .t-abbr {
@@ -3182,16 +3191,16 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .ticker-game .t-score {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
 .ticker-game[data-status="Preview"] .t-score {
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
 }
 .ticker-game .t-state {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -3455,28 +3464,28 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: #FCD34D;
     font-family: 'Inter', sans-serif;
     font-size: 7.5px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.10em;
 }
 .field .cf-scoreboard .sb-runs {
     fill: #FFFFFF;
     font-family: 'Inter', sans-serif;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.02em;
 }
 .field .cf-scoreboard .sb-inning {
     fill: #FFFFFF;
     font-family: 'Inter', sans-serif;
     font-size: 8.5px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
 }
 .field .cf-scoreboard .sb-status {
     fill: rgba(255, 255, 255, 0.55);
     font-family: 'Inter', sans-serif;
     font-size: 5.5px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
 }
 
@@ -3513,7 +3522,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: rgba(255, 255, 255, 0.55);
     font-family: 'Inter', sans-serif;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     paint-order: stroke;
     stroke: rgba(0, 0, 0, 0.65);
@@ -3526,7 +3535,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: rgba(255, 255, 255, 0.75);
     font-family: 'Inter', sans-serif;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.18em;
     paint-order: stroke;
     stroke: rgba(0, 0, 0, 0.6);
@@ -3553,7 +3562,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     font-family: 'Inter', sans-serif;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.06em;
     text-transform: uppercase;
 }
@@ -3596,7 +3605,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: var(--text);
     font-family: 'Inter', sans-serif;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.02em;
     paint-order: stroke;
     stroke: var(--bg);
@@ -3611,7 +3620,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: #FFFFFF;
     font-family: 'Inter', sans-serif;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.02em;
     paint-order: stroke;
     stroke: rgba(0, 0, 0, 0.6);
@@ -3622,7 +3631,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: rgba(255, 255, 255, 0.7);
     font-family: 'Inter', sans-serif;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     paint-order: stroke;
     stroke: rgba(0, 0, 0, 0.6);
@@ -3644,14 +3653,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     fill: #FFFFFF;
     font-family: 'Inter', sans-serif;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.04em;
 }
 .field .fcc-outs {
     fill: rgba(255, 255, 255, 0.65);
     font-family: 'Inter', sans-serif;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
 }
@@ -3661,7 +3670,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     margin: 12px 0 6px;
     text-align: center;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--text);
     padding: 8px 14px;
@@ -3692,7 +3701,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     align-items: center;
     gap: 12px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text);
     padding: 8px 16px;
     background: var(--surface);
@@ -3703,7 +3712,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .situation .state-label {
     color: var(--text-dim);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.15em;
 }
 
@@ -3776,7 +3785,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .current-pitches .cp-head {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -3797,9 +3806,9 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .current-pitches .cp-num {
     color: var(--text-faint);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
 }
-.current-pitches .cp-type    { font-weight: 700; }
+.current-pitches .cp-type    { font-weight: 600; }
 .current-pitches .cp-velo    { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .current-pitches .cp-velo .dim { font-size: 10px; color: var(--text-faint); margin-left: 2px; }
 .current-pitches .cp-result  { color: var(--text-dim); font-size: 12px; }
@@ -3816,7 +3825,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .player-row .label {
     color: var(--text);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
     flex: 0 0 72px;
@@ -3849,14 +3858,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .player-row strong {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
     flex: 1;
     font-size: 14px;
 }
 .player-row .hand {
     color: var(--accent-action);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     padding: 3px 8px;
     background: rgba(59, 130, 246, 0.15);
@@ -3910,7 +3919,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 8px;
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
 }
@@ -3926,7 +3935,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: #fff;
     border-radius: 10px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.18em;
     line-height: 1;
 }
@@ -3965,10 +3974,10 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .projected-we .pw-headline strong {
     color: var(--text);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
 }
 .projected-we .pw-arrow {
-    font-weight: 800;
+    font-weight: 700;
     font-size: 11px;
 }
 .projected-we .pw-arrow.up   { color: var(--accent-win); }
@@ -3980,7 +3989,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .projected-we .pw-count {
     display: inline-block;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--accent-action);
     background: rgba(59, 130, 246, 0.12);
@@ -3992,7 +4001,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .projected-we .pw-lev {
     margin-left: auto;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -4005,7 +4014,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .projected-we .pw-range strong {
     color: var(--text);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* ── BULLPEN-AWARE FORECAST ────────────────────────────────────────
@@ -4035,12 +4044,12 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .forecast-we .fwe-headline strong {
     color: var(--text);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 14px;
     font-variant-numeric: tabular-nums;
 }
 .forecast-we .fwe-arrow-pre {
-    font-weight: 800;
+    font-weight: 700;
 }
 .forecast-we .fwe-arrow-pre.up   { color: var(--accent-win); }
 .forecast-we .fwe-arrow-pre.down { color: var(--accent-live); }
@@ -4048,7 +4057,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .forecast-we .fwe-tag {
     margin-left: auto;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--accent-win);
@@ -4063,7 +4072,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     gap: 4px;
     flex-wrap: wrap;
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
     font-size: 11px;
 }
 .forecast-we .fwe-pitcher {
@@ -4111,7 +4120,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .forecast-we .fwe-chain-label {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     margin-right: 4px;
@@ -4119,7 +4128,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .forecast-we .fwe-role {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     margin-left: 3px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -4161,7 +4170,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .team-strength .ts-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -4191,7 +4200,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .team-strength .ts-abbr {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     color: var(--text);
 }
@@ -4203,7 +4212,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .team-strength .ts-streak {
     margin-left: auto;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     padding: 1px 5px;
     border-radius: 2px;
@@ -4228,13 +4237,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .team-strength .ts-key {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 .team-strength .ts-val {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
 }
 .team-strength .ts-pct {
     color: var(--text-dim);
@@ -4264,7 +4273,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .this-inning .ti-head {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -4304,7 +4313,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .this-inning .ti-outcome {
     text-align: center;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     background: rgba(148, 163, 184, 0.1);
@@ -4318,7 +4327,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .this-inning .ti-hit  { background: rgba(34, 197, 94, 0.18);  color: var(--accent-win); }
 .this-inning .ti-batter {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
     white-space: nowrap;
 }
 .this-inning .ti-batter a {
@@ -4368,7 +4377,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .matchup-card .count-aware-badge {
     display: inline-block;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--accent-action);
@@ -4413,7 +4422,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .matchup-card .mc-vs {
     color: var(--text-dim);
-    font-weight: 600;
+    font-weight: 550;
     margin: 0 4px;
 }
 
@@ -4428,7 +4437,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     align-items: center;
     gap: 4px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     padding: 2px 8px;
@@ -4451,13 +4460,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     align-items: baseline;
     gap: 10px;
     font-size: 34px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: -0.025em;
     font-variant-numeric: tabular-nums;
     color: var(--accent-win);
     line-height: 1;
 }
-.card .answer strong { font-weight: 800; }
+.card .answer strong { font-weight: 700; }
 
 .card .bar {
     height: 6px;
@@ -4478,7 +4487,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     justify-content: space-between;
     font-size: 10px;
     color: var(--text-dim);
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
@@ -4513,7 +4522,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .trace-card .trace-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -4535,7 +4544,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     display: flex;
     justify-content: space-between;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -4551,7 +4560,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .trace-card .trace-foot strong {
     color: var(--accent-win);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 /* Chart wrap holds the SVG + the absolutely-positioned tooltip so the
@@ -4637,30 +4646,30 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .trace-card .tt-inning {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--accent-action);
     text-transform: uppercase;
 }
 .trace-card .tt-score {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
     font-size: 12px;
 }
 .trace-card .tt-we {
     color: var(--accent-win);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 12px;
 }
 .trace-card .tt-swing {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--accent-live);
     text-transform: uppercase;
 }
 .trace-card .tt-event {
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     font-size: 12px;
     margin-bottom: 4px;
@@ -4715,7 +4724,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .trace-card .tt-pitches-head {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -4732,18 +4741,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
 }
 .trace-card .tp-num     { color: var(--text-dim); text-align: right; }
-.trace-card .tp-type    { color: var(--text); font-weight: 700; }
+.trace-card .tp-type    { color: var(--text); font-weight: 600; }
 .trace-card .tp-velo    { color: var(--text-dim); }
 .trace-card .tp-res     { font-weight: 500; }
-.trace-card .tp-count   { color: var(--text-dim); text-align: right; font-weight: 600; }
+.trace-card .tp-count   { color: var(--text-dim); text-align: right; font-weight: 550; }
 
 /* Result coloring — same accents we use elsewhere so the eye learns
    the palette across the app. */
 .trace-card .tp-ball           { color: var(--accent-action); }
 .trace-card .tp-strike-called  { color: var(--accent-live);   }
-.trace-card .tp-strike-swing   { color: var(--accent-live);   font-weight: 700; }
+.trace-card .tp-strike-swing   { color: var(--accent-live);   font-weight: 600; }
 .trace-card .tp-strike-foul    { color: var(--text-dim);      }
-.trace-card .tp-in-play        { color: var(--accent-win);    font-weight: 700; }
+.trace-card .tp-in-play        { color: var(--accent-win);    font-weight: 600; }
 .trace-card .tp-hbp            { color: var(--accent-live);   }
 
 /* Situation strip — outs dots, bases diamond, base-state label. Sits
@@ -4779,14 +4788,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .trace-card .tt-bases-label {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
 }
 
 /* WE delta chip — small +/- next to the WE% when this PA isn't the
    biggest swing. Red for negative (home WE down), green for positive. */
 .trace-card .tt-delta {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     padding: 0 4px;
     border-radius: 2px;
@@ -4823,7 +4832,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .trace-card .trace-biggest strong {
     color: var(--accent-live);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
 }
 .trace-card .trace-biggest .tb-dot {
     width: 6px;
@@ -4848,7 +4857,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .recap-card .recap-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.18em;
     color: var(--accent-win);
     text-transform: uppercase;
@@ -4906,7 +4915,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     border: 1px solid rgba(34, 197, 94, 0.25);
     border-radius: 4px;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text);
     letter-spacing: 0.04em;
     font-variant-numeric: tabular-nums;
@@ -4960,7 +4969,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .psc-name {
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
 }
 .psc-meta {
@@ -4988,14 +4997,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .psc-slash-num {
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.01em;
 }
 .psc-slash-key {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text-dim);
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -5017,7 +5026,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .psc-rate-label {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text-dim);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -5025,7 +5034,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .psc-rate-val {
     text-align: right;
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
 }
 .psc-rate-track {
@@ -5059,7 +5068,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .psc-rate.neutral .psc-rate-fill { background: rgba(148, 163, 184, 0.4); }
 .matchup-card .recent-form-head {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -5073,7 +5082,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .matchup-card .rf-row .rf-label {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
 }
 .matchup-card .rf-row .rf-stats {
@@ -5143,18 +5152,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .outcome-detail:first-child .outcome-label {
     color: var(--accent-win);
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .outcome-pct {
     color: var(--text-dim);
     text-align: right;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
 }
 .outcome-detail:first-child .outcome-pct {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .outcome-caret {
@@ -5196,13 +5205,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .bd-label {
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
 }
 .bd-value {
     color: var(--text);
-    font-weight: 700;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
     text-align: right;
 }
@@ -5224,7 +5233,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .bd-row.total .bd-note {
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
     white-space: normal;
 }
 
@@ -5257,7 +5266,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .markets-empty-title {
     color: var(--text);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 550;
     margin-bottom: 6px;
     letter-spacing: 0;
     text-transform: none;
@@ -5349,7 +5358,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .msrc-row:hover { background: rgba(56, 189, 248, 0.08); }
 .msrc-name {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 2px 7px;
@@ -5388,7 +5397,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .msrc-am {
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
 }
 .msrc-am-empty { color: var(--text-faint); }
@@ -5431,7 +5440,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .markets-side-cta {
     margin-top: 6px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--accent-action);
     text-transform: uppercase;
@@ -5459,7 +5468,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mab-head-strip strong {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text);
@@ -5502,7 +5511,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mab-row-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--text-dim);
 }
@@ -5530,7 +5539,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     flex-shrink: 0;
 }
 .mab-cell-am {
-    font-weight: 800;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--text);
 }
@@ -5551,7 +5560,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     background: rgba(56, 189, 248, 0.10);
     color: var(--accent-action);
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     border-radius: 999px;
     text-transform: uppercase;
@@ -5572,7 +5581,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 4px 10px;
     border-radius: 999px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.02em;
     cursor: pointer;
     font-family: inherit;
@@ -5610,7 +5619,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mab-link {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     color: var(--accent-action);
     text-decoration: none;
@@ -5652,7 +5661,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     padding: 10px 12px;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     cursor: pointer;
@@ -5671,7 +5680,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .markets-tab-count {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     background: rgba(148, 163, 184, 0.12);
     color: var(--text-dim);
     padding: 1px 7px;
@@ -5713,7 +5722,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     padding: 7px 12px;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.03em;
     text-transform: uppercase;
     cursor: pointer;
@@ -5734,7 +5743,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .prop-stat-tab-count {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     background: rgba(148, 163, 184, 0.12);
     color: var(--text-dim);
     padding: 1px 6px;
@@ -5780,7 +5789,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 8px 14px;
     border-radius: var(--radius);
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -5795,7 +5804,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 8px 14px;
     border-radius: var(--radius);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 550;
     cursor: pointer;
     align-self: flex-start;
 }
@@ -5812,7 +5821,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .markets-side-label {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -5820,13 +5829,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .markets-side-num {
     font-size: 30px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
 }
 .markets-vs {
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     color: var(--text-faint);
     text-transform: uppercase;
@@ -5836,7 +5845,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 10px 14px;
     border-radius: var(--radius);
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 550;
     text-align: center;
 }
 .markets-edge.edge-flat {
@@ -5864,7 +5873,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .markets-section-title {
     margin: 0;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -5898,7 +5907,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .market-source {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     padding: 2px 7px;
@@ -5912,7 +5921,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .market-source-odds_api   { background: rgba(56, 189, 248, 0.18); color: #7DD3FC; }
 .market-status {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 2px 6px;
@@ -5926,7 +5935,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
     text-decoration: none;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 550;
     line-height: 1.35;
 }
 .market-title:hover { text-decoration: underline; }
@@ -5951,14 +5960,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .market-outcome + .market-outcome {
     border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
-.market-outcome.is-favorite .mo-name { font-weight: 700; }
+.market-outcome.is-favorite .mo-name { font-weight: 600; }
 .market-outcome.is-favorite .mo-american { color: var(--accent-win); }
 .mo-name {
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 600;
+    font-weight: 550;
 }
 .mo-odds-block {
     display: flex;
@@ -5970,7 +5979,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .mo-american {
     font-variant-numeric: tabular-nums;
     color: var(--text);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 14px;
     letter-spacing: 0.02em;
 }
@@ -5978,7 +5987,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-variant-numeric: tabular-nums;
     color: var(--text-dim);
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.04em;
 }
 .mo-no-quote {
@@ -6006,7 +6015,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .model-row-tag {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -6016,13 +6025,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--accent-action);
 }
 .model-row-american {
-    font-weight: 800;
+    font-weight: 700;
     font-size: 13px;
     color: var(--text);
     letter-spacing: 0.02em;
 }
 .model-row-pct {
-    font-weight: 600;
+    font-weight: 550;
     color: var(--text-dim);
     font-size: 11px;
 }
@@ -6033,7 +6042,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     letter-spacing: 0.06em;
     text-transform: uppercase;
 }
-.model-row-edge strong { font-weight: 800; color: var(--text); }
+.model-row-edge strong { font-weight: 700; color: var(--text); }
 .model-edge-arrow { font-size: 12px; }
 
 /* Edge tints. ±2 pts is "noise"; beyond that we paint the row so the
@@ -6082,7 +6091,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .markets-team-link-note a {
     color: var(--accent-action);
     text-decoration: none;
-    font-weight: 700;
+    font-weight: 600;
     font-size: 12px;
     letter-spacing: 0.04em;
 }
@@ -6109,14 +6118,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mc-pill-label {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
 }
 .mc-pill-link {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--accent-action);
     text-decoration: none;
@@ -6131,7 +6140,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .mc-pill-num { text-align: center; }
 .mc-pill-num-val {
     font-size: 17px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
     font-variant-numeric: tabular-nums;
 }
@@ -6144,7 +6153,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mc-pill-vs {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.12em;
     color: var(--text-faint);
     text-transform: uppercase;
@@ -6154,7 +6163,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     text-align: center;
     font-size: 11px;
     color: var(--text);
-    font-weight: 600;
+    font-weight: 550;
 }
 .mc-pill-verdict-we_higher    { color: #34D399; }
 .mc-pill-verdict-market_higher{ color: #F472B6; }
@@ -6185,20 +6194,20 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .mc-line-chip:hover { border-color: var(--accent-action); }
 .mc-line-chip .mc-line-key {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-dim);
 }
-.mc-line-chip .mc-line-val { font-weight: 600; }
+.mc-line-chip .mc-line-val { font-weight: 550; }
 .mc-line-chip .mc-line-pct {
     font-variant-numeric: tabular-nums;
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
 }
 .mc-line-chip .mc-line-src {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-faint);
@@ -6219,7 +6228,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mc-prop-strip-head {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -6231,7 +6240,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .mc-prop-strip-label {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -6252,7 +6261,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text);
     text-decoration: none;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
 }
 .mc-prop-chip:hover { border-color: var(--accent-action); }
 .mc-prop-chip-side {
@@ -6264,11 +6273,11 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .mc-prop-chip-pct {
     font-variant-numeric: tabular-nums;
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
 }
 .mc-prop-chip-src {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--text-faint);
@@ -6307,7 +6316,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .md-title {
     margin: 0;
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--text);
 }
@@ -6323,7 +6332,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .md-source-chip {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 3px 8px;
@@ -6378,7 +6387,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .md-game-card-final { opacity: 0.7; }
 .md-game-status {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     padding: 2px 6px;
     border-radius: 4px;
@@ -6396,7 +6405,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     margin-left: auto;
     color: var(--accent-action);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
 }
 .md-game-head {
@@ -6415,14 +6424,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .md-game-away, .md-game-home {
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.02em;
     color: var(--text);
 }
 .md-game-at {
     color: var(--text-faint);
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 550;
 }
 .md-game-time {
     color: var(--text-dim);
@@ -6447,7 +6456,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .md-game-col-label {
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -6489,7 +6498,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     min-width: 0;
     overflow: hidden;
 }
-.md-game-outcome.is-fav .md-game-out-name { font-weight: 700; }
+.md-game-outcome.is-fav .md-game-out-name { font-weight: 600; }
 .md-game-outcome.is-fav .md-game-out-am { color: var(--accent-win); }
 .md-game-out-name {
     color: var(--text);
@@ -6498,7 +6507,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     white-space: nowrap;
     width: 100%;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     /* Logo + label inline. Renderer prepends an .md-team-logo img. */
     display: inline-flex;
     align-items: center;
@@ -6519,7 +6528,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     overflow: hidden;
 }
 .md-game-out-am {
-    font-weight: 800;
+    font-weight: 700;
     color: var(--text);
     font-variant-numeric: tabular-nums;
     /* Tightened 13 → 12 — long odds like +9900 / -9999 now fit
@@ -6584,7 +6593,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .md-bet-lbl {
     display: block;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -6631,7 +6640,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border: none;
     color: var(--text);
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     font-family: inherit;
     font-variant-numeric: tabular-nums;
     padding: 8px 0;
@@ -6655,7 +6664,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .md-bet-payout strong {
     color: var(--accent-win);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 15px;
 }
 .md-bet-total {
@@ -6672,7 +6681,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 6px;
     padding: 10px 14px;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     cursor: pointer;
     font-family: inherit;
@@ -6703,7 +6712,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .md-game-chip {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     padding: 3px 8px;
     border-radius: 99px;
@@ -6726,7 +6735,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .md-section-title {
     margin: 0;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -6795,7 +6804,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .team-header-name {
     margin: 0;
     font-size: 22px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--text);
 }
@@ -6812,7 +6821,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .team-section-title {
     margin: 0;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -6842,7 +6851,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .team-market-src {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 2px 7px;
@@ -6858,7 +6867,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     flex: 1;
     min-width: 0;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 550;
     line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6867,7 +6876,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .team-market-pct {
     font-variant-numeric: tabular-nums;
     color: var(--accent-action);
-    font-weight: 700;
+    font-weight: 600;
     font-size: 13px;
 }
 .team-market-bar {
@@ -6907,7 +6916,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .team-today-game-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -6915,14 +6924,14 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .team-today-game-link {
     color: var(--accent-action);
     text-decoration: none;
-    font-weight: 700;
+    font-weight: 600;
     font-size: 13px;
 }
 .team-today-game-link:hover { text-decoration: underline; }
 .team-today-game-state {
     color: var(--text);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 550;
 }
 .team-today-game-ours {
     color: var(--text-dim);
@@ -6941,7 +6950,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .odds-api-hint-title {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     color: #7DD3FC;
     text-transform: uppercase;
@@ -7071,7 +7080,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .kalshi-modal h2 {
     margin: 0 0 8px;
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.02em;
 }
 .kalshi-modal .km-sub {
@@ -7151,7 +7160,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .kalshi-modal .km-field > span {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -7184,7 +7193,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--accent-win);
     border: 1px solid rgba(34, 197, 94, 0.35);
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -7210,7 +7219,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .kalshi-modal .km-total strong {
     color: var(--accent-win);
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
 }
 
 .kalshi-modal .km-error {
@@ -7232,7 +7241,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 10px 18px;
     border-radius: 6px;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     cursor: pointer;
     border: 1px solid transparent;
@@ -7293,7 +7302,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 999px;
     cursor: pointer;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     font-family: inherit;
     transition: background 120ms;
@@ -7303,7 +7312,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .kalshi-strip .ks-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: #86EFAC;          /* kalshi green-ish accent */
     text-transform: uppercase;
@@ -7314,7 +7323,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .kalshi-strip .ks-balance strong {
     color: var(--accent-win);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 13px;
     margin-left: 4px;
 }
@@ -7373,7 +7382,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text-dim);
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    font-weight: 700;
+    font-weight: 600;
     backdrop-filter: blur(4px);
 }
 .global-stake-widget.is-visible { display: inline-flex; }
@@ -7381,7 +7390,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .global-stake-widget .gsw-prefix {
     color: var(--text-dim);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: none;
 }
 .global-stake-widget .gsw-input {
@@ -7392,7 +7401,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 6px;
     color: var(--text);
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 600;
     font-family: inherit;
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -7416,7 +7425,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 8px 12px;
     border-radius: 6px;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     cursor: pointer;
     border: 1px solid transparent;
@@ -7433,7 +7442,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .ks-bet-btn-win {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.02em;
     opacity: 0.85;
     font-variant-numeric: tabular-nums;
@@ -7482,7 +7491,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border: 1px solid var(--border);
     color: var(--text);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 550;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     transform: translateX(120%);
     transition: transform 220ms ease, opacity 220ms ease;
@@ -7511,7 +7520,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text-dim);
     padding: 10px 14px;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     cursor: pointer;
@@ -7552,14 +7561,14 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .km-ob-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--text-dim);
     text-transform: uppercase;
 }
 .km-ob-val {
     color: var(--accent-win);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 17px;
     font-variant-numeric: tabular-nums;
 }
@@ -7610,7 +7619,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 4px;
     cursor: pointer;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.04em;
     font-family: inherit;
     margin-right: 6px;
@@ -7621,7 +7630,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     align-items: center;
     justify-content: space-between;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     color: #86EFAC;
     text-transform: uppercase;
@@ -7658,7 +7667,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 
 .ks-mybets-key {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -7667,7 +7676,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .ks-mybets-balance-val {
     color: var(--accent-win);
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
     line-height: 1.1;
 }
@@ -7684,7 +7693,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .ks-mybets-table thead th {
     text-align: left;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-faint);
@@ -7707,7 +7716,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .ks-mybets-side {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     padding: 2px 8px;
     border-radius: 999px;
     letter-spacing: 0.06em;
@@ -7727,7 +7736,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 4px 10px;
     border-radius: 4px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     cursor: pointer;
     font-family: inherit;
@@ -7814,7 +7823,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .health-panel h3 {
     margin: 0 0 8px;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -7852,7 +7861,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 6px;
     padding: 8px 16px;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     font-family: inherit;
     letter-spacing: 0.04em;
@@ -7862,7 +7871,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 
 .health-pill {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 3px 8px;
@@ -7880,7 +7889,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .health-table thead th {
     text-align: left;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-faint);
@@ -7895,7 +7904,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .health-table tbody tr:last-child td { border-bottom: none; }
 .health-table tbody tr.row-ok td:nth-child(2)   { color: var(--accent-win); }
-.health-table tbody tr.row-down td:nth-child(2) { color: var(--accent-live); font-weight: 800; }
+.health-table tbody tr.row-down td:nth-child(2) { color: var(--accent-live); font-weight: 700; }
 .health-table .health-err {
     color: var(--text-faint);
     font-size: 11px;
@@ -7928,7 +7937,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 8px 14px;
     border-radius: 999px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 550;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -7990,7 +7999,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 999px;
     font: inherit;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     cursor: pointer;
@@ -8010,7 +8019,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 999px;
     font: inherit;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.10em;
     text-transform: uppercase;
     cursor: pointer;
@@ -8030,7 +8039,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 999px;
     font: inherit;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 550;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -8048,7 +8057,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: var(--accent-action);
     color: #0B1220;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -8077,7 +8086,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .auth-menu-email {
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -8157,7 +8166,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .auth-modal-title {
     font-size: 20px;
-    font-weight: 800;
+    font-weight: 700;
     margin: 0 0 6px;
     color: var(--text);
 }
@@ -8179,7 +8188,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .auth-field-label {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -8216,7 +8225,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 11px 16px;
     font: inherit;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;
     transition: background 120ms, transform 80ms;
@@ -8297,7 +8306,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .kalshi-guide-close:hover { background: rgba(148, 163, 184, 0.12); color: var(--text); }
 .kalshi-guide-head h2 {
     font-size: 22px;
-    font-weight: 800;
+    font-weight: 700;
     margin: 0 0 6px;
     color: var(--text);
 }
@@ -8331,12 +8340,12 @@ button.md-game-outcome:active { transform: translateY(1px); }
     align-items: center;
     justify-content: center;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     margin-top: 2px;
 }
 .kg-step-body h3 {
     font-size: 15px;
-    font-weight: 700;
+    font-weight: 600;
     margin: 0 0 8px;
     color: var(--text);
 }
@@ -8399,7 +8408,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 10px 20px;
     font: inherit;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
     cursor: pointer;
 }
 .kalshi-guide-dismiss:hover { background: #16A34A; }
@@ -8447,7 +8456,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     gap: 8px;
     font: inherit;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
@@ -8501,7 +8510,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-drawer-head h2 {
     font-size: 17px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.04em;
     margin: 0;
 }
@@ -8531,7 +8540,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 12px 14px;
     font: inherit;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
@@ -8549,7 +8558,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 1px 7px;
     border-radius: 99px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
 }
 .bot-tab.active .bot-tab-count {
     background: rgba(56, 189, 248, 0.18);
@@ -8566,7 +8575,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-section { margin-bottom: 28px; }
 .bot-section h3 {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -8590,7 +8599,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-table th {
     text-align: left;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text-dim);
     font-size: 10px;
     text-transform: uppercase;
@@ -8615,8 +8624,8 @@ button.md-game-outcome:active { transform: translateY(1px); }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.bot-pl-pos { color: var(--accent-win); font-weight: 700; }
-.bot-pl-neg { color: var(--accent-live); font-weight: 700; }
+.bot-pl-pos { color: var(--accent-win); font-weight: 600; }
+.bot-pl-neg { color: var(--accent-live); font-weight: 600; }
 
 /* Source pill — tags each active bet as bot- or user-placed.
    10px so the badge sits visually one step below the 12px cell
@@ -8627,7 +8636,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 2px 8px;
     border-radius: 999px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     line-height: 1.4;
     text-align: center;
@@ -8645,7 +8654,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-section-sub {
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     letter-spacing: 0.04em;
     text-transform: none;
     color: var(--text-faint);
@@ -8680,7 +8689,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 
 .abs-title {
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--text-dim);
     text-transform: uppercase;
@@ -8699,7 +8708,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text-dim);
     font-family: inherit;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
     padding: 4px 10px 4px 8px;
@@ -8765,7 +8774,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     text-decoration: none;
     color: var(--text);
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 550;
     line-height: 1.2;
     flex-shrink: 0;
     cursor: pointer;
@@ -8787,7 +8796,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 1px 5px;
     border-radius: 999px;
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     min-width: 22px;
     text-align: center;
@@ -8802,7 +8811,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 
 .abs-label {
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
 }
 
@@ -8832,7 +8841,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     font-size: 10px;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 0;
 }
 .abs-progress-pending { color: var(--text-faint); }
@@ -8845,7 +8854,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .abs-pl {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
 }
 .abs-pl-pos { color: var(--accent-win); }
@@ -8891,7 +8900,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: rgba(148, 163, 184, 0.18);
     color: var(--text-faint);
     font-size: 9px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.12em;
 }
 
@@ -8938,7 +8947,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 1px 7px;
     border-radius: 4px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     line-height: 1.4;
 }
@@ -8962,7 +8971,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 2px 7px;
     border-radius: 4px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.04em;
     line-height: 1.4;
     font-variant-numeric: tabular-nums;
@@ -8986,7 +8995,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     padding: 1px 7px;
     border-radius: 4px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     line-height: 1.4;
 }
@@ -9015,7 +9024,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 6px;
     font: inherit;
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
 }
 .bot-exit-btn:hover { background: rgba(34, 197, 94, 0.22); }
@@ -9069,7 +9078,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-toggle-label {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text);
 }
 .bot-kill {
@@ -9081,7 +9090,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-radius: 6px;
     font: inherit;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.06em;
     cursor: pointer;
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
@@ -9104,7 +9113,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-settings summary {
     cursor: pointer;
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.10em;
     text-transform: uppercase;
     color: var(--text-dim);
@@ -9125,7 +9134,7 @@ button.md-game-outcome:active { transform: translateY(1px); }
     font-size: 11px;
 }
 .bot-settings-grid label > span:first-child {
-    font-weight: 700;
+    font-weight: 600;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -9228,5 +9237,5 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-log-buy  .bot-log-msg { color: var(--accent-win); }
 .bot-log-sell .bot-log-msg { color: var(--accent-action); }
 .bot-log-err  .bot-log-msg { color: var(--accent-live); }
-.bot-log-halt .bot-log-msg { color: var(--accent-live); font-weight: 700; }
+.bot-log-halt .bot-log-msg { color: var(--accent-live); font-weight: 600; }
 
