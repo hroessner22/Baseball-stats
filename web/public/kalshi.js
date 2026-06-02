@@ -326,6 +326,19 @@ async function getPositions() {
     } catch { return { market_positions: [] }; }
 }
 
+// Settled positions — used by the History tab to display result +
+// realized P/L for past bets. Kalshi returns an array of objects
+// with ticker, yes_count, no_count, revenue, market_result, and
+// settled_time. We pass them through verbatim and let the renderer
+// match against the local fire log to assemble per-bet history.
+async function getSettlements() {
+    if (!isConnected()) return [];
+    try {
+        const data = await callKalshi("GET", "/trade-api/v2/portfolio/settlements?limit=200");
+        return data.settlements || [];
+    } catch { return []; }
+}
+
 // Public Kalshi orderbook — used by "take existing offer" mode to
 // figure out what's actually available to fill against.
 //
@@ -1363,6 +1376,7 @@ root.Kalshi = {
     getBalance,
     getOpenOrders,
     getPositions,
+    getSettlements,
     getOrderbook,
     placeOrder,
     cancelOrder,

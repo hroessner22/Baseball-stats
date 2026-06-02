@@ -8512,11 +8512,17 @@ button.md-game-outcome:active { transform: translateY(1px); }
     letter-spacing: 0;
 }
 
-/* When collapsed: strip shrinks to fit only the toggle pill so it
-   doesn't take a full-width bar at the bottom. */
+/* When collapsed: strip shrinks to fit only the toggle pill AND
+   slides to bottom-center so the pill doesn't cover the leftmost
+   column of whatever view the user is on (Leaders cards, MVP rows,
+   Board tiles). The launcher stays bottom-right; together they
+   form a quieter bottom row that lets the content underneath
+   read through. */
 .active-bets-strip.is-collapsed {
+    left: 50%;
     right: auto;
-    padding: 6px 8px;
+    transform: translateX(-50%);
+    padding: 6px 10px;
     background: rgba(11, 18, 32, 0.92);
 }
 
@@ -8735,6 +8741,29 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bet-state-placed {
     background: rgba(148, 163, 184, 0.14);
     color: var(--text-dim);
+}
+
+/* Result pills for settled bets — shown in the History tab in place
+   of the state pill once Kalshi has resolved the market. */
+.bet-result {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+}
+.bet-result-won {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--accent-win);
+    border: 1px solid rgba(34, 197, 94, 0.42);
+}
+.bet-result-lost {
+    background: rgba(239, 68, 68, 0.16);
+    color: var(--accent-live);
+    border: 1px solid rgba(239, 68, 68, 0.4);
 }
 .bot-time-ago {
     font-size: 10px;

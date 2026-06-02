@@ -784,12 +784,16 @@ function drawerHtml(initialTab) {
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
             Active Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
+          <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
+            History <span class="bot-tab-count" data-history-count>0</span>
+          </button>
           <button class="bot-tab ${initialTab === "bot" ? "active" : ""}" data-tab="bot" role="tab">
             Bot
           </button>
         </nav>
-        <div class="bot-tab-pane ${initialTab === "bets" ? "active" : ""}" data-pane="bets"></div>
-        <div class="bot-tab-pane ${initialTab === "bot" ? "active" : ""}" data-pane="bot"></div>
+        <div class="bot-tab-pane ${initialTab === "bets"    ? "active" : ""}" data-pane="bets"></div>
+        <div class="bot-tab-pane ${initialTab === "history" ? "active" : ""}" data-pane="history"></div>
+        <div class="bot-tab-pane ${initialTab === "bot"     ? "active" : ""}" data-pane="bot"></div>
       </div>
     `;
 }
@@ -817,13 +821,16 @@ function bindDrawer(overlay) {
 async function refreshDrawerContent() {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
-    overlay.querySelector("[data-pane='bets']").innerHTML = await renderOpenBetsPane();
-    overlay.querySelector("[data-pane='bot']").innerHTML = renderBotPane();
+    overlay.querySelector("[data-pane='bets']").innerHTML    = await renderOpenBetsPane();
+    overlay.querySelector("[data-pane='history']").innerHTML = await renderHistoryPane();
+    overlay.querySelector("[data-pane='bot']").innerHTML     = renderBotPane();
     bindBotPaneHandlers(overlay);
     bindBetsPaneHandlers(overlay);
-    // Update count chip on the Bets tab.
-    const ct = overlay.querySelector("[data-bets-count]");
-    if (ct) ct.textContent = String(_state.openPositions.length);
+    // Update count chips on the Bets + History tabs.
+    const betsCt = overlay.querySelector("[data-bets-count]");
+    if (betsCt) betsCt.textContent = String(_state.openPositions.length);
+    const histCt = overlay.querySelector("[data-history-count]");
+    if (histCt) histCt.textContent = String(getFires().length);
 }
 
 
@@ -1056,6 +1063,155 @@ function formatTimeAgo(d) {
     if (sec < 3600)      return `${Math.round(sec/60)}m ago`;
     if (sec < 86400)     return `${Math.round(sec/3600)}h ago`;
     return `${Math.round(sec/86400)}d ago`;
+}
+
+
+// ── History pane (every bet ever placed + result) ─────────────────
+
+async function renderHistoryPane() {
+    if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
+        return `
+          <div class="bot-empty">
+            <p>Connect Kalshi to see history with realized results.</p>
+            <p class="bot-empty-sub">Local fire log without Kalshi is still useful — re-render once you connect to see won/lost outcomes.</p>
+          </div>
+        `;
+    }
+    const fires = getFires();
+    if (!fires.length) {
+        return `
+          <div class="bot-empty">
+            <p>No betting history yet.</p>
+            <p class="bot-empty-sub">Every bet you place — bot or manual — joins this log the moment it goes through.</p>
+          </div>
+        `;
+    }
+    // Pull positions + open orders + settlements in parallel so we can
+    // assign the most-accurate state to each fire-log entry:
+    //   WON / LOST    → Kalshi settled the market (revenue field tells P/L)
+    //   HELD          → ticker is in current positions
+    //   RESTING       → ticker is in current open orders
+    //   PLACED        → none of the above; we don't know yet
+    let positions = null, orders = null, settlements = null;
+    try {
+        [positions, orders, settlements] = await Promise.all([
+            root.Kalshi.getPositions(),
+            root.Kalshi.getOpenOrders(),
+            root.Kalshi.getSettlements ? root.Kalshi.getSettlements() : Promise.resolve([]),
+        ]);
+    } catch (e) {
+        return `<div class="bot-empty"><p>Couldn't load Kalshi history: ${escapeText(e.message || e)}</p></div>`;
+    }
+    const positionTickers = new Set(
+        (positions?.market_positions || [])
+            .filter((p) => (p.position || 0) !== 0)
+            .map((p) => p.ticker)
+    );
+    const restingTickers = new Set((orders || []).map((o) => o.ticker));
+    const settlementByTicker = new Map();
+    for (const s of (settlements || [])) {
+        if (!settlementByTicker.has(s.ticker)) settlementByTicker.set(s.ticker, s);
+    }
+
+    // Aggregate top-line stats — won/lost counts + total realized P/L.
+    let wonCount = 0, lostCount = 0, totalRevenueCents = 0, totalCostCents = 0;
+    for (const f of fires) {
+        const s = settlementByTicker.get(f.ticker);
+        if (!s) continue;
+        const revenue = Number(s.revenue) || 0;        // cents
+        const yesCount = Number(s.yes_count) || 0;
+        const costForThisFire = (f.contracts || 1) * (f.price_cents || 0);
+        // Kalshi reports a single settlement per ticker — credit the
+        // first matching fire only so we don't double-count when the
+        // bot placed multiple orders at the same ticker.
+        totalRevenueCents += 0;   // tallied below per-row instead
+        if (s.market_result === "yes" && yesCount > 0) wonCount++;
+        else lostCount++;
+    }
+
+    const rows = fires.slice(0, 200).map((f) => {
+        let label;
+        if (f.kind === "player_prop" && f.player) {
+            const stat = shortStatLabel(f.stat);
+            label = `${f.player} ${f.threshold}+ ${stat}`;
+        } else if (f.bet_team && f.matchup) {
+            label = `${f.bet_team} ML · ${f.matchup}`;
+        } else {
+            const t = f.ticker || "";
+            label = t.length > 32 ? t.slice(0, 32) + "…" : t;
+        }
+        const placedAt = f.placed_at ? new Date(f.placed_at) : null;
+        const ago      = placedAt ? formatTimeAgo(placedAt) : "—";
+        const cost     = (f.contracts || 1) * (f.price_cents || 0);
+        const settle   = settlementByTicker.get(f.ticker);
+
+        // Resolve the result column.
+        let resultCell;
+        if (settle) {
+            const yesCount = Number(settle.yes_count) || 0;
+            const revenue  = Number(settle.revenue)   || 0;
+            const won = settle.market_result === "yes" && yesCount > 0;
+            const pnlDollars = (revenue - cost) / 100;
+            if (won) {
+                resultCell = `<span class="bet-result bet-result-won">+$${pnlDollars.toFixed(2)}</span>`;
+            } else {
+                resultCell = `<span class="bet-result bet-result-lost">-$${(cost/100).toFixed(2)}</span>`;
+            }
+        } else if (positionTickers.has(f.ticker)) {
+            resultCell = `<span class="bet-state bet-state-held">HELD</span>`;
+        } else if (restingTickers.has(f.ticker)) {
+            resultCell = `<span class="bet-state bet-state-resting">RESTING</span>`;
+        } else {
+            resultCell = `<span class="bet-state bet-state-placed">PLACED</span>`;
+        }
+
+        const source = f.source === "manual"
+            ? `<span class="bet-src bet-src-user" title="Placed manually">YOU</span>`
+            : `<span class="bet-src bet-src-bot" title="Placed by bot${f.edge_pp != null ? ` · ${f.edge_pp.toFixed(1)}pp edge` : ""}">BOT</span>`;
+
+        return `
+          <tr>
+            <td>${source}</td>
+            <td>${escapeText(label)}</td>
+            <td>${f.contracts || 1}× @ ${f.price_cents}¢</td>
+            <td>$${(cost/100).toFixed(2)}</td>
+            <td>${resultCell}</td>
+            <td class="bot-time-ago">${ago}</td>
+          </tr>
+        `;
+    }).join("");
+
+    // Net P/L across SETTLED bets only.
+    let netCents = 0;
+    let settledCount = 0;
+    for (const f of fires) {
+        const s = settlementByTicker.get(f.ticker);
+        if (!s) continue;
+        settledCount++;
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const revenue = Number(s.revenue) || 0;
+        netCents += (revenue - cost);
+    }
+    const winRate = settledCount ? (wonCount / settledCount) : null;
+    const summary = settledCount > 0
+        ? `${settledCount} settled · ${wonCount}-${lostCount} (${(winRate * 100).toFixed(0)}%) · Net <strong class="${netCents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${netCents >= 0 ? "+" : ""}$${(netCents/100).toFixed(2)}</strong>`
+        : `${fires.length} placed · 0 settled yet`;
+
+    return `
+      <div class="bot-status-banner">
+        <span class="bot-status-row">
+          <span class="bot-status-dot bot-status-ok"></span>
+          ${summary}
+        </span>
+      </div>
+      <div class="bot-section">
+        <h3>All bets <span class="bot-section-sub">most recent first · ${Math.min(fires.length, 200)} shown of ${fires.length}</span></h3>
+        <table class="bot-table bot-table-history">
+          <thead><tr><th>By</th><th>Bet</th><th>Size</th><th>Cost</th><th>Result</th><th>When</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
 }
 
 function bindBetsPaneHandlers(overlay) {
