@@ -598,10 +598,14 @@ main.board {
 .standings-view {
     flex: 1;
     overflow: auto;
-    padding: 20px 28px 32px;
+    /* Bottom gutter for the fixed widgets — see .leaders-view. */
+    padding: 14px 24px 100px;
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 16px;
+    max-width: 1620px;
+    margin: 0 auto;
+    width: 100%;
 }
 .standings-view .empty { padding: 48px 16px; }
 
@@ -670,9 +674,11 @@ main.board {
 }
 .standings-table th {
     text-align: right;
-    font-size: 9px;
+    /* Was 9 — too small next to 12 cells. 10 sits a clean step
+       below the cell text without losing the "label" feel. */
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.12em;
     color: var(--text-dim);
     text-transform: uppercase;
     padding: 8px 8px 6px;
@@ -806,7 +812,9 @@ main.board {
     border-bottom: 1px solid var(--border);
 }
 .leader-stat {
-    font-size: 10px;
+    /* Stat-name header (HR, AVG, OPS…) — 11px reads cleanly and
+       sits even with the 11px row text. */
+    font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.14em;
     color: var(--text);
@@ -821,24 +829,27 @@ main.board {
 }
 .leader-row {
     display: grid;
-    grid-template-columns: 14px 18px minmax(0, 1fr) auto auto;
+    grid-template-columns: 14px 22px minmax(0, 1fr) auto auto;
     gap: 6px;
     align-items: center;
-    padding: 2px 10px;
-    font-size: 10.5px;
-    line-height: 1.2;
+    padding: 3px 10px;
+    /* 10.5px was a half-pixel that doesn't render crisply on most
+       displays; round to 11px which sits on the 11/12 content tier
+       used everywhere else. */
+    font-size: 11px;
+    line-height: 1.25;
 }
 .leader-photo {
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
     object-position: center top;
 }
 .leader-photo-empty {
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: var(--bg);
 }
@@ -860,7 +871,9 @@ main.board {
 }
 .leader-team {
     color: var(--text-dim);
-    font-size: 9px;
+    /* Was 9px — too small next to the 11px name. 10px reads as a
+       quiet secondary at the right edge without looking faded. */
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.06em;
 }
@@ -871,7 +884,10 @@ main.board {
     letter-spacing: 0.01em;
     min-width: 38px;
     text-align: right;
-    font-size: 11px;
+    /* Bumped 11 → 12 so the value reads as the primary glyph in
+       the row, matching the visual hierarchy of stat tables
+       elsewhere on the site. */
+    font-size: 12px;
 }
 .leader-empty {
     padding: 14px;
@@ -1019,8 +1035,10 @@ main.board {
     grid-template-columns: 16px 22px minmax(0, 1fr) 42px 38px;
     gap: 6px;
     align-items: center;
-    padding: 2px 0;
-    font-size: 10.5px;
+    padding: 3px 0;
+    /* Round 10.5 → 11 (no half-px, doesn't render crisply) and
+       match the same 11px content tier the leader rows use. */
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
 .wpa-band .wpa-photo {
@@ -1256,7 +1274,8 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .player-view {
     flex: 1;
     overflow: auto;
-    padding: 18px 0 36px;
+    /* Bottom gutter for the fixed widgets — see .leaders-view. */
+    padding: 18px 0 100px;
     display: flex;
     flex-direction: column;
 }
@@ -2884,7 +2903,10 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 6px 20px;
     background: var(--bg);
     border-top: 1px solid var(--border);
-    font-size: 10px;
+    /* Was 10 — too small next to the 12px model-accuracy line in
+       the middle. 11 reads cleanly and stays a quiet step below
+       the calibration line, preserving the hierarchy. */
+    font-size: 11px;
     font-weight: 500;
     color: var(--text-dim);
     letter-spacing: 0.04em;
@@ -2955,7 +2977,9 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .game-view {
     flex: 1;
     overflow: auto;
-    padding: 12px 0 36px;
+    /* Bottom gutter so the fixed strip/launcher clear the last
+       PA block — same 100px applied to other long views. */
+    padding: 12px 0 100px;
     display: flex;
     flex-direction: column;
 }
@@ -8422,7 +8446,10 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-ticker {
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 10px;
+    /* Monospace already reads ~1px narrower than the surrounding
+       proportional 12px cell text, so 11px keeps it as a secondary
+       glyph without looking shrunken. */
+    font-size: 11px;
     color: var(--text-dim);
     max-width: 220px;
     overflow: hidden;
@@ -8432,17 +8459,20 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-pl-pos { color: var(--accent-win); font-weight: 700; }
 .bot-pl-neg { color: var(--accent-live); font-weight: 700; }
 
-/* Source pill — tags each active bet as bot- or user-placed. */
+/* Source pill — tags each active bet as bot- or user-placed.
+   10px so the badge sits visually one step below the 12px cell
+   text it accompanies, not two — 9px next to 12 felt like an
+   afterthought. */
 .bet-src {
     display: inline-block;
-    padding: 2px 7px;
+    padding: 2px 8px;
     border-radius: 999px;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.08em;
     line-height: 1.4;
     text-align: center;
-    min-width: 32px;
+    min-width: 36px;
 }
 .bet-src-bot {
     background: rgba(245, 158, 11, 0.16);
@@ -8742,12 +8772,13 @@ button.md-game-outcome:active { transform: translateY(1px); }
 
 /* State pills in the Recently placed table. We never assert CLOSED —
    we only know HELD (in positions) / RESTING (in open orders) /
-   PLACED (we tried, can't see it on Kalshi right now). */
+   PLACED (we tried, can't see it on Kalshi right now).
+   10px so they sit even with the source pill alongside them. */
 .bet-state {
     display: inline-block;
-    padding: 1px 6px;
+    padding: 1px 7px;
     border-radius: 4px;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.08em;
     line-height: 1.4;
@@ -8789,12 +8820,13 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 
 /* Action pills on the Kalshi fills table — BUY in action-blue,
-   SELL in accent-win green so the pair reads as 'entered/exited.' */
+   SELL in accent-win green so the pair reads as 'entered/exited.'
+   10px matches the rest of the badge family. */
 .bot-fill-action {
     display: inline-block;
     padding: 1px 7px;
     border-radius: 4px;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 0.08em;
     line-height: 1.4;
@@ -8808,7 +8840,9 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--accent-win);
 }
 .bot-time-ago {
-    font-size: 10px;
+    /* Match the 11px other secondary table cells use — was 10
+       which clashed with the bumped 10px state pill alongside. */
+    font-size: 11px;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
 }
