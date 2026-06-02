@@ -22,11 +22,21 @@
 const REFRESH_MS = 30000;
 const BOX_TTL_MS = 30000;
 const LS_FIRES   = "diamond_context_bot_fires";
+const LS_COLLAPSED = "diamond_context_strip_collapsed";
 const root = (typeof globalThis !== "undefined") ? globalThis : window;
 
 let stripEl = null;
 let timer   = null;
+let collapsed = readCollapsed();
 const boxscoreCache = new Map();   // game_pk → { t, data }
+
+function readCollapsed() {
+    try { return localStorage.getItem(LS_COLLAPSED) === "1"; }
+    catch { return false; }
+}
+function writeCollapsed(v) {
+    try { localStorage.setItem(LS_COLLAPSED, v ? "1" : "0"); } catch {}
+}
 
 document.addEventListener("DOMContentLoaded", () => waitForKalshi(init));
 
@@ -108,16 +118,30 @@ async function refresh() {
     }
 
     const titleText = mode === "active"
-        ? `ACTIVE BETS · ${entries.length}`
+        ? `ACTIVE · ${entries.length}`
         : `RECENT · ${entries.length}`;
 
+    // Toggle pill on the LEFT — clicking collapses the strip to just
+    // this button so the user can hide the chips without losing the
+    // affordance to bring them back. State persists in localStorage.
+    const toggleIcon  = collapsed ? "▲" : "▼";
+    const toggleLabel = collapsed ? `${titleText}` : titleText;
+
     stripEl.innerHTML = `
-      <span class="abs-title">${titleText}</span>
-      <div class="abs-chips">${entries.map((e) => e.kind === "position" ? renderChip(e) : renderRecentChip(e)).join("")}</div>
-      <button class="abs-close" aria-label="Hide strip" title="Hide until next bet">×</button>
+      <button class="abs-toggle" data-strip-toggle
+              aria-expanded="${!collapsed}"
+              aria-label="${collapsed ? "Show active bets" : "Hide active bets"}"
+              title="${collapsed ? "Show active bets" : "Hide active bets"}">
+        <span class="abs-toggle-icon">${toggleIcon}</span>
+        <span class="abs-toggle-label">${toggleLabel}</span>
+      </button>
+      ${collapsed ? "" : `
+        <div class="abs-chips">${entries.map((e) => e.kind === "position" ? renderChip(e) : renderRecentChip(e)).join("")}</div>
+      `}
     `;
-    bindClose();
+    bindToggle();
     show();
+    stripEl.classList.toggle("is-collapsed", collapsed);
 }
 
 // Compute the DK-style progress payload for a player-prop fire.
@@ -173,7 +197,6 @@ function renderRecentChip({ fire, progress }) {
         <span class="abs-label">${escapeText(label)}</span>
         ${progressEl}
         <span class="abs-price">${fire.price_cents}¢</span>
-        <span class="abs-history-tag">HIST</span>
         <span class="abs-arrow">➜</span>
       </a>
     `;
@@ -236,9 +259,14 @@ function renderChip({ p, fire, live, entry, qty, pl, progress }) {
     `;
 }
 
-function bindClose() {
-    const btn = stripEl.querySelector(".abs-close");
-    if (btn) btn.addEventListener("click", hide);
+function bindToggle() {
+    const btn = stripEl.querySelector("[data-strip-toggle]");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+        collapsed = !collapsed;
+        writeCollapsed(collapsed);
+        refresh();
+    });
 }
 function show() { stripEl.classList.add("is-visible"); }
 function hide() { stripEl.classList.remove("is-visible"); }

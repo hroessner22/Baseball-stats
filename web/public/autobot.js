@@ -79,6 +79,15 @@ const DEFAULTS = {
     require_savant_agree:       false,
     savant_disagree_penalty_pp: 3,
     profit_take_cents:     20,     // cash out at +20¢ on the contract
+    // SECOND cash-out trigger: when we've captured this fraction of the
+    // edge our model expected at fire-time, take profits and free the
+    // capital for the next opportunity. Computed as:
+    //   capture_fraction = (live_yes_bid - entry) / (our_p_cents - entry)
+    // Default 0.55 ≈ "lock in once the market has moved more than
+    // halfway to our model's fair value." Either trigger fires the sell
+    // — whichever hits first, so the absolute profit_take_cents floor
+    // still applies on bets where the original edge was huge.
+    live_ev_take_pct:      0.55,
     daily_loss_limit_cents: 500,   // $5 default — tightened by HARD_CAPS
     open_exposure_max:     2000,   // $20 default
     bet_player_props:      true,   // scan Kalshi player_prop markets too
@@ -146,10 +155,16 @@ function clampSettings(s) {
         require_savant_agree:       !!s.require_savant_agree,
         savant_disagree_penalty_pp: clampInt(s.savant_disagree_penalty_pp, 0, 10),
         profit_take_cents:          clampInt(s.profit_take_cents, 5, 60),
+        live_ev_take_pct:           clampFloat(s.live_ev_take_pct, 0.2, 0.95),
         daily_loss_limit_cents:     clampInt(s.daily_loss_limit_cents, 100, HARD_CAPS.daily_loss_cents_max),
         open_exposure_max:          clampInt(s.open_exposure_max, 200, HARD_CAPS.open_exposure_max),
         bet_player_props:           s.bet_player_props !== false,
     };
+}
+function clampFloat(n, lo, hi) {
+    const x = parseFloat(n);
+    if (!Number.isFinite(x)) return lo;
+    return Math.min(hi, Math.max(lo, x));
 }
 function clampInt(n, lo, hi) {
     const x = parseInt(n, 10);
@@ -238,6 +253,23 @@ async function runScan() {
             log("skip", `Open exposure $${(exposureCents/100).toFixed(2)} >= cap $${(_state.settings.open_exposure_max/100).toFixed(2)}; skipping this scan`);
             _state.lastScanAt = Date.now();
             return;
+        }
+        // Balance check — bail before even fetching games if Kalshi
+        // says we can't afford a single contract. Avoids hammering
+        // the rest of the stack with scans whose only outcome would
+        // be a stream of "Order failed: insufficient funds" errors.
+        // We compare to the smallest possible contract spend
+        // (1¢ minimum on Kalshi); the per-fire balance check inside
+        // checkAndMaybeFire enforces the actual ask + unit_cents.
+        if (root.Kalshi && root.Kalshi.getBalance) {
+            try {
+                const balanceCents = await root.Kalshi.getBalance();
+                if (balanceCents != null && balanceCents < 1) {
+                    log("halt", `Kalshi balance $${(balanceCents/100).toFixed(2)} — nothing to bet with; skipping scan`);
+                    _state.lastScanAt = Date.now();
+                    return;
+                }
+            } catch { /* If balance fetch fails, fall through to per-fire check */ }
         }
 
         // 1) Live games
@@ -355,6 +387,12 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         if (contracts < 1) continue;
         const tradeCostCents = contracts * yesAskCents;
         if (computeOpenExposureCents() + tradeCostCents > _state.settings.open_exposure_max) continue;
+        // Same hard balance guard as moneyline path — refuse to even
+        // submit the order if Kalshi balance can't cover it.
+        if (!(await canAfford(tradeCostCents))) {
+            log("skip", `Skip player_prop ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: balance below ${tradeCostCents}¢`);
+            continue;
+        }
 
         try {
             const result = await root.Kalshi.placeOrder({
@@ -474,6 +512,14 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     if (computeOpenExposureCents() + tradeCostCents > _state.settings.open_exposure_max) {
         return;
     }
+    // Hard balance check — if Kalshi reports less cash than this
+    // specific order would cost, skip silently. Without this we
+    // generate a Kalshi "insufficient_funds" error per fire which
+    // pollutes the log and burns rate limit.
+    if (!(await canAfford(tradeCostCents))) {
+        log("skip", `Skip ${ticker}: balance below ${tradeCostCents}¢ trade cost`);
+        return;
+    }
 
     // FIRE.
     try {
@@ -552,6 +598,16 @@ async function runCashoutCheck() {
     _state.openPositions = mps;
     refreshDrawerIfOpen();
 
+    // Build a ticker → fire lookup so we can correlate each open
+    // position with the model probability that triggered the buy.
+    // That's what makes the edge-capture cash-out possible: we need
+    // our_p at entry to compute "captured 55% of edge yet?"
+    const fires = getFires();
+    const fireByTicker = new Map();
+    for (const f of fires) {
+        if (f.ticker && !fireByTicker.has(f.ticker)) fireByTicker.set(f.ticker, f);
+    }
+
     for (const p of mps) {
         const qty = (p.position || 0);
         if (qty === 0) continue;
@@ -564,22 +620,46 @@ async function runCashoutCheck() {
         const entryCents = p.average_yes_price ?? p.average_cost_cents ?? null;
         if (entryCents == null) continue;
 
-        // Live YES price from the orderbook.
-        let yesAskCents = null;
-        try {
-            const ob = await root.Kalshi.getOrderbook(p.ticker);
-            yesAskCents = orderbookYesAskCents(ob);
-        } catch { /* skip */ }
-        if (yesAskCents == null) continue;
-
-        // To SELL into the book we hit the best YES BID (someone
-        // willing to buy YES from us). The bid is (100 - bestYesAsk_on_other_side)
-        // which the orderbook gives us as the yes side's best bid.
-        const yesBidCents = orderbookYesBidCents(await root.Kalshi.getOrderbook(p.ticker));
+        // Single orderbook fetch — was previously doing it TWICE
+        // (once for ask, once for bid) which doubled latency on
+        // every cash-out loop. One call, both extractions.
+        let ob = null;
+        try { ob = await root.Kalshi.getOrderbook(p.ticker); } catch { /* skip */ }
+        if (!ob) continue;
+        const yesBidCents = orderbookYesBidCents(ob);
         if (yesBidCents == null) continue;
         const profitPerContract = yesBidCents - entryCents;
 
-        if (profitPerContract < _state.settings.profit_take_cents) continue;
+        // Two independent cash-out triggers — whichever fires first
+        // wins. Both have to be a net WIN (no stop-loss here; that's
+        // the daily_loss_limit's job).
+        //
+        // 1) ABSOLUTE: live profit per contract >= profit_take_cents.
+        //    Default 20¢ — a comfortable lock-in for any size bet.
+        //
+        // 2) EV-CAPTURE: we've captured live_ev_take_pct of the edge
+        //    our model expected at fire time. Math:
+        //      edge_to_fair = (our_p × 100) - entry_cents
+        //      captured     = live_bid - entry_cents
+        //      fraction     = captured / edge_to_fair
+        //    Default 0.55 → "lock in once we're more than halfway to
+        //    our model's fair value." This is the win the user asked
+        //    for: when the market has moved in our favor and our
+        //    capital is tied up earning slower than a fresh edge
+        //    would, take the profit and let the next scan redeploy.
+        const fire = fireByTicker.get(p.ticker);
+        const ourPCents = (fire?.our_p != null) ? Math.round(fire.our_p * 100) : null;
+        const edgeToFair = (ourPCents != null) ? (ourPCents - entryCents) : null;
+        const captureFraction = (edgeToFair != null && edgeToFair > 0)
+            ? (yesBidCents - entryCents) / edgeToFair
+            : null;
+
+        const hitAbsolute = profitPerContract >= _state.settings.profit_take_cents;
+        const hitEvCapture = captureFraction != null
+            && captureFraction >= _state.settings.live_ev_take_pct
+            && profitPerContract > 0;
+
+        if (!hitAbsolute && !hitEvCapture) continue;
         // Already have a sell order resting?
         if (await hasOpenSellOrder(p.ticker)) continue;
 
@@ -592,10 +672,16 @@ async function runCashoutCheck() {
                 price:  yesBidCents,
                 action: "sell",
             });
+            const triggerTag = hitAbsolute && hitEvCapture
+                ? "+ev/+abs"
+                : hitAbsolute
+                ? "+abs"
+                : `+ev ${(captureFraction*100).toFixed(0)}%`;
             log("sell", `SELL ${qty}× ${p.ticker} YES @ ${yesBidCents}¢` +
-                ` (entry ${entryCents}¢, +${profitPerContract}¢/contract = $${((profitPerContract*qty)/100).toFixed(2)} profit)`,
-                { ticker: p.ticker, qty, yesBidCents, entryCents, profitPerContract, order: result });
-            toast(`Bot: sold ${qty}× ${p.ticker} +${profitPerContract}¢/contract`, "ok");
+                ` (entry ${entryCents}¢, +${profitPerContract}¢/contract = $${((profitPerContract*qty)/100).toFixed(2)} profit, trigger: ${triggerTag})`,
+                { ticker: p.ticker, qty, yesBidCents, entryCents,
+                  profitPerContract, captureFraction, order: result });
+            toast(`Bot: sold ${qty}× ${p.ticker} +${profitPerContract}¢/contract (${triggerTag})`, "ok");
         } catch (e) {
             log("err", `Sell failed for ${p.ticker}: ${e.message || e}`);
         }
@@ -620,6 +706,20 @@ function computeOpenExposureCents() {
         cents += qty * entry;
     }
     return cents;
+}
+
+// Stop sending orders Kalshi will reject for insufficient funds.
+// Reads cached balance (60s TTL inside kalshi.js) and compares to
+// the trade cost. Treats unknown balance (fetch failure) as
+// "trust but verify" — let the order go and surface Kalshi's error
+// naturally rather than freezing the bot when Kalshi is degraded.
+async function canAfford(costCents) {
+    if (!root.Kalshi || !root.Kalshi.getBalance) return true;
+    try {
+        const balance = await root.Kalshi.getBalance();
+        if (balance == null) return true;
+        return balance >= costCents;
+    } catch { return true; }
 }
 
 
@@ -798,8 +898,8 @@ async function renderOpenBetsPane() {
         if (fires.length) {
             return `
               ${statusBanner}
-              ${renderRecentSection(fires, mps, sourceTag,
-                  "Recently placed (no active Kalshi positions right now — these have already settled or been cashed out)")}
+              ${renderRecentSection(fires, mps, resting, sourceTag,
+                  "Recently placed — none of these currently show as a held position or resting order on Kalshi")}
             `;
         }
         return `
@@ -882,18 +982,22 @@ async function renderOpenBetsPane() {
           </table>
         </div>
       ` : ""}
-      ${fires.length ? renderRecentSection(fires, mps, sourceTag,
+      ${fires.length ? renderRecentSection(fires, mps, resting, sourceTag,
           "Recent activity — last 10 from your local bet log") : ""}
     `;
 }
 
 // Render the "recent activity" sub-table from the local fire log.
-// Each row marks whether the bet is still an active Kalshi position
-// (matched by ticker) or has already cleared. Caller passes the
-// sourceTag closure so source pills stay consistent with the rest
-// of the pane.
-function renderRecentSection(fires, mps, sourceTag, heading) {
-    const activeTickers = new Set(mps.map((p) => p.ticker));
+// State on each row is the BEST inference we can make from current
+// Kalshi data; we never assert "closed" because we can't actually
+// tell the difference between a settled position, a cashed-out
+// position, and a silently-failed order. The states we DO emit:
+//   HELD     — ticker is in current positions  (qty > 0)
+//   RESTING  — ticker is in current open orders
+//   PLACED   — neither; we only know we tried.  (default, neutral)
+function renderRecentSection(fires, mps, resting, sourceTag, heading) {
+    const activeTickers  = new Set(mps.map((p) => p.ticker));
+    const restingTickers = new Set((resting || []).map((o) => o.ticker));
     const rows = fires.slice(0, 10).map((f) => {
         let label;
         if (f.kind === "player_prop" && f.player) {
@@ -907,10 +1011,14 @@ function renderRecentSection(fires, mps, sourceTag, heading) {
         }
         const placedAt = f.placed_at ? new Date(f.placed_at) : null;
         const ago      = placedAt ? formatTimeAgo(placedAt) : "—";
-        const isOpen   = activeTickers.has(f.ticker);
-        const stateTag = isOpen
-            ? `<span class="bet-state bet-state-open">OPEN</span>`
-            : `<span class="bet-state bet-state-closed">CLOSED</span>`;
+        let stateTag;
+        if (activeTickers.has(f.ticker)) {
+            stateTag = `<span class="bet-state bet-state-held">HELD</span>`;
+        } else if (restingTickers.has(f.ticker)) {
+            stateTag = `<span class="bet-state bet-state-resting">RESTING</span>`;
+        } else {
+            stateTag = `<span class="bet-state bet-state-placed">PLACED</span>`;
+        }
         const edge = f.edge_pp != null ? `${f.edge_pp.toFixed(1)}pp edge` : "";
         return `
           <tr>
@@ -1042,6 +1150,13 @@ function renderBotPane() {
             <small>Sell winners at +N¢ per contract</small>
           </label>
           <label>
+            <span>EV-capture sell (% of edge)</span>
+            <input type="number" min="20" max="95" step="5"
+                   value="${Math.round(s.live_ev_take_pct * 100)}"
+                   data-bot-setting-pct="live_ev_take_pct">
+            <small>Also sell when market moves N% of the way to our model's fair value · frees capital to redeploy</small>
+          </label>
+          <label>
             <span>Daily loss limit ($)</span>
             <input type="number" min="1" max="${HARD_CAPS.daily_loss_cents_max/100}" step="1"
                    value="${(s.daily_loss_limit_cents/100).toFixed(0)}"
@@ -1131,6 +1246,15 @@ function bindBotPaneHandlers(overlay) {
         inp.addEventListener("change", () => {
             const k = inp.dataset.botSettingDollar;
             const v = Math.round(parseFloat(inp.value) * 100);
+            _state.settings = clampSettings({ ..._state.settings, [k]: v });
+            persistSettings();
+            refreshDrawerContent();
+        });
+    });
+    overlay.querySelectorAll("[data-bot-setting-pct]").forEach((inp) => {
+        inp.addEventListener("change", () => {
+            const k = inp.dataset.botSettingPct;
+            const v = parseFloat(inp.value) / 100;
             _state.settings = clampSettings({ ..._state.settings, [k]: v });
             persistSettings();
             refreshDrawerContent();
