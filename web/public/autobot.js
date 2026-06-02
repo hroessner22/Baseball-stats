@@ -1716,10 +1716,126 @@ function bindDrawer(overlay) {
                 p.classList.toggle("active", p.dataset.pane === tab));
         });
     });
+    // EMERGENCY BUTTON DELEGATION — kill-banner buttons live inside
+    // the bot pane which gets re-rendered every 12s by the auto-
+    // refresh. If a click lands on a button mid-rerender the direct
+    // listener can be detached. Delegate from the overlay (stable
+    // across rerenders) so clicks always fire.
+    overlay.addEventListener("click", (e) => {
+        const sellAllBtn = e.target.closest("[data-bot-emergency-sellall]");
+        if (sellAllBtn) {
+            e.preventDefault();
+            handleEmergencySellAll(sellAllBtn);
+            return;
+        }
+        const cancelAllBtn = e.target.closest("[data-bot-emergency-cancel]");
+        if (cancelAllBtn) {
+            e.preventDefault();
+            handleEmergencyCancelAll(cancelAllBtn);
+            return;
+        }
+    });
     const onKey = (e) => {
         if (e.key === "Escape") { closeDrawer(); document.removeEventListener("keydown", onKey); }
     };
     document.addEventListener("keydown", onKey);
+}
+
+async function handleEmergencySellAll(btn) {
+    if (!confirm(
+        "Sell EVERY held position at the current best bid for that side?\n\n" +
+        "This is the nuclear-exit. Thin markets may pay you very little, but " +
+        "you'll be flat. Existing resting orders are NOT touched — use the " +
+        "other button for those."
+    )) return;
+    btn.disabled = true;
+    btn.textContent = "Selling…";
+    try {
+        if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
+            toast("Kalshi not connected — can't sell", "err");
+            btn.disabled = false;
+            btn.textContent = "Sell ALL positions at market bid";
+            return;
+        }
+        const data = await root.Kalshi.getPositions();
+        const mps  = (data?.market_positions || []).filter((p) => (p.position || 0) !== 0);
+        if (!mps.length) {
+            toast("No held positions to sell", "ok");
+            btn.disabled = false;
+            btn.textContent = "Sell ALL positions at market bid";
+            return;
+        }
+        let sold = 0, failed = 0, noBid = 0;
+        for (const p of mps) {
+            const heldSide = p.position > 0 ? "yes" : "no";
+            const qty      = Math.abs(p.position);
+            try {
+                const ob  = await root.Kalshi.getOrderbook(p.ticker);
+                const bid = heldSide === "yes"
+                    ? orderbookYesBidCents(ob)
+                    : orderbookNoBidCents(ob);
+                if (bid == null || bid < 1) {
+                    log("err", `Sell-all skipped ${p.ticker} ${heldSide.toUpperCase()}: no bid`);
+                    noBid++;
+                    continue;
+                }
+                await root.Kalshi.placeOrder({
+                    ticker: p.ticker, side: heldSide, count: qty, price: bid, action: "sell",
+                });
+                log("sell", `Sell-all: ${qty}× ${p.ticker} ${heldSide.toUpperCase()} @ ${bid}¢`);
+                sold++;
+            } catch (err) {
+                log("err", `Sell-all failed ${p.ticker}: ${err.message || err}`);
+                failed++;
+            }
+        }
+        const msg = `Sold ${sold}/${mps.length}` + (noBid ? `, ${noBid} skipped (no bid)` : "") + (failed ? `, ${failed} failed` : "");
+        toast(msg, sold === mps.length ? "ok" : "err");
+        log("bot", `Emergency sell-all: ${msg}`);
+        btn.disabled = false;
+        btn.textContent = "Sell ALL positions at market bid";
+        refreshDrawerContent();
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Sell ALL positions at market bid";
+        toast(`Sell-all failed: ${err.message || err}`, "err");
+    }
+}
+
+async function handleEmergencyCancelAll(btn) {
+    if (!confirm("Cancel EVERY resting order on Kalshi right now? Existing filled positions are NOT touched.")) return;
+    btn.disabled = true;
+    btn.textContent = "Cancelling…";
+    try {
+        if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
+            toast("Kalshi not connected — can't cancel", "err");
+            btn.disabled = false;
+            btn.textContent = "Cancel ALL resting orders";
+            return;
+        }
+        const orders = await root.Kalshi.getOpenOrders();
+        const cancellable = (orders || []).filter((o) => o.id);
+        if (!cancellable.length) {
+            toast("No resting orders to cancel", "ok");
+            btn.disabled = false;
+            btn.textContent = "Cancel ALL resting orders";
+            return;
+        }
+        let ok = 0, fail = 0;
+        for (const o of cancellable) {
+            try { await root.Kalshi.cancelOrder(o.id); ok++; }
+            catch { fail++; }
+        }
+        log("cancel", `Emergency cancel: ${ok} cancelled, ${fail} failed (out of ${cancellable.length})`);
+        toast(`Cancelled ${ok}/${cancellable.length} resting orders`, ok === cancellable.length ? "ok" : "err");
+        btn.disabled = false;
+        btn.textContent = "Cancel ALL resting orders";
+        refreshDrawerContent();
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Cancel ALL resting orders";
+        toast(`Emergency cancel failed: ${err.message || err}`, "err");
+    }
 }
 
 async function refreshDrawerContent() {
