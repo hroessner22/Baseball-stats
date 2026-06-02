@@ -322,6 +322,7 @@ function shapeSide(side, probable) {
     let pitcherId = pitcherIds[0] || probable?.id || null;
     let pitcherBf = 0;
     let pitcherPitches = 0;
+    let pitcherSo = 0;
     let pitcherName = null;
     if (pitcherId) {
         const pRow = players[`ID${pitcherId}`];
@@ -331,6 +332,10 @@ function shapeSide(side, probable) {
         // being pulled, regardless of how many BF the static
         // PA_PER_STARTING_PITCHER constant would predict.
         pitcherPitches = pRow?.stats?.pitching?.pitchesThrown || 0;
+        // Strikeouts already recorded — the bot uses this to refuse
+        // K-prop bets where the threshold has already been met
+        // (e.g. 'over 5 K' when he already has 6).
+        pitcherSo = pRow?.stats?.pitching?.strikeOuts || 0;
         pitcherName = pRow?.person?.fullName || probable?.fullName || null;
     } else if (probable?.fullName) {
         pitcherName = probable.fullName;
@@ -355,6 +360,16 @@ function shapeSide(side, probable) {
             name:     p.person?.fullName,
             order,
             pa_taken: b.plateAppearances || 0,
+            // Live in-game accounting — the bot reads these to refuse
+            // bets on thresholds that have already been crossed
+            // (e.g. NO 1+ HR after he just hit one). Without these the
+            // model can lag by a scan tick and trade against an already-
+            // settled outcome.
+            hits:        b.hits        || 0,
+            doubles:     b.doubles     || 0,
+            triples:     b.triples     || 0,
+            home_runs:   b.homeRuns    || 0,
+            strikeouts:  b.strikeOuts  || 0,
         });
     }
     // Keep just one player per lineup spot — the starter. Pinch hitters
@@ -373,6 +388,7 @@ function shapeSide(side, probable) {
         pitcher_name:   pitcherName,
         pitcher_bf:     pitcherBf,
         pitcher_pitches: pitcherPitches,
+        pitcher_strikeouts: pitcherSo,
         batters:        Array.from(byOrder.values()).sort((a, b) => a.order - b.order),
     };
 }

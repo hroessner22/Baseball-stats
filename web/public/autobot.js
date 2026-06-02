@@ -556,6 +556,23 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
 
+        // 4) THRESHOLD-ALREADY-CROSSED guard. User flag: 'You took
+        //    the Wenceel under right after he hit a homer.' Cause:
+        //    market YES = ~99¢ post-event, market NO = ~1¢, our
+        //    model's tail probability hasn't refreshed to reflect
+        //    the realized HR, so it still says 92% NO. The "edge"
+        //    is the model lagging the event, not actual mispricing.
+        //
+        //    Refuse to fire when the player's REALIZED stat already
+        //    crosses (or meets) the threshold. For NO bets that's
+        //    a guaranteed loss; for YES bets it's a guaranteed win
+        //    with no upside left to pay for. Both cases, skip.
+        const liveStat = liveStatForBet(modelProps, mlbam, parsed.stat);
+        if (liveStat != null && liveStat >= parsed.threshold) {
+            log("skip", `Already crossed — ${parsed.player} has ${liveStat} ${parsed.stat} ≥ threshold ${parsed.threshold}; ${side.toUpperCase()} ${side === "no" ? "can't win" : "already won, no upside"}`);
+            continue;
+        }
+
         // Determine opposing pitcher for hitter props (used by H2H
         // factor); the K-prop path already targets the SAME pitcher.
         let oppPitcherId = null;
@@ -1402,6 +1419,49 @@ async function getLiveGameState(gamePk) {
         } catch { return null; }
     }
     return data?.game_state || null;
+}
+
+// Read the player's REALIZED in-game stat for the bet's threshold.
+// modelProps.lineups carries per-batter hits/HR/2B/3B/K and per-
+// pitcher strikeouts. We translate the bet's `stat` field into the
+// right field on the right entity (pitcher for strikeouts, batter
+// for hits/HR/TB). Returns null when the player isn't found in
+// either lineup (manual prop / pinch hitter / pregame).
+function liveStatForBet(modelProps, playerMlbam, stat) {
+    if (!modelProps?.lineups || !playerMlbam) return null;
+    const want = String(playerMlbam);
+    // Pitcher prop — strikeouts always belong to the bet's player
+    // (the pitcher himself). Check both sides for safety.
+    if (stat === "strikeouts") {
+        for (const sk of ["home", "away"]) {
+            const lp = modelProps.lineups[sk];
+            if (!lp) continue;
+            if (String(lp.pitcher_id) === want) {
+                return lp.pitcher_strikeouts ?? 0;
+            }
+        }
+        return null;
+    }
+    // Hitter prop — find the batter in either lineup, then read
+    // the field. Total bases is computed from singles + 2×2B +
+    // 3×3B + 4×HR using the standard identity
+    //   TB = hits + 2B + 2*3B + 3*HR
+    for (const sk of ["home", "away"]) {
+        const lp = modelProps.lineups[sk];
+        if (!lp?.batters) continue;
+        const b = lp.batters.find((x) => String(x.mlbam) === want);
+        if (!b) continue;
+        if (stat === "hits")        return b.hits        ?? 0;
+        if (stat === "home_runs")   return b.home_runs   ?? 0;
+        if (stat === "total_bases") {
+            return (b.hits || 0)
+                 + (b.doubles || 0)
+                 + 2 * (b.triples || 0)
+                 + 3 * (b.home_runs || 0);
+        }
+        return null;
+    }
+    return null;
 }
 
 async function getLivePitcherInfo(gamePk, playerName) {
