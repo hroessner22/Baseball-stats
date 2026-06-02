@@ -752,22 +752,58 @@ async function renderOpenBetsPane() {
     const resting = (orders || []);
     const fires   = getFires();
 
-    // Build a map ticker → most-recent bot fire so we can both tag the
-    // row's source AND surface the edge / model probabilities that
-    // triggered it. Manual fills don't pass through recordFiredBet, so
-    // anything NOT in this map is by elimination a user-placed bet.
-    const botByTicker = new Map();
+    // Build a map ticker → most-recent bet record so we can both tag
+    // the row's source AND surface the edge / model probabilities
+    // that triggered it. Records without a source field were written
+    // before manual logging existed — treat those as bot fires.
+    const fireByTicker = new Map();
     for (const f of fires) {
         if (!f.ticker) continue;
-        if (!botByTicker.has(f.ticker)) botByTicker.set(f.ticker, f);
+        if (!fireByTicker.has(f.ticker)) fireByTicker.set(f.ticker, f);
     }
 
+    // Source helpers shared by all rendering paths below.
+    const sourceOf = (rec) => (rec?.source === "manual" ? "user" : "bot");
+    const sourceTag = (rec, extra = "") => {
+        if (sourceOf(rec) === "user") {
+            return `<span class="bet-src bet-src-user" title="Placed manually${extra ? " · " + extra : ""}">YOU</span>`;
+        }
+        return `<span class="bet-src bet-src-bot" title="Placed by bot${extra ? " · " + extra : ""}">BOT</span>`;
+    };
+
     // Counts for the section subtitle.
-    const botCount  = mps.filter((p) => botByTicker.has(p.ticker)).length;
+    const botCount  = mps.filter((p) => sourceOf(fireByTicker.get(p.ticker)) === "bot").length;
     const userCount = mps.length - botCount;
 
+    // Top-of-pane status banner — appears whether or not the user has
+    // active positions. Surfaces what we know: connection state, a
+    // raw position count straight from Kalshi (so a "0 positions but
+    // I placed bets" case is visible as data, not a missing UI), and
+    // how many bet records we have locally.
+    const statusBanner = `
+      <div class="bot-status-banner">
+        <span class="bot-status-row">
+          <span class="bot-status-dot bot-status-ok"></span>
+          Kalshi: connected · ${mps.length} open position${mps.length === 1 ? "" : "s"}, ${resting.length} resting order${resting.length === 1 ? "" : "s"} · ${fires.length} bet${fires.length === 1 ? "" : "s"} in local history
+        </span>
+      </div>
+    `;
+
     if (!mps.length && !resting.length) {
+        // Even with no Kalshi-reported active positions, surface
+        // recently-placed bets from the local log. This is the
+        // case where the user says "I placed bets, why don't I see
+        // them" — Kalshi may have settled / cashed out a position
+        // off the list while the record persists locally.
+        if (fires.length) {
+            return `
+              ${statusBanner}
+              ${renderRecentSection(fires, mps, sourceTag,
+                  "Recently placed (no active Kalshi positions right now — these have already settled or been cashed out)")}
+            `;
+        }
         return `
+          ${statusBanner}
           <div class="bot-empty">
             <p>No active bets right now.</p>
             <p class="bot-empty-sub">Every bet — bot or manual — shows up here the moment it fills.</p>
@@ -789,13 +825,11 @@ async function renderOpenBetsPane() {
             ? ((live - entry) * qty / 100)
             : null;
         const plCls = pl == null ? "" : pl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
-        const fire  = botByTicker.get(p.ticker);
-        const srcTag = fire
-            ? `<span class="bet-src bet-src-bot" title="Placed by bot${fire.edge_pp != null ? ` · ${fire.edge_pp.toFixed(1)}pp edge` : ""}">BOT</span>`
-            : `<span class="bet-src bet-src-user" title="Placed manually">YOU</span>`;
+        const fire  = fireByTicker.get(p.ticker);
+        const extra = fire?.edge_pp != null ? `${fire.edge_pp.toFixed(1)}pp edge` : "";
         return `
           <tr>
-            <td>${srcTag}</td>
+            <td>${sourceTag(fire, extra)}</td>
             <td class="bot-ticker">${escapeText(p.ticker)}</td>
             <td>${qty}× YES</td>
             <td>${entry}¢</td>
@@ -810,13 +844,10 @@ async function renderOpenBetsPane() {
         `;
     }).join("");
     const orderRows = resting.map((o) => {
-        const fire   = botByTicker.get(o.ticker);
-        const srcTag = fire
-            ? `<span class="bet-src bet-src-bot">BOT</span>`
-            : `<span class="bet-src bet-src-user">YOU</span>`;
+        const fire = fireByTicker.get(o.ticker);
         return `
           <tr>
-            <td>${srcTag}</td>
+            <td>${sourceTag(fire)}</td>
             <td class="bot-ticker">${escapeText(o.ticker)}</td>
             <td>${escapeText(o.action || "?")} ${escapeText(o.side || "?")}</td>
             <td>${o.yes_price ?? o.no_price ?? "?"}¢</td>
@@ -832,6 +863,7 @@ async function renderOpenBetsPane() {
         : "";
 
     return `
+      ${statusBanner}
       ${mps.length ? `
         <div class="bot-section">
           <h3>Active positions ${subtitle ? `<span class="bot-section-sub">${subtitle}</span>` : ""}</h3>
@@ -850,7 +882,72 @@ async function renderOpenBetsPane() {
           </table>
         </div>
       ` : ""}
+      ${fires.length ? renderRecentSection(fires, mps, sourceTag,
+          "Recent activity — last 10 from your local bet log") : ""}
     `;
+}
+
+// Render the "recent activity" sub-table from the local fire log.
+// Each row marks whether the bet is still an active Kalshi position
+// (matched by ticker) or has already cleared. Caller passes the
+// sourceTag closure so source pills stay consistent with the rest
+// of the pane.
+function renderRecentSection(fires, mps, sourceTag, heading) {
+    const activeTickers = new Set(mps.map((p) => p.ticker));
+    const rows = fires.slice(0, 10).map((f) => {
+        let label;
+        if (f.kind === "player_prop" && f.player) {
+            const stat = shortStatLabel(f.stat);
+            label = `${f.player} ${f.threshold}+ ${stat}`;
+        } else if (f.bet_team && f.matchup) {
+            label = `${f.bet_team} ML · ${f.matchup}`;
+        } else {
+            const t = f.ticker || "";
+            label = t.length > 28 ? t.slice(0, 28) + "…" : t;
+        }
+        const placedAt = f.placed_at ? new Date(f.placed_at) : null;
+        const ago      = placedAt ? formatTimeAgo(placedAt) : "—";
+        const isOpen   = activeTickers.has(f.ticker);
+        const stateTag = isOpen
+            ? `<span class="bet-state bet-state-open">OPEN</span>`
+            : `<span class="bet-state bet-state-closed">CLOSED</span>`;
+        const edge = f.edge_pp != null ? `${f.edge_pp.toFixed(1)}pp edge` : "";
+        return `
+          <tr>
+            <td>${sourceTag(f, edge)}</td>
+            <td>${escapeText(label)}</td>
+            <td>${f.contracts || 1}× @ ${f.price_cents}¢</td>
+            <td>${stateTag}</td>
+            <td class="bot-time-ago">${ago}</td>
+          </tr>
+        `;
+    }).join("");
+    return `
+      <div class="bot-section">
+        <h3>Recently placed <span class="bot-section-sub">${escapeText(heading)}</span></h3>
+        <table class="bot-table bot-table-history">
+          <thead><tr><th>By</th><th>Bet</th><th>Size</th><th>State</th><th>When</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+}
+
+function shortStatLabel(s) {
+    switch (s) {
+        case "home_runs":   return "HR";
+        case "total_bases": return "TB";
+        case "hits":        return "H";
+        case "strikeouts":  return "K";
+        default:            return String(s || "").toUpperCase();
+    }
+}
+function formatTimeAgo(d) {
+    const sec = Math.round((Date.now() - d.getTime()) / 1000);
+    if (sec < 60)        return `${sec}s ago`;
+    if (sec < 3600)      return `${Math.round(sec/60)}m ago`;
+    if (sec < 86400)     return `${Math.round(sec/3600)}h ago`;
+    return `${Math.round(sec/86400)}d ago`;
 }
 
 function bindBetsPaneHandlers(overlay) {

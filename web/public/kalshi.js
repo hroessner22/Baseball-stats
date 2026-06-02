@@ -785,6 +785,21 @@ async function submitOrder(form, ticker, side, price, count, close, mode) {
     submit.textContent = mode === "take" ? "Taking…" : "Placing…";
     try {
         const res = await placeOrder({ ticker, side, count, price });
+        // Persist a record of THIS manual bet to the same log the
+        // bot writes to, so the Active Bets drawer + bottom strip
+        // can surface it even when Kalshi's positions endpoint
+        // hasn't propagated the fill yet (or when the position
+        // has already settled and dropped off).
+        recordPlacedBet({
+            kind:        "manual",
+            source:      "manual",
+            ticker,
+            side,
+            contracts:   count,
+            price_cents: price,
+            placed_at:   new Date().toISOString(),
+            order_response: res,
+        });
         close();
         cachedBalanceCents = null;
         cachedBalanceFetchedAt = 0;
@@ -799,6 +814,21 @@ async function submitOrder(form, ticker, side, price, count, close, mode) {
         submit.disabled = false;
         submit.textContent = originalText;
     }
+}
+
+// Append a bet record to the shared local log so the Active Bets
+// surfaces (drawer, strip) can render it. Same key + cap as
+// autobot.js's recordFiredBet — both writers append to one list.
+// Bot fires written before this lacked a `source` field; readers
+// treat the absence as source="bot" for backward compat.
+const LS_PLACED_BETS = "diamond_context_bot_fires";
+function recordPlacedBet(payload) {
+    let arr;
+    try { arr = JSON.parse(localStorage.getItem(LS_PLACED_BETS) || "[]"); }
+    catch { arr = []; }
+    arr.unshift(payload);
+    if (arr.length > 500) arr.length = 500;
+    try { localStorage.setItem(LS_PLACED_BETS, JSON.stringify(arr)); } catch {}
 }
 
 

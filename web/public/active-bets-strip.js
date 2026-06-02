@@ -68,54 +68,123 @@ async function refresh() {
                   // shouldn't blank the strip.
     }
     const mps = (positions?.market_positions || []).filter((p) => (p.position || 0) > 0);
-    if (!mps.length) { hide(); return; }
-
-    // Bot-fire lookup by ticker — manual fills don't pass through
-    // recordFiredBet, so their absence here is the YOU tag.
     const fires = getFires();
     const fireMap = new Map();
     for (const f of fires) {
         if (f.ticker && !fireMap.has(f.ticker)) fireMap.set(f.ticker, f);
     }
 
-    const enriched = await Promise.all(mps.map(async (p) => {
-        const fire  = fireMap.get(p.ticker) || null;
-        const entry = p.average_yes_price ?? p.average_cost_cents ?? 0;
-        const qty   = p.position;
-        let live = null;
-        try {
-            const ob = await root.Kalshi.getOrderbook(p.ticker);
-            live = orderbookYesBidCents(ob);
-        } catch { /* fall through */ }
-        const pl = (live != null && qty > 0) ? ((live - entry) * qty / 100) : null;
+    // If Kalshi shows active positions, that's the source of truth —
+    // render those as active chips. Otherwise fall back to the local
+    // bet log: show the last few placed bets as "recent" chips so
+    // the user still sees something whether Kalshi has propagated
+    // the fill yet or whether the position has already settled.
+    let mode = "active";
+    let entries;
+    if (mps.length) {
+        entries = await Promise.all(mps.map(async (p) => {
+            const fire  = fireMap.get(p.ticker) || null;
+            const entry = p.average_yes_price ?? p.average_cost_cents ?? 0;
+            const qty   = p.position;
+            let live = null;
+            try {
+                const ob = await root.Kalshi.getOrderbook(p.ticker);
+                live = orderbookYesBidCents(ob);
+            } catch { /* fall through */ }
+            const pl = (live != null && qty > 0) ? ((live - entry) * qty / 100) : null;
+            const progress = await computeProgress(fire);
+            return { kind: "position", p, fire, live, entry, qty, pl, progress };
+        }));
+    } else if (fires.length) {
+        mode = "recent";
+        const top = fires.slice(0, 6);
+        entries = await Promise.all(top.map(async (f) => {
+            const progress = await computeProgress(f);
+            return { kind: "recent", fire: f, progress };
+        }));
+    } else {
+        hide();
+        return;
+    }
 
-        let progress = null;
-        if (fire && fire.kind === "player_prop" && fire.game_pk) {
-            const box = await getBoxscoreCached(fire.game_pk);
-            const cur = box ? extractPlayerStat(box, fire.player, fire.stat) : null;
-            if (cur != null && fire.threshold) {
-                progress = {
-                    current: cur,
-                    target:  fire.threshold,
-                    pct:     Math.min(100, (cur / fire.threshold) * 100),
-                    hit:     cur >= fire.threshold,
-                };
-            }
-        }
-        return { p, fire, live, entry, qty, pl, progress };
-    }));
+    const titleText = mode === "active"
+        ? `ACTIVE BETS · ${entries.length}`
+        : `RECENT · ${entries.length}`;
 
     stripEl.innerHTML = `
-      <span class="abs-title">ACTIVE BETS · ${enriched.length}</span>
-      <div class="abs-chips">${enriched.map(renderChip).join("")}</div>
+      <span class="abs-title">${titleText}</span>
+      <div class="abs-chips">${entries.map((e) => e.kind === "position" ? renderChip(e) : renderRecentChip(e)).join("")}</div>
       <button class="abs-close" aria-label="Hide strip" title="Hide until next bet">×</button>
     `;
     bindClose();
     show();
 }
 
+// Compute the DK-style progress payload for a player-prop fire.
+// Reused by both the active and recent chip renderers.
+async function computeProgress(fire) {
+    if (!fire || fire.kind !== "player_prop" || !fire.game_pk) return null;
+    const box = await getBoxscoreCached(fire.game_pk);
+    const cur = box ? extractPlayerStat(box, fire.player, fire.stat) : null;
+    if (cur == null || !fire.threshold) return null;
+    return {
+        current: cur,
+        target:  fire.threshold,
+        pct:     Math.min(100, (cur / fire.threshold) * 100),
+        hit:     cur >= fire.threshold,
+    };
+}
+
+// Render a chip for a recent-but-no-longer-active bet from the
+// local log. Looks like an active chip but tagged HISTORY in place
+// of the dollar P/L.
+function renderRecentChip({ fire, progress }) {
+    const isManual = fire?.source === "manual";
+    const srcTag = isManual
+        ? `<span class="abs-src abs-src-user">YOU</span>`
+        : `<span class="abs-src abs-src-bot">BOT</span>`;
+
+    let label, progressEl = "";
+    if (fire?.kind === "player_prop") {
+        label = `${shortName(fire.player)} ${fire.threshold}+ ${shortStat(fire.stat)}`;
+        if (progress) {
+            const fillCls = progress.hit ? "abs-progress-bar hit" : "abs-progress-bar";
+            progressEl = `
+              <span class="abs-progress" title="${progress.current} of ${progress.target} ${shortStat(fire.stat)}">
+                <span class="${fillCls}" style="width: ${progress.pct.toFixed(1)}%"></span>
+              </span>
+              <span class="abs-progress-text">${progress.current}/${progress.target}</span>
+            `;
+        }
+    } else if (fire?.bet_team) {
+        label = `${fire.bet_team} ML`;
+    } else {
+        const t = fire?.ticker || "";
+        label = t.length > 24 ? t.slice(0, 24) + "…" : t;
+    }
+    const gamePk = fire?.game_pk;
+    const href   = gamePk ? `#game/${gamePk}/markets` : "#";
+
+    return `
+      <a class="abs-chip abs-chip-recent ${progress?.hit ? "is-hit" : ""}"
+         href="${href}"
+         ${gamePk ? "" : "tabindex='-1'"}>
+        ${srcTag}
+        <span class="abs-label">${escapeText(label)}</span>
+        ${progressEl}
+        <span class="abs-price">${fire.price_cents}¢</span>
+        <span class="abs-history-tag">HIST</span>
+        <span class="abs-arrow">➜</span>
+      </a>
+    `;
+}
+
 function renderChip({ p, fire, live, entry, qty, pl, progress }) {
-    const srcTag = fire
+    // Manual bets carry source="manual"; bot fires either set
+    // source="bot" or have no source field (backward compat with
+    // pre-source-field log entries).
+    const isManual = fire?.source === "manual";
+    const srcTag = (fire && !isManual)
         ? `<span class="abs-src abs-src-bot">BOT</span>`
         : `<span class="abs-src abs-src-user">YOU</span>`;
     const plCls  = pl == null ? "" : pl >= 0 ? "abs-pl-pos" : "abs-pl-neg";
