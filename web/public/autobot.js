@@ -1,3 +1,19 @@
+// ═════════════════════════════════════════════════════════════════
+// GLOBAL KILL SWITCH — set true to disable ALL bot operations
+// regardless of localStorage settings. Set 2026-06-02 in response
+// to user 'TURN THE BOT OFF. PULL ALL BETS RIGHT NOW.'
+//
+// Effect when true:
+//   - enable() refuses (forces persisted setting to false)
+//   - runScan() / runCashoutCheck() bail before any work
+//   - placeOrder is never invoked from the bot path
+//   - Drawer surfaces a banner so the user can see the kill is on
+//
+// To re-enable bot trading: flip this constant to `false`, deploy,
+// hard-refresh. Local settings are preserved through the kill.
+// ═════════════════════════════════════════════════════════════════
+const BOT_KILLED = true;
+
 // DIAMOND:CONTEXT auto-bet bot.
 //
 // ═════════════════════════════════════════════════════════════════
@@ -266,6 +282,16 @@ function clearLog() {
 // ── Bot lifecycle ─────────────────────────────────────────────────
 
 function enable() {
+    if (BOT_KILLED) {
+        // Hard kill — force-persist OFF so a refresh / reload also
+        // sees the disabled state. Toast loud so the user sees it.
+        _state.settings.enabled = false;
+        persistSettings();
+        stopTimers();
+        toast("Bot is globally killed — cannot enable", "err");
+        log("bot", "Bot enable REFUSED — global kill switch is on");
+        return false;
+    }
     if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
         toast("Connect Kalshi first (top-right pill)", "err");
         return false;
@@ -300,6 +326,7 @@ function stopTimers() {
 // ── Scan loop ─────────────────────────────────────────────────────
 
 async function runScan() {
+    if (BOT_KILLED) return;             // global kill — never scan
     if (!_state.settings.enabled) return;
     if (_state.isScanning) return;
     _state.isScanning = true;
@@ -2966,15 +2993,39 @@ function renderBotPane() {
         ? `${Math.round((Date.now() - _state.lastScanAt)/1000)}s ago`
         : "never";
     const logEntries = getLog();
+    const killBanner = BOT_KILLED
+        ? `
+          <div class="bot-kill-banner">
+            <div class="bot-kill-title">⚠️ BOT IS GLOBALLY KILLED</div>
+            <div class="bot-kill-body">
+              No new bets will be placed regardless of toggle state.
+              Cash-out checks continue so existing positions can still
+              lock in profit. Use the buttons below to flat the book
+              if needed.
+            </div>
+            <div class="bot-kill-actions">
+              <button class="bot-emergency-cancel" data-bot-emergency-cancel>
+                Cancel ALL resting orders
+              </button>
+              <a class="bot-emergency-kalshi"
+                 href="https://kalshi.com/portfolio"
+                 target="_blank" rel="noopener">
+                Open Kalshi portfolio →
+              </a>
+            </div>
+          </div>
+        `
+        : "";
     return `
+      ${killBanner}
       <div class="bot-section">
         <div class="bot-toggle-row">
           <label class="bot-toggle">
-            <input type="checkbox" ${s.enabled ? "checked" : ""} data-bot-toggle>
+            <input type="checkbox" ${s.enabled ? "checked" : ""} data-bot-toggle ${BOT_KILLED ? "disabled" : ""}>
             <span class="bot-toggle-slider"></span>
-            <span class="bot-toggle-label">${s.enabled ? "Bot is ON" : "Bot is OFF"}</span>
+            <span class="bot-toggle-label">${BOT_KILLED ? "Bot is KILLED" : (s.enabled ? "Bot is ON" : "Bot is OFF")}</span>
           </label>
-          ${s.enabled
+          ${s.enabled && !BOT_KILLED
             ? `<button class="bot-kill" data-bot-kill>STOP NOW</button>`
             : ""}
         </div>
@@ -3177,6 +3228,36 @@ function bindBotPaneHandlers(overlay) {
             persistSettings();
             refreshDrawerContent();
         });
+    });
+    overlay.querySelector("[data-bot-emergency-cancel]")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        if (!confirm("Cancel EVERY resting order on Kalshi right now? Existing filled positions are NOT touched.")) return;
+        btn.disabled = true;
+        btn.textContent = "Cancelling…";
+        try {
+            const orders = await root.Kalshi.getOpenOrders();
+            const cancellable = (orders || []).filter((o) => o.id);
+            if (!cancellable.length) {
+                toast("No resting orders to cancel", "ok");
+                btn.disabled = false;
+                btn.textContent = "Cancel ALL resting orders";
+                return;
+            }
+            let ok = 0, fail = 0;
+            for (const o of cancellable) {
+                try { await root.Kalshi.cancelOrder(o.id); ok++; }
+                catch { fail++; }
+            }
+            log("cancel", `Emergency cancel: ${ok} cancelled, ${fail} failed (out of ${cancellable.length})`);
+            toast(`Cancelled ${ok}/${cancellable.length} resting orders`, ok === cancellable.length ? "ok" : "err");
+            btn.disabled = false;
+            btn.textContent = "Cancel ALL resting orders";
+            refreshDrawerContent();
+        } catch (err) {
+            btn.disabled = false;
+            btn.textContent = "Cancel ALL resting orders";
+            toast(`Emergency cancel failed: ${err.message || err}`, "err");
+        }
     });
     overlay.querySelector("[data-bot-reset-recos]")?.addEventListener("click", () => {
         if (!confirm("Reset every setting on this panel to recommended defaults? (Bot on/off state is preserved.)")) return;
@@ -3521,18 +3602,27 @@ window.addEventListener("bot-notification-change", () => {
     }
 });
 
+// HARD KILL at load. If BOT_KILLED is on, ANY localStorage value
+// that says enabled=true gets forced back to false on every refresh.
+// Prevents 'bot keeps placing bets even after I stopped' for users
+// who closed the tab without explicitly disabling.
+if (BOT_KILLED && _state.settings.enabled) {
+    _state.settings.enabled = false;
+    persistSettings();
+}
+
 // Render the launcher on DOMContentLoaded (or now if already past).
 if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
         renderLauncher();
-        if (_state.settings.enabled) {
+        if (_state.settings.enabled && !BOT_KILLED) {
             startTimers();
             log("bot", "Resumed (session persisted)");
         }
     });
 } else {
     renderLauncher();
-    if (_state.settings.enabled) {
+    if (_state.settings.enabled && !BOT_KILLED) {
         startTimers();
         log("bot", "Resumed (session persisted)");
     }
