@@ -395,16 +395,33 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const our_p_yes = ladder[parsed.threshold];
         if (our_p_yes == null) continue;
 
-        // Live YES ask for THIS Kalshi ticker.
+        // Live YES + NO ask for THIS Kalshi ticker. We can bet
+        // EITHER side — whichever has the bigger edge wins.
         const idMatch = String(m.outcomes?.[0]?.id || "").match(/^(.*):(yes|no)$/i);
         const ticker = idMatch ? idMatch[1] : (m.raw_market_id || "");
         if (!ticker) continue;
         const ob = await root.Kalshi.getOrderbook(ticker);
         const yesAskCents = orderbookYesAskCents(ob);
-        if (yesAskCents == null) continue;
+        const noAskCents  = orderbookNoAskCents(ob);
+        if (yesAskCents == null && noAskCents == null) continue;
 
-        const market_p = yesAskCents / 100;
-        const edgePP = (our_p_yes - market_p) * 100;
+        // Compute edge on BOTH sides — the YES side bets the over,
+        // the NO side bets the under. our_p_no = 1 - our_p_yes.
+        const yes_market_p = yesAskCents != null ? yesAskCents / 100 : null;
+        const no_market_p  = noAskCents  != null ? noAskCents  / 100 : null;
+        const yes_edge_pp  = (yes_market_p != null) ? (our_p_yes - yes_market_p) * 100 : -Infinity;
+        const no_our_p     = 1 - our_p_yes;
+        const no_edge_pp   = (no_market_p  != null) ? (no_our_p   - no_market_p)  * 100 : -Infinity;
+
+        // Pick the side with the bigger edge. Threshold check is
+        // applied AFTER the pick so the scoring/logging path knows
+        // which side we were considering.
+        const chooseNo = no_edge_pp > yes_edge_pp;
+        const side          = chooseNo ? "no"          : "yes";
+        const askCents      = chooseNo ? noAskCents    : yesAskCents;
+        const market_p      = chooseNo ? no_market_p   : yes_market_p;
+        const our_p         = chooseNo ? no_our_p      : our_p_yes;
+        const edgePP        = chooseNo ? no_edge_pp    : yes_edge_pp;
 
         // Determine opposing pitcher for hitter props (used by H2H
         // factor); the K-prop path already targets the SAME pitcher.
@@ -426,10 +443,10 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             game_pk:       g.game_pk,
             matchup:       `${g.away}@${g.home}`,
             ticker,
-            side:          "yes",
+            side,
             market_p,
-            yes_ask_cents: yesAskCents,
-            our_p:         our_p_yes,
+            yes_ask_cents: askCents,
+            our_p,
             savant_p:      null,
             player:        parsed.player,
             stat:          parsed.stat,
@@ -446,27 +463,30 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             if (score) root.BotScoring.logScoredDecision(score, {
                 action: "skip", reason: "edge_below_threshold",
                 threshold_pp: _state.settings.player_prop_edge_threshold_pp,
+                side,
             });
             continue;
         }
 
-        const key = `${ticker}:yes`;
+        // Session key includes the side so we don't re-fire after
+        // a swing in market price + side flip on the same ticker.
+        const key = `${ticker}:${side}`;
         if (_state.sessionBets.has(key)) continue;
 
-        const contracts = Math.floor(_state.settings.unit_cents / yesAskCents);
+        const contracts = Math.floor(_state.settings.unit_cents / askCents);
         if (contracts < 1) continue;
-        const tradeCostCents = contracts * yesAskCents;
+        const tradeCostCents = contracts * askCents;
         if (computeOpenExposureCents() + tradeCostCents > _state.settings.open_exposure_max) continue;
         // Same hard balance guard as moneyline path — refuse to even
         // submit the order if Kalshi balance can't cover it.
         if (!(await canAfford(tradeCostCents))) {
-            log("skip", `Skip player_prop ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: balance below ${tradeCostCents}¢`);
+            log("skip", `Skip player_prop ${parsed.player} ${parsed.threshold}+ ${parsed.stat} [${side}]: balance below ${tradeCostCents}¢`);
             continue;
         }
 
         try {
             const result = await root.Kalshi.placeOrder({
-                ticker, side: "yes", count: contracts, price: yesAskCents, action: "buy",
+                ticker, side, count: contracts, price: askCents, action: "buy",
             });
             _state.sessionBets.add(key);
             persistSessionBets();
@@ -474,10 +494,11 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             recordFiredBet({
                 kind:          "player_prop",
                 ticker,
-                side:          "yes",
+                side,
                 contracts,
-                price_cents:   yesAskCents,
-                our_p:         our_p_yes,
+                price_cents:   askCents,
+                our_p,           // our probability of THIS side winning
+                our_p_yes,       // the original YES-side model for reference
                 savant_p:      null,
                 market_p,
                 edge_pp:       edgePP,
@@ -490,14 +511,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 order_response: result,
             });
             if (score) root.BotScoring.logScoredDecision(score, {
-                action: "fire", ticker, contracts, price_cents: yesAskCents,
+                action: "fire", ticker, contracts, price_cents: askCents, side,
             });
-            log("buy", `BUY ${contracts}× ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ` +
-                `@ ${yesAskCents}¢ (our ${(our_p_yes*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%, edge ${edgePP.toFixed(1)}pp)`,
-                { ticker, contracts, yesAskCents, our_p_yes, market_p, edgePP });
-            toast(`Bot: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} @ ${yesAskCents}¢`, "ok");
+            const dirLabel = side === "no" ? "UNDER" : "OVER";
+            log("buy", `BUY ${contracts}× ${parsed.player} ${dirLabel} ${parsed.threshold}+ ${parsed.stat} ` +
+                `@ ${askCents}¢ (our ${(our_p*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%, edge ${edgePP.toFixed(1)}pp)`,
+                { ticker, side, contracts, askCents, our_p, market_p, edgePP });
+            toast(`Bot: ${parsed.player} ${dirLabel} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢`, "ok");
         } catch (e) {
-            log("err", `Player-prop order failed for ${ticker}: ${e.message || e}`);
+            log("err", `Player-prop order failed for ${ticker} [${side}]: ${e.message || e}`);
         }
     }
 }
@@ -712,12 +734,14 @@ async function runCashoutCheck() {
     }
 
     for (const p of mps) {
-        const qty = (p.position || 0);
-        if (qty === 0) continue;
-        // Kalshi reports YES positions as positive quantity, NO as
-        // negative. We only ever BUY YES so we only cash out positive
-        // positions here.
-        if (qty < 0) continue;
+        const rawQty = (p.position || 0);
+        if (rawQty === 0) continue;
+        // Kalshi reports YES positions as POSITIVE quantity and NO
+        // positions as NEGATIVE. We now support both: positive qty
+        // → we hold YES, sell into YES bid; negative qty → we hold
+        // NO, sell into NO bid (= 100 - YES ask).
+        const heldSide = rawQty > 0 ? "yes" : "no";
+        const qty      = Math.abs(rawQty);
         // Use Kalshi's reported avg cost per contract (in cents) as
         // our entry price. fees_paid is excluded from market_value.
         const entryCents = p.average_yes_price ?? p.average_cost_cents ?? null;
@@ -729,9 +753,18 @@ async function runCashoutCheck() {
         let ob = null;
         try { ob = await root.Kalshi.getOrderbook(p.ticker); } catch { /* skip */ }
         if (!ob) continue;
-        const yesBidCents = orderbookYesBidCents(ob);
-        if (yesBidCents == null) continue;
-        const profitPerContract = yesBidCents - entryCents;
+        // Pull the bid for whichever side we hold — when we hold YES
+        // we sell into YES bid, when we hold NO we sell into NO bid
+        // (= 100 - YES ask). Same math from here forward; the only
+        // change is which price we compare to entry.
+        const liveBidCents = heldSide === "yes"
+            ? orderbookYesBidCents(ob)
+            : orderbookNoBidCents(ob);
+        if (liveBidCents == null) continue;
+        const profitPerContract = liveBidCents - entryCents;
+        // Legacy local name kept so the rest of this function reads
+        // unchanged — it points to the side-appropriate bid.
+        const yesBidCents = liveBidCents;
 
         // Two independent cash-out triggers — whichever fires first
         // wins. Both have to be a net WIN (no stop-loss here; that's
@@ -887,11 +920,12 @@ async function runCashoutCheck() {
         // Already have a sell order resting?
         if (await hasOpenSellOrder(p.ticker)) continue;
 
-        // SELL.
+        // SELL — pass `heldSide` so Kalshi sells the right
+        // contracts (YES or NO).
         try {
             const result = await root.Kalshi.placeOrder({
                 ticker: p.ticker,
-                side:   "yes",
+                side:   heldSide,
                 count:  qty,
                 price:  yesBidCents,
                 action: "sell",
@@ -903,7 +937,7 @@ async function runCashoutCheck() {
             if (hitPitchCount)   triggerParts.push(`+pitch (${pitchCountDetail})`);
             if (hitHitterSell)   triggerParts.push(`+hit (${hitterSellDetail})`);
             const triggerTag = triggerParts.join(" / ");
-            log("sell", `SELL ${qty}× ${p.ticker} YES @ ${yesBidCents}¢` +
+            log("sell", `SELL ${qty}× ${p.ticker} ${heldSide.toUpperCase()} @ ${yesBidCents}¢` +
                 ` (entry ${entryCents}¢, +${profitPerContract}¢/contract = $${((profitPerContract*qty)/100).toFixed(2)} profit, trigger: ${triggerTag})`,
                 { ticker: p.ticker, qty, yesBidCents, entryCents,
                   profitPerContract, captureFraction, order: result });
@@ -1067,6 +1101,19 @@ function orderbookYesBidCents(ob) {
     const c = Number(bestYesBid[0]);
     if (!Number.isFinite(c) || c < 1 || c > 99) return null;
     return c;
+}
+// NO ask = 100 - YES bid. To BUY a NO contract we hit whatever the
+// best YES bid is (someone willing to sell YES = same as buying NO).
+function orderbookNoAskCents(ob) {
+    const yesBid = orderbookYesBidCents(ob);
+    if (yesBid == null) return null;
+    return 100 - yesBid;
+}
+// NO bid = 100 - YES ask. To SELL a NO position we hit the YES ask.
+function orderbookNoBidCents(ob) {
+    const yesAsk = orderbookYesAskCents(ob);
+    if (yesAsk == null) return null;
+    return 100 - yesAsk;
 }
 
 
@@ -1246,14 +1293,19 @@ async function renderOpenBetsPane() {
         `;
     }
     // Live YES prices in parallel so the P/L is fresh.
+    // Pull the side-appropriate live bid for each position — YES
+    // positions sell into YES bid, NO positions into NO bid.
     const prices = await Promise.all(mps.map(async (p) => {
         try {
             const ob = await root.Kalshi.getOrderbook(p.ticker);
-            return orderbookYesBidCents(ob);
+            const isNo = (p.position || 0) < 0;
+            return isNo ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob);
         } catch { return null; }
     }));
     const posRows = mps.map((p, i) => {
-        const qty = p.position;
+        const rawQty = p.position;
+        const heldSide = rawQty > 0 ? "yes" : "no";
+        const qty = Math.abs(rawQty);
         const entry = p.average_yes_price ?? p.average_cost_cents ?? 0;
         const live = prices[i];
         const pl = (live != null && qty > 0)
@@ -1262,17 +1314,18 @@ async function renderOpenBetsPane() {
         const plCls = pl == null ? "" : pl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
         const fire  = fireByTicker.get(p.ticker);
         const extra = fire?.edge_pp != null ? `${fire.edge_pp.toFixed(1)}pp edge` : "";
+        const sideLabel = heldSide === "no" ? "NO" : "YES";
         return `
           <tr>
             <td>${sourceTag(fire, extra)}</td>
             <td class="bot-ticker">${escapeText(p.ticker)}</td>
-            <td>${qty}× YES</td>
+            <td>${qty}× ${sideLabel}</td>
             <td>${entry}¢</td>
             <td>${live != null ? `${live}¢` : "—"}</td>
             <td class="${plCls}">${pl != null ? `${pl >= 0 ? "+" : ""}$${pl.toFixed(2)}` : "—"}</td>
             <td>
               ${live != null && qty > 0
-                ? `<button class="bot-exit-btn" data-exit="${escapeText(p.ticker)}:${qty}:${live}">Exit @ ${live}¢</button>`
+                ? `<button class="bot-exit-btn" data-exit="${escapeText(p.ticker)}:${heldSide}:${qty}:${live}">Exit @ ${live}¢</button>`
                 : ""}
             </td>
           </tr>
@@ -1587,17 +1640,22 @@ async function renderHistoryPane() {
 function bindBetsPaneHandlers(overlay) {
     overlay.querySelectorAll("[data-exit]").forEach((btn) => {
         btn.addEventListener("click", async () => {
-            const [ticker, qtyStr, priceStr] = btn.getAttribute("data-exit").split(":");
-            const qty = parseInt(qtyStr, 10);
-            const price = parseInt(priceStr, 10);
-            if (!confirm(`Exit ${qty}× ${ticker} YES at ${price}¢?`)) return;
+            // Format ticker:side:qty:price (added side after we
+            // started supporting NO positions).
+            const parts = btn.getAttribute("data-exit").split(":");
+            const ticker = parts[0];
+            const side   = parts.length === 4 ? parts[1] : "yes";  // back-compat
+            const qty    = parseInt(parts.length === 4 ? parts[2] : parts[1], 10);
+            const price  = parseInt(parts.length === 4 ? parts[3] : parts[2], 10);
+            const sideUp = side.toUpperCase();
+            if (!confirm(`Exit ${qty}× ${ticker} ${sideUp} at ${price}¢?`)) return;
             btn.disabled = true;
             btn.textContent = "Selling…";
             try {
                 await root.Kalshi.placeOrder({
-                    ticker, side: "yes", count: qty, price, action: "sell",
+                    ticker, side, count: qty, price, action: "sell",
                 });
-                log("sell", `Manual sell: ${qty}× ${ticker} YES @ ${price}¢`);
+                log("sell", `Manual sell: ${qty}× ${ticker} ${sideUp} @ ${price}¢`);
                 refreshDrawerContent();
             } catch (e) {
                 btn.disabled = false;
