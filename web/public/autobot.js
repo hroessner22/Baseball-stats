@@ -2828,6 +2828,13 @@ function renderBotPane() {
             <span>Also bet player props (HR / Hits / Ks / TB) — no Savant signal applies</span>
           </label>
         </div>
+        <div class="bot-settings-recos">
+          <button class="bot-reset-recos" data-bot-reset-recos>Apply recommended defaults</button>
+          <small>Snaps every setting on this panel to the tuned values discussed in this session:
+            $0.50 unit · 5pp moneyline / 7pp prop · min inning 3 · 50/50 reserve · huge-edge 12pp → 60%
+            cap · 0.40 conviction · 20¢ take · 55% EV-capture · $5 daily loss · $20 exposure · soft
+            Savant +3pp · props on. Bot ON/OFF state is preserved.</small>
+        </div>
         <p class="bot-settings-note">
           Moneyline uses Savant as a confidence amplifier (soft gate by default). Player props
           ride on our matchup-engine alone — Savant doesn't publish player-level probabilities.
@@ -2914,6 +2921,15 @@ function bindBotPaneHandlers(overlay) {
             persistSettings();
             refreshDrawerContent();
         });
+    });
+    overlay.querySelector("[data-bot-reset-recos]")?.addEventListener("click", () => {
+        if (!confirm("Reset every setting on this panel to recommended defaults? (Bot on/off state is preserved.)")) return;
+        const wasEnabled = _state.settings.enabled;
+        _state.settings = clampSettings({ ...DEFAULTS, enabled: wasEnabled });
+        persistSettings();
+        toast("Settings reset to recommended defaults", "ok");
+        log("bot", "Settings reset to recommended defaults");
+        refreshDrawerContent();
     });
     overlay.querySelectorAll("[data-bot-setting-bool]").forEach((inp) => {
         inp.addEventListener("change", () => {

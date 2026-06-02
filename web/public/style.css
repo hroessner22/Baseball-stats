@@ -8711,6 +8711,37 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-notif-mark:hover { color: var(--text); }
 
+/* ── Apply recommended defaults block ──────────────────────────── */
+.bot-settings-recos {
+    margin-top: 20px;
+    padding: 14px 16px;
+    background: rgba(34, 197, 94, 0.06);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.bot-reset-recos {
+    align-self: flex-start;
+    background: rgba(34, 197, 94, 0.15);
+    color: #22C55E;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.bot-reset-recos:hover {
+    background: rgba(34, 197, 94, 0.25);
+}
+.bot-settings-recos small {
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
 .bot-tab-pane {
     display: none;
     padding: 20px 24px 40px;
