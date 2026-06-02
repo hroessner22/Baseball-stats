@@ -509,6 +509,13 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             const result = await root.Kalshi.placeOrder({
                 ticker, side, count: contracts, price: askCents, action: "buy",
             });
+            // Invalidate balance cache so the NEXT canAfford check
+            // in this same scan sees the post-trade balance, not
+            // the pre-trade cached value. Was the root cause of the
+            // 'insufficient balance' burst in the EOD log.
+            if (root.Kalshi.invalidateBalanceCache) {
+                root.Kalshi.invalidateBalanceCache();
+            }
             _state.sessionBets.add(key);
             persistSessionBets();
             // Capture the FULL context for forward analysis.
@@ -539,10 +546,32 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 `@ ${askCents}¢ (our ${(our_p*100).toFixed(1)}% / market ${(market_p*100).toFixed(1)}%, edge ${edgePP.toFixed(1)}pp)`,
                 { ticker, side, contracts, askCents, our_p, market_p, edgePP });
             toast(`Bot: ${parsed.player} ${dirLabel} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢`, "ok");
+            // Inter-fire pause — prevents burst-firing past Kalshi's
+            // rate limit (EOD log showed 6 fires in 6 seconds
+            // triggering 'too many requests' rejections).
+            await sleep(800);
         } catch (e) {
-            log("err", `Player-prop order failed for ${ticker} [${side}]: ${e.message || e}`);
+            const msg = String(e?.message || e);
+            log("err", `Player-prop order failed for ${ticker} [${side}]: ${msg}`);
+            // Back off harder on rate-limit errors so subsequent
+            // fires in the loop don't double down on a rejection.
+            if (/too many requests|rate.?limit|429/i.test(msg)) {
+                log("halt", "Kalshi rate limit hit — pausing 10s before next fire");
+                await sleep(10000);
+            } else if (/insufficient/i.test(msg)) {
+                // Balance was actually low at order time despite
+                // canAfford check — force-refresh cache so the next
+                // iteration sees truth.
+                if (root.Kalshi.invalidateBalanceCache) {
+                    root.Kalshi.invalidateBalanceCache();
+                }
+            }
         }
     }
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parsePropTitle(title) {
@@ -701,8 +730,20 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             `, edge ${edgePP.toFixed(1)}pp)`,
             { ticker, contracts, yesAskCents, our_p, savant_p, market_p, edgePP, savantStance, order: result });
         toast(`Bot: bought ${contracts}× ${tail} YES @ ${yesAskCents}¢`, "ok");
+        // Invalidate balance cache + inter-fire pause to avoid
+        // race-conditioning Kalshi's rate limit (same fix as
+        // scanPlayerProps — see EOD log).
+        if (root.Kalshi.invalidateBalanceCache) root.Kalshi.invalidateBalanceCache();
+        await sleep(800);
     } catch (e) {
-        log("err", `Order failed for ${ticker}: ${e.message || e}`);
+        const msg = String(e?.message || e);
+        log("err", `Order failed for ${ticker}: ${msg}`);
+        if (/too many requests|rate.?limit|429/i.test(msg)) {
+            log("halt", "Kalshi rate limit hit — pausing 10s before next fire");
+            await sleep(10000);
+        } else if (/insufficient/i.test(msg)) {
+            if (root.Kalshi.invalidateBalanceCache) root.Kalshi.invalidateBalanceCache();
+        }
     }
 }
 
@@ -1962,6 +2003,10 @@ function renderBotPane() {
           <h3>Activity</h3>
           <div class="bot-log-actions">
             <button class="bot-eod-review" data-bot-eod-review>EOD review</button>
+            <button class="bot-copy-all" data-bot-copy-all
+                    title="Copy fires + decisions + settings as ONE JSON — paste it in chat with Claude for analysis">
+              Copy ALL → JSON
+            </button>
             <button class="bot-export-fires" data-bot-export-fires>Export fires (${getFires().length})</button>
             <button class="bot-export-fires" data-bot-export-decisions>Export decisions (${root.BotScoring ? root.BotScoring.getScoredDecisions(2000).length : 0})</button>
             ${logEntries.length ? `<button class="bot-clear-log" data-bot-clear-log>Clear log</button>` : ""}
@@ -2063,6 +2108,54 @@ function bindBotPaneHandlers(overlay) {
         } catch {
             const w = window.open("", "_blank");
             if (w) { w.document.body.innerText = blob; }
+        }
+    });
+    overlay.querySelector("[data-bot-copy-all]")?.addEventListener("click", async () => {
+        // Bundle EVERY piece of bot state into one JSON so the user
+        // can paste it in chat with Claude and we can analyze
+        // without screenshots. Fires + decisions + activity log +
+        // current settings + storage diagnostics.
+        const fires     = getFires();
+        const decisions = root.BotScoring ? root.BotScoring.getScoredDecisions(2000) : [];
+        const logRows   = getLog();
+        let settlements = [];
+        try {
+            if (root.Kalshi && root.Kalshi.getSettlements) {
+                settlements = await root.Kalshi.getSettlements();
+            }
+        } catch { /* fall through */ }
+        const bundle = {
+            generated_at: new Date().toISOString(),
+            url:          location.href,
+            settings:     _state.settings,
+            counts: {
+                fires:       fires.length,
+                decisions:   decisions.length,
+                log_rows:    logRows.length,
+                settlements: settlements.length,
+            },
+            fires,
+            decisions,
+            settlements,
+            activity_log: logRows.slice(0, 200),
+            diagnostics: {
+                scoring_loaded: !!root.BotScoring,
+                kalshi_connected: !!(root.Kalshi && root.Kalshi.isConnected && root.Kalshi.isConnected()),
+                user_agent: navigator.userAgent,
+            },
+        };
+        const blob = JSON.stringify(bundle, null, 2);
+        try {
+            await navigator.clipboard.writeText(blob);
+            toast(`Copied ALL bot data: ${fires.length} fires, ${decisions.length} decisions, ${logRows.length} log rows`, "ok");
+        } catch {
+            const w = window.open("", "_blank");
+            if (w) {
+                w.document.body.style.fontFamily = "ui-monospace, Menlo, monospace";
+                w.document.body.style.whiteSpace = "pre";
+                w.document.body.style.padding = "20px";
+                w.document.body.textContent = blob;
+            }
         }
     });
 }

@@ -1383,10 +1383,20 @@ setInterval(() => {
 
 // ── Public surface ──────────────────────────────────────────────
 
+// Allow the bot to force a fresh balance fetch — used after every
+// fire so canAfford reads the post-trade balance, not a stale
+// pre-trade cache (was the source of repeated 'insufficient
+// balance' Kalshi rejections in the EOD log).
+function invalidateBalanceCache() {
+    cachedBalanceCents = null;
+    cachedBalanceFetchedAt = 0;
+}
+
 root.Kalshi = {
     isConnected,
     getLabel,
     getBalance,
+    invalidateBalanceCache,
     getOpenOrders,
     getPositions,
     getSettlements,

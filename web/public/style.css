@@ -9310,24 +9310,54 @@ button.md-game-outcome:active { transform: translateY(1px); }
     gap: 12px;
     align-items: center;
 }
+/* Activity row buttons now look like ACTUAL buttons rather than
+   links — same chip family the EOD review button uses, with
+   matching click feedback. The user couldn't tell they were
+   clickable before. */
 .bot-clear-log,
-.bot-export-fires {
-    background: transparent;
-    border: none;
-    color: var(--text-faint);
+.bot-export-fires,
+.bot-copy-all {
+    background: rgba(56, 189, 248, 0.10);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: var(--accent-action);
     font: inherit;
     font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 4px 10px;
+    border-radius: 4px;
     cursor: pointer;
-    padding: 0;
+    transition: background 120ms, border-color 120ms;
 }
 .bot-clear-log:hover,
-.bot-export-fires:hover { color: var(--text-dim); }
-.bot-export-fires {
-    color: var(--accent-action);
+.bot-export-fires:hover,
+.bot-copy-all:hover {
+    background: rgba(56, 189, 248, 0.20);
+    border-color: rgba(56, 189, 248, 0.55);
 }
-.bot-export-fires:hover { color: #0EA5E9; }
+.bot-clear-log:active,
+.bot-export-fires:active,
+.bot-copy-all:active {
+    transform: translateY(1px);
+}
+.bot-clear-log {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: var(--accent-live);
+}
+.bot-clear-log:hover {
+    background: rgba(239, 68, 68, 0.20);
+    border-color: rgba(239, 68, 68, 0.55);
+}
+.bot-copy-all {
+    background: rgba(34, 197, 94, 0.10);
+    border-color: rgba(34, 197, 94, 0.35);
+    color: var(--accent-win);
+}
+.bot-copy-all:hover {
+    background: rgba(34, 197, 94, 0.20);
+    border-color: rgba(34, 197, 94, 0.55);
+}
 .bot-log {
     background: rgba(15, 23, 42, 0.5);
     border: 1px solid var(--border);
