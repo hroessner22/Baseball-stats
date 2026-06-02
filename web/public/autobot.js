@@ -2082,80 +2082,74 @@ function bindBotPaneHandlers(overlay) {
         }
     });
     overlay.querySelector("[data-bot-export-fires]")?.addEventListener("click", async () => {
-        const fires = getFires();
-        if (!fires.length) { toast("No fires recorded yet", "ok"); return; }
-        const blob = JSON.stringify(fires, null, 2);
         try {
+            const fires = getFires();
+            if (!fires.length) { toast("No fires recorded yet", "ok"); return; }
+            const blob = JSON.stringify(fires, null, 2);
             await navigator.clipboard.writeText(blob);
             toast(`Copied ${fires.length} fires to clipboard`, "ok");
-        } catch {
-            // Fallback: open in a new window so the user can copy.
-            const w = window.open("", "_blank");
-            if (w) { w.document.body.innerText = blob; }
+        } catch (err) {
+            console.error("[bot] export-fires failed", err);
+            toast(`Copy failed: ${err?.message || err}`, "err");
         }
     });
     overlay.querySelector("[data-bot-eod-review]")?.addEventListener("click", async () => {
-        await runEodReview();
-    });
-    overlay.querySelector("[data-bot-export-decisions]")?.addEventListener("click", async () => {
-        if (!root.BotScoring) { toast("Scoring framework not loaded", "err"); return; }
-        const decisions = root.BotScoring.getScoredDecisions(2000);
-        if (!decisions.length) { toast("No decisions logged yet", "ok"); return; }
-        const blob = JSON.stringify(decisions, null, 2);
         try {
-            await navigator.clipboard.writeText(blob);
-            toast(`Copied ${decisions.length} decisions to clipboard`, "ok");
-        } catch {
-            const w = window.open("", "_blank");
-            if (w) { w.document.body.innerText = blob; }
+            await runEodReview();
+        } catch (err) {
+            console.error("[bot] eod-review failed", err);
+            toast(`EOD review failed: ${err?.message || err}`, "err");
         }
     });
-    overlay.querySelector("[data-bot-copy-all]")?.addEventListener("click", async () => {
-        // Bundle EVERY piece of bot state into one JSON so the user
-        // can paste it in chat with Claude and we can analyze
-        // without screenshots. Fires + decisions + activity log +
-        // current settings + storage diagnostics.
-        const fires     = getFires();
-        const decisions = root.BotScoring ? root.BotScoring.getScoredDecisions(2000) : [];
-        const logRows   = getLog();
-        let settlements = [];
+    overlay.querySelector("[data-bot-export-decisions]")?.addEventListener("click", async () => {
         try {
-            if (root.Kalshi && root.Kalshi.getSettlements) {
-                settlements = await root.Kalshi.getSettlements();
-            }
-        } catch { /* fall through */ }
-        const bundle = {
-            generated_at: new Date().toISOString(),
-            url:          location.href,
-            settings:     _state.settings,
-            counts: {
-                fires:       fires.length,
-                decisions:   decisions.length,
-                log_rows:    logRows.length,
-                settlements: settlements.length,
-            },
-            fires,
-            decisions,
-            settlements,
-            activity_log: logRows.slice(0, 200),
-            diagnostics: {
-                scoring_loaded: !!root.BotScoring,
-                kalshi_connected: !!(root.Kalshi && root.Kalshi.isConnected && root.Kalshi.isConnected()),
-                user_agent: navigator.userAgent,
-            },
-        };
-        const blob = JSON.stringify(bundle, null, 2);
-        try {
+            if (!root.BotScoring) { toast("Scoring framework not loaded", "err"); return; }
+            const decisions = root.BotScoring.getScoredDecisions(2000);
+            if (!decisions.length) { toast("No decisions logged yet (bot needs to run with fresh JS first)", "ok"); return; }
+            const blob = JSON.stringify(decisions, null, 2);
             await navigator.clipboard.writeText(blob);
-            toast(`Copied ALL bot data: ${fires.length} fires, ${decisions.length} decisions, ${logRows.length} log rows`, "ok");
-        } catch {
-            const w = window.open("", "_blank");
-            if (w) {
-                w.document.body.style.fontFamily = "ui-monospace, Menlo, monospace";
-                w.document.body.style.whiteSpace = "pre";
-                w.document.body.style.padding = "20px";
-                w.document.body.textContent = blob;
-            }
+            toast(`Copied ${decisions.length} decisions to clipboard`, "ok");
+        } catch (err) {
+            console.error("[bot] export-decisions failed", err);
+            toast(`Copy failed: ${err?.message || err}`, "err");
+        }
+    });
+    overlay.querySelector("[data-bot-copy-all]")?.addEventListener("click", async (e) => {
+        // CRITICAL: clipboard.writeText() in most browsers requires
+        // the user-gesture context still be active. Any `await` on
+        // a fetch BEFORE the clipboard write breaks that chain and
+        // the write silently rejects. So we gather all SYNC data
+        // first, write clipboard immediately, then optionally
+        // top-up settlements after.
+        try {
+            const fires     = getFires();
+            const decisions = root.BotScoring ? root.BotScoring.getScoredDecisions(2000) : [];
+            const logRows   = getLog();
+            const bundle = {
+                generated_at: new Date().toISOString(),
+                url:          location.href,
+                settings:     _state.settings,
+                counts: {
+                    fires:     fires.length,
+                    decisions: decisions.length,
+                    log_rows:  logRows.length,
+                },
+                fires,
+                decisions,
+                activity_log: logRows.slice(0, 200),
+                diagnostics: {
+                    scoring_loaded:   !!root.BotScoring,
+                    kalshi_connected: !!(root.Kalshi && root.Kalshi.isConnected && root.Kalshi.isConnected()),
+                    user_agent:       navigator.userAgent,
+                },
+            };
+            const blob = JSON.stringify(bundle, null, 2);
+            await navigator.clipboard.writeText(blob);
+            toast(`Copied: ${fires.length} fires, ${decisions.length} decisions, ${logRows.length} log rows`, "ok");
+        } catch (err) {
+            const msg = err?.message || String(err);
+            console.error("[bot] copy-all failed", err);
+            toast(`Copy failed: ${msg}. Open console for details.`, "err");
         }
     });
 }
@@ -2303,8 +2297,31 @@ function timeStr(ts) {
     return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
 }
 function toast(msg, kind = "ok") {
-    if (root.Kalshi?.toast) return root.Kalshi.toast(msg, kind);
+    // Try Kalshi's toast surface first (older sites expose it);
+    // otherwise render our own DOM-backed toast. The previous
+    // implementation silently fell back to console.log, so every
+    // 'Bot: bought X', 'Copied N fires to clipboard', etc. was
+    // invisible to the user — the source of 'these buttons aren't
+    // doing anything' in image 126.
+    if (typeof root.Kalshi?.toast === "function") {
+        return root.Kalshi.toast(msg, kind);
+    }
     console.log(`[bot] ${msg}`);
+    let host = document.querySelector(".bot-toasts");
+    if (!host) {
+        host = document.createElement("div");
+        host.className = "bot-toasts";
+        document.body.appendChild(host);
+    }
+    const el = document.createElement("div");
+    el.className = `bot-toast bot-toast-${kind}`;
+    el.textContent = msg;
+    host.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("bot-toast-show"));
+    setTimeout(() => {
+        el.classList.remove("bot-toast-show");
+        setTimeout(() => el.remove(), 220);
+    }, 4200);
 }
 
 
