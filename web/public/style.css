@@ -404,14 +404,48 @@ main.board {
     text-transform: uppercase;
 }
 .tile .tile-players .player-row strong {
+    /* The wrapper just stretches across the name + hand spans —
+       all visual properties live on .pname / .phand below. */
     color: var(--text);
-    font-weight: 600;
+    font-weight: 400;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+    flex: 1;
 }
-.tile .tile-players .player-row.dim strong {
+.tile .tile-players .player-row .pname {
+    /* MLB At Bat convention: player name sits at a clean medium
+       weight (550) with slightly tightened tracking — reads as
+       a name, not a label. Inherit the row's 14px size. */
+    color: var(--text);
+    font-weight: 550;
+    letter-spacing: -0.005em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.tile .tile-players .player-row .phand {
+    /* Bat/throw hand is a quiet meta tag — same lineup-card
+       grammar MLB At Bat uses (small, dimmer, semi-bold). Parens
+       are added by CSS ::before/::after so the renderer can stay
+       hand-letter-only. */
     color: var(--text-dim);
+    font-weight: 700;
+    font-size: 0.78em;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+.tile .tile-players .player-row .phand::before { content: "("; }
+.tile .tile-players .player-row .phand::after  { content: ")"; }
+.tile .tile-players .player-row.dim .pname,
+.tile .tile-players .player-row.dim .phand {
+    color: var(--text-dim);
+    opacity: 0.6;
 }
 
 /* Sportsbook-style WE bar across the tile bottom. Hidden for pregame since
@@ -6316,12 +6350,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .md-game-lines {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 6px;
+    /* Tightened gap so each column has more pixel budget for its
+       outcome rows — was 6, now 4. */
+    gap: 4px;
+    /* min-width: 0 on each child column so its content (long odds
+       like -9999, "no offers") can shrink instead of overflowing
+       the card's right edge. */
 }
 .md-game-col {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
 }
 .md-game-col-label {
     font-size: 10px;
@@ -6354,17 +6394,18 @@ button.md-game-outcome:hover {
 button.md-game-outcome:active { transform: translateY(1px); }
 
 .md-game-outcome {
-    /* Was horizontal flex — long American odds like -1567 + a 94%
-       label could not coexist with a team-name column inside a
-       ~80px cell, so the numerals slid past the cell border.
-       Stacked vertically: name on top, odds row below. Each row
-       uses the full cell width and reads cleanly. */
+    /* Vertical stack: name + tiny logo on row 1, odds on row 2.
+       overflow hidden on the cell so any pathological content
+       cannot extend past the border (the user has seen multiple
+       times when a -9999 squeezed past). */
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
-    font-size: 12px;
-    padding: 5px 8px;
+    gap: 1px;
+    font-size: 11px;
+    padding: 4px 6px;
+    min-width: 0;
+    overflow: hidden;
 }
 .md-game-outcome.is-fav .md-game-out-name { font-weight: 700; }
 .md-game-outcome.is-fav .md-game-out-am { color: var(--accent-win); }
@@ -6373,15 +6414,14 @@ button.md-game-outcome:active { transform: translateY(1px); }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* In the vertical layout, name owns the full top line. */
     width: 100%;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    /* Logo + label as flex so the team logo sits inline with the
-       team abbreviation. The renderer prepends an .md-team-logo img. */
+    /* Logo + label inline. Renderer prepends an .md-team-logo img. */
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
+    min-width: 0;
 }
 .md-game-out-odds {
     /* In the vertical layout: am + pct sit side by side on a
@@ -6390,21 +6430,28 @@ button.md-game-outcome:active { transform: translateY(1px); }
     display: flex;
     flex-direction: row;
     align-items: baseline;
-    gap: 6px;
+    gap: 4px;
     width: 100%;
     justify-content: flex-end;
     flex-shrink: 0;
+    overflow: hidden;
 }
 .md-game-out-am {
     font-weight: 800;
     color: var(--text);
     font-variant-numeric: tabular-nums;
-    font-size: 13px;
+    /* Tightened 13 → 12 — long odds like +9900 / -9999 now fit
+       comfortably even in the 240px-min card with the pct beside. */
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .md-game-out-pct {
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: 10px;
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
 }
 
 /* Small team logo for inline use next to abbreviations — picked

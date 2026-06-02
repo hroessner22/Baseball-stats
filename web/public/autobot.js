@@ -683,18 +683,25 @@ async function runCashoutCheck() {
             }
         }
 
-        // FOURTH trigger — STARTER PITCH-COUNT FORCE SELL.
-        // The DeGrom case: 91 pitches in the 6th, manager pulled
-        // him, market price reflected the imminent removal and our
-        // 'X+ K' bet went to zero. Don't let that happen again.
+        // FOURTH trigger — STARTER PITCH-COUNT FORCE SELL, now
+        // pitcher-aware. The DeGrom-at-91 case: when the manager
+        // is about to pull a starter, our 'X+ K' position drops
+        // toward zero — sell before that happens.
         //
-        // For pitcher-strikeout props (and only those — hitter
-        // props don't depend on the OWN pitcher), check the live
-        // pitch count. Cumulative bullpen-usage data across the
-        // league shows ~95 pitches as the inflection point — above
-        // that, removal probability shoots past 50%. We force a
-        // sell whenever we're up >= 5¢ AND the live pitch count
-        // is high enough that another full lineup turn is unlikely.
+        // Each starter has a personal hook point; using a global
+        // 85/95/105 ramp punishes workhorses (Verlander goes 110)
+        // and lets quick hooks (Misiorowski rarely past 85) slip
+        // through. The model-props endpoint now ships a per-pitcher
+        // profile with p80_pitches (this-season 80th-percentile
+        // pitch count per start). We anchor force-sell thresholds
+        // around that personal number:
+        //
+        //   pitchesThrown >= p80 + 10:    pull imminent
+        //   pitchesThrown >= p80:         50% removal
+        //   pitchesThrown >= p80 - 10 + profit >= 10: lock in
+        //
+        // Falls back to global 85/95/105 when we don't have a
+        // profile (rookies, no starts logged this season).
         let hitPitchCount = false;
         let pitchCountDetail = "";
         if (fire?.kind === "player_prop"
@@ -704,23 +711,22 @@ async function runCashoutCheck() {
             && profitPerContract >= 5) {
             const pitchInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
             if (pitchInfo) {
-                const { pitchesThrown, battersFaced } = pitchInfo;
-                // Tier 1: 105+ pitches — almost certainly being
-                // removed within the next batter. Force sell.
-                // Tier 2: 95+ pitches — 50/50 he gets through one
-                // more inning. Sell if we have any profit.
-                // Tier 3: 85+ pitches AND have profit AND already
-                // have hit the threshold — lock in (no remaining
-                // upside that the prop could pay).
-                if (pitchesThrown >= 105) {
+                const { pitchesThrown, profile } = pitchInfo;
+                const p80 = profile?.p80_pitches;
+                // Resolve thresholds — personal first, league fallback.
+                const tImminent = p80 ? (p80 + 10) : 105;
+                const tHalfPull = p80 ? p80         : 95;
+                const tLockIn   = p80 ? (p80 - 10)  : 85;
+                const tag = p80 ? `p80=${p80}` : "league";
+                if (pitchesThrown >= tImminent) {
                     hitPitchCount = true;
-                    pitchCountDetail = `${pitchesThrown} pitches — pull imminent`;
-                } else if (pitchesThrown >= 95) {
+                    pitchCountDetail = `${pitchesThrown} pitches (${tag}) — pull imminent`;
+                } else if (pitchesThrown >= tHalfPull) {
                     hitPitchCount = true;
-                    pitchCountDetail = `${pitchesThrown} pitches — removal ~50%`;
-                } else if (pitchesThrown >= 85 && profitPerContract >= 10) {
+                    pitchCountDetail = `${pitchesThrown} pitches (${tag}) — removal ~50%`;
+                } else if (pitchesThrown >= tLockIn && profitPerContract >= 10) {
                     hitPitchCount = true;
-                    pitchCountDetail = `${pitchesThrown} pitches, +${profitPerContract}¢ — lock in`;
+                    pitchCountDetail = `${pitchesThrown} pitches (${tag}), +${profitPerContract}¢ — lock in`;
                 }
             }
         }
@@ -805,9 +811,8 @@ const LIVE_PROPS_TTL_MS = 30000;
 // alongside the model-props cache.
 async function getLivePitcherInfo(gamePk, playerName) {
     if (!gamePk || !playerName) return null;
-    // Use the same /api/game/{id}/model-props payload — it already
-    // exposes the pitcher pitch count in lineups[X].pitcher_pitches
-    // after the model-props endpoint upgrade.
+    // Reuses the model-props cache — the live pitch count + per-
+    // pitcher profile both live there now.
     let data = null;
     const cached = _livePropsCache.get(gamePk);
     if (cached && Date.now() - cached.t < LIVE_PROPS_TTL_MS) {
@@ -828,9 +833,12 @@ async function getLivePitcherInfo(gamePk, playerName) {
         const name = side.pitcher_name;
         if (!name) continue;
         if (normName(name) !== target) continue;
+        const pid = side.pitcher_id;
+        const profile = pid && data.model_props?.[pid]?._meta?.pitch_profile || null;
         return {
             pitchesThrown: side.pitcher_pitches || 0,
             battersFaced:  side.pitcher_bf || 0,
+            profile,
         };
     }
     return null;

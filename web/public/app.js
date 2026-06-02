@@ -536,9 +536,18 @@ function tileBody(g) {
 // the /api/game/{id} response.
 function livePlayersHTML(detail) {
     const dim = detail ? "" : "dim";
+    // Split name + hand into separate spans so we can style them
+    // independently (name = primary glyph, hand = quiet meta).
+    // Convention follows MLB At Bat: name reads clean, hand is
+    // a small parenthetical step down in weight + color.
     const fmt = (p, hand) => {
-        if (!p) return "—";
-        return `${p.name ? shortName(p.name) : "—"}${p[hand] ? " (" + p[hand] + ")" : ""}`;
+        if (!p) return `<span class="pname">—</span>`;
+        const nameStr = p.name ? shortName(p.name) : "—";
+        const handStr = p[hand] ? p[hand] : "";
+        return (
+            `<span class="pname">${escapeHTML(nameStr)}</span>` +
+            (handStr ? ` <span class="phand">${escapeHTML(handStr)}</span>` : "")
+        );
     };
     const photo = (p) => inlineAvatar(p?.id, { size: 28, class: "tile-live-photo", alt: p?.name });
     return `

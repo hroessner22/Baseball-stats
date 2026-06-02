@@ -128,6 +128,27 @@ export async function onRequest(context) {
 
     // 3b) Pitcher strikeout projections — aggregate expected Ks across the
     //     opposing lineup, approximate tail as Poisson(λ = E[K]).
+    //
+    // Pull each starter's season pitch-count habit in parallel so the
+    // pitch-count haircut can scale to the individual pitcher instead
+    // of using a one-size global. The fetch is cached 24h at the
+    // edge, so the same pitcher's profile costs at most one upstream
+    // call per day across every game we render. Falls back to the
+    // global ramp when a profile isn't returned.
+    const season = new Date().getUTCFullYear();
+    const profilesByPid = {};
+    const profileTasks = [];
+    for (const side of ["home", "away"]) {
+        const pid = teams[side].pitcher_id;
+        if (!pid) continue;
+        profileTasks.push(
+            fetchPitcherPitchProfile(pid, season).then((profile) => {
+                profilesByPid[pid] = profile;
+            }).catch(() => { profilesByPid[pid] = null; })
+        );
+    }
+    await Promise.all(profileTasks);
+
     for (const side of ["home", "away"]) {
         const opp = side === "home" ? "away" : "home";
         const pitcherId = teams[side].pitcher_id;
@@ -143,20 +164,36 @@ export async function onRequest(context) {
             0,
             PA_PER_STARTING_PITCHER - battersFaced,
         );
-        // Pitch-count haircut. Once a starter passes 80 pitches the
-        // probability he stays in for another full lineup turn drops
-        // sharply; by 100-105 the manager almost always has the
-        // bullpen up. Piecewise linear ramp matches what bullpen
-        // usage data shows across the league:
-        //   <80:        no haircut (full remaining)
-        //   80–95:      50% effective
-        //   95–105:     20% effective
-        //   105+:       ~0 (almost certainly being pulled now)
+        // Pitch-count haircut, now per-pitcher when we have a profile.
+        // Each starter has a personal hook point — Verlander gets pulled
+        // around 100, Misiorowski around 85, an opener after 30. Using
+        // a global 85/95/105 ramp punishes the workhorses and lets the
+        // openers slip through.
+        //
+        // The profile gives us p80_pitches: the 80th percentile of
+        // pitches per start this season. We anchor the haircut zones
+        // around that:
+        //   pitchesThrown < (p80 - 20):  no haircut
+        //   p80 - 20 to p80 - 10:        0.75x (light caution)
+        //   p80 - 10 to p80:             0.50x (50/50)
+        //   p80 to p80 + 10:             0.20x (~80% removal)
+        //   above p80 + 10:              0.05x (pull imminent)
+        // Falls back to the league-wide 80/95/105 ramp when we don't
+        // have a profile (rookies, pitchers with no starts yet).
+        const profile = profilesByPid[pitcherId];
         let pitchCountFactor = 1.0;
-        if (pitchesThrown >= 105)      pitchCountFactor = 0.05;
-        else if (pitchesThrown >= 95)  pitchCountFactor = 0.20;
-        else if (pitchesThrown >= 80)  pitchCountFactor = 0.50;
-        else if (pitchesThrown >= 70)  pitchCountFactor = 0.75;
+        if (profile && profile.p80_pitches > 0) {
+            const p80 = profile.p80_pitches;
+            if      (pitchesThrown >= p80 + 10)  pitchCountFactor = 0.05;
+            else if (pitchesThrown >= p80)       pitchCountFactor = 0.20;
+            else if (pitchesThrown >= p80 - 10)  pitchCountFactor = 0.50;
+            else if (pitchesThrown >= p80 - 20)  pitchCountFactor = 0.75;
+        } else {
+            if      (pitchesThrown >= 105)       pitchCountFactor = 0.05;
+            else if (pitchesThrown >= 95)        pitchCountFactor = 0.20;
+            else if (pitchesThrown >= 80)        pitchCountFactor = 0.50;
+            else if (pitchesThrown >= 70)        pitchCountFactor = 0.75;
+        }
         const totalPA = baseRemaining * pitchCountFactor;
         if (totalPA <= 0) continue;
         // Spread the remaining PAs evenly across the opposing lineup.
@@ -185,6 +222,11 @@ export async function onRequest(context) {
                 bf_so_far:            battersFaced,
                 pitches_thrown:       pitchesThrown,
                 pitch_count_factor:   pitchCountFactor,
+                // Personal pitch-count habit (this-season avg/max/p80).
+                // Bot's force-sell triggers can read this to set the
+                // 'pull likely' threshold per pitcher instead of using
+                // the global 85/95/105 ramp.
+                pitch_profile:        profile || null,
             },
         };
     }
@@ -434,6 +476,49 @@ function buildNameLookup(teams) {
 
 function normName(s) {
     return String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+
+// ── Per-pitcher pitch-count profile ────────────────────────────────
+// Pulls this-season game logs for a pitcher and surfaces summary
+// stats: total starts, avg pitches per start, max pitches in any
+// start, and the 80th percentile (the 'I usually go that long
+// before getting pulled' marker the haircut uses).
+//
+// Cached 24h at the edge via cf.cacheTtl — Cloudflare Workers will
+// only hit MLB once per pitcher per day no matter how many games
+// reference them.
+async function fetchPitcherPitchProfile(pitcherId, season) {
+    const url = `https://statsapi.mlb.com/api/v1/people/${pitcherId}` +
+                `/stats?stats=gameLog&group=pitching&season=${season}`;
+    let data;
+    try {
+        data = await fetchJson(url, 86400);
+    } catch { return null; }
+    const splits = data?.stats?.[0]?.splits || [];
+    // Filter to starts only (gamesStarted=1) — relievers' single-
+    // outing pitch counts would skew downward and the cash-out
+    // logic is about starter-pull tendency.
+    const pitches = [];
+    for (const s of splits) {
+        const stat = s.stat || {};
+        const isStart = (parseInt(stat.gamesStarted, 10) || 0) >= 1;
+        if (!isStart) continue;
+        const pc = parseInt(stat.pitchesThrown || stat.numberOfPitches || 0, 10);
+        if (pc > 0) pitches.push(pc);
+    }
+    if (!pitches.length) return null;
+    pitches.sort((a, b) => a - b);
+    const sum = pitches.reduce((s, p) => s + p, 0);
+    const p80Idx = Math.max(0, Math.min(pitches.length - 1, Math.floor(pitches.length * 0.8)));
+    return {
+        starts:      pitches.length,
+        avg_pitches: Math.round(sum / pitches.length),
+        max_pitches: pitches[pitches.length - 1],
+        p80_pitches: pitches[p80Idx],
+        // Median for sanity checks.
+        med_pitches: pitches[Math.floor(pitches.length / 2)],
+    };
 }
 
 
