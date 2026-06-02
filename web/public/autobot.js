@@ -731,7 +731,56 @@ async function runCashoutCheck() {
             }
         }
 
-        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount) continue;
+        // FIFTH trigger — HITTER PROP LATE-INNING + THRESHOLD-MET
+        // FORCE SELL. For hitter props (HR, hits, total_bases), two
+        // honest cash-out cases the user flagged:
+        //
+        //  a) Threshold already met. Our YES is essentially worth
+        //     ~100¢ and just waiting for settle. If the market is
+        //     paying 90+ for YES, sell — the remaining few cents
+        //     of upside are pinned by fees and time risk (game
+        //     could be suspended / postponed).
+        //  b) Late inning with very few remaining PAs. The model
+        //     has already re-priced via game_state.turns_remaining;
+        //     if our live probability has dropped under our entry
+        //     basis AND we still have profit (market hasn't fully
+        //     caught up), lock in before it does.
+        let hitHitterSell = false;
+        let hitterSellDetail = "";
+        if (fire?.kind === "player_prop"
+            && (fire.stat === "home_runs" || fire.stat === "hits" || fire.stat === "total_bases")
+            && fire.game_pk
+            && fire.player
+            && profitPerContract > 0) {
+            const livePCents = await getLivePlayerPropPCents(fire);
+            const gameInfo   = await getLiveGameState(fire.game_pk);
+            if (livePCents != null) {
+                // Case a) live prob ≥ 90% AND market paying ≥ 88¢
+                // (lock in the cushion).
+                if (livePCents >= 90 && yesBidCents >= 88) {
+                    hitHitterSell = true;
+                    hitterSellDetail = `live ${livePCents}¢ — threshold met, lock in`;
+                }
+                // Case b) live prob has dropped MORE than 10pp below
+                // entry our_p AND we still have profit. The market
+                // is reacting slower than the model — sell ahead.
+                else if (fire.our_p != null) {
+                    const ourPCentsEntry = Math.round(fire.our_p * 100);
+                    if (livePCents <= ourPCentsEntry - 10) {
+                        hitHitterSell = true;
+                        hitterSellDetail = `live ${livePCents}¢ vs entry-fair ${ourPCentsEntry}¢ — model cooled, lock`;
+                    }
+                }
+                // Case c) it's late (8th+) AND batter has no more
+                // PAs expected. Cash any remaining cents.
+                else if (gameInfo && gameInfo.inning >= 8 && gameInfo.turns_remaining < 0.3) {
+                    hitHitterSell = true;
+                    hitterSellDetail = `${gameInfo.inning}th, no more PAs — lock`;
+                }
+            }
+        }
+
+        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell) continue;
         // Already have a sell order resting?
         if (await hasOpenSellOrder(p.ticker)) continue;
 
@@ -745,10 +794,11 @@ async function runCashoutCheck() {
                 action: "sell",
             });
             const triggerParts = [];
-            if (hitAbsolute)    triggerParts.push("+abs");
-            if (hitEvCapture)   triggerParts.push(`+ev ${(captureFraction*100).toFixed(0)}%`);
-            if (hitLiveEv)      triggerParts.push(`+live (${liveEvDetail})`);
-            if (hitPitchCount)  triggerParts.push(`+pitch (${pitchCountDetail})`);
+            if (hitAbsolute)     triggerParts.push("+abs");
+            if (hitEvCapture)    triggerParts.push(`+ev ${(captureFraction*100).toFixed(0)}%`);
+            if (hitLiveEv)       triggerParts.push(`+live (${liveEvDetail})`);
+            if (hitPitchCount)   triggerParts.push(`+pitch (${pitchCountDetail})`);
+            if (hitHitterSell)   triggerParts.push(`+hit (${hitterSellDetail})`);
             const triggerTag = triggerParts.join(" / ");
             log("sell", `SELL ${qty}× ${p.ticker} YES @ ${yesBidCents}¢` +
                 ` (entry ${entryCents}¢, +${profitPerContract}¢/contract = $${((profitPerContract*qty)/100).toFixed(2)} profit, trigger: ${triggerTag})`,
@@ -809,6 +859,27 @@ const LIVE_PROPS_TTL_MS = 30000;
 // given pitcher's name in the given game, or null if the player isn't
 // the active pitcher on either side. Cached per game_pk for 30s
 // alongside the model-props cache.
+// Game state snapshot from the live model-props payload —
+// inning, half, estimated turns_remaining. Used by hitter-prop
+// cash-out triggers that need to know how many more PAs are
+// realistically left for the team's lineup.
+async function getLiveGameState(gamePk) {
+    if (!gamePk) return null;
+    let data = null;
+    const cached = _livePropsCache.get(gamePk);
+    if (cached && Date.now() - cached.t < LIVE_PROPS_TTL_MS) {
+        data = cached.data;
+    } else {
+        try {
+            const res = await fetch(`/api/game/${gamePk}/model-props`);
+            if (!res.ok) return null;
+            data = await res.json();
+            _livePropsCache.set(gamePk, { t: Date.now(), data });
+        } catch { return null; }
+    }
+    return data?.game_state || null;
+}
+
 async function getLivePitcherInfo(gamePk, playerName) {
     if (!gamePk || !playerName) return null;
     // Reuses the model-props cache — the live pitch count + per-

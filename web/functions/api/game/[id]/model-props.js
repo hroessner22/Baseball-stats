@@ -67,6 +67,23 @@ export async function onRequest(context) {
         }, 30);
     }
 
+    // Pull the current game state so we can de-rate hitter PA
+    // estimates as the game gets late. A batter due up in the 4th
+    // can reasonably expect 2-3 more PAs; the same lineup spot in
+    // the 8th probably gets one more if any.
+    const linescore = feedRaw?.liveData?.linescore || {};
+    const currentInning = parseInt(linescore.currentInning, 10) || 0;
+    const inningHalf    = linescore.inningHalf || linescore.inningState || ""; // "Top" / "Bottom"
+    const gameState = {
+        inning: currentInning,
+        half:   inningHalf,
+        // The "natural" expected remaining lineup turns from THIS
+        // point — anchored on the 8.5 innings = ~3 turns convention.
+        // Each subsequent inning past 4 trims about 1/3 turn off.
+        // Bottom of 9 (home leading) = 0.
+        turns_remaining: estimateLineupTurnsRemaining(currentInning, inningHalf),
+    };
+
     // 2) Fan out matchup calls. For each batter on each side, one call vs
     //    the opposing pitcher. Promise.allSettled so one 5xx doesn't kill
     //    every other player's projection.
@@ -96,10 +113,22 @@ export async function onRequest(context) {
         const { batter, matchup } = r.value;
         if (!matchup || !matchup.available || !matchup.predicted) continue;
         const p = matchup.predicted;
-        const paRemaining = Math.max(
+        // Two estimates for remaining PAs — keep the smaller:
+        //   1) Static: the season-average 4 PAs per batter minus
+        //      what they've already taken (legacy default).
+        //   2) Live game state: turns_remaining × 1 PA per turn
+        //      capped at 9 lineup positions per turn. A batter due
+        //      up in the 8th gets ~1 more if any; same spot in the
+        //      4th gets 2-3.
+        // The minimum of the two prevents overcounting in late
+        // innings where the static formula thinks 4 PAs are still
+        // coming but only 1 actually will.
+        const staticRemaining = Math.max(
             0,
             PA_PER_STARTER_BATTER - (batter.pa_taken || 0),
         );
+        const liveRemaining = Math.max(0, gameState.turns_remaining);
+        const paRemaining = Math.min(staticRemaining, liveRemaining);
         if (paRemaining === 0) continue;
         // Convert per-PA rates to per-game tail probabilities. Each stat
         // is the binomial tail at the requested threshold.
@@ -121,6 +150,8 @@ export async function onRequest(context) {
                     hit: round4(pHit),
                 },
                 pa_remaining: paRemaining,
+                pa_remaining_static: staticRemaining,
+                pa_remaining_live:   round4(liveRemaining),
                 pa_taken:     batter.pa_taken || 0,
             },
         };
@@ -235,12 +266,36 @@ export async function onRequest(context) {
         game_pk: parseInt(gameId, 10),
         available: true,
         lineups: teams,
+        game_state: gameState,
         model_props: modelProps,
         // Convenience lookup the frontend uses to map Kalshi market titles
         // ("Vinnie Pasquantino: 1+ home runs?") back to MLBAM ids without
         // a second roundtrip. Lowercase keys; trims punctuation/suffixes.
         name_to_mlbam: buildNameLookup(teams),
     }, 60);
+}
+
+// Rough "how many more lineup turns will this team get?" given the
+// current inning + half. Each lineup turn ≈ 1 PA per slot. Anchored
+// on the convention that a starter's 24 BF / 6 IP works out to ~2.6
+// turns; from any midgame point, we back-compute remaining turns
+// based on what's left of the regulation 8.5–9 innings.
+//
+// Top of N: away team has finished N-1 turns, batting now
+// Bot of N: home team has finished N-1 turns, batting now (or just
+// finished if 'Middle' / 'End')
+function estimateLineupTurnsRemaining(inning, half) {
+    if (!inning || inning < 1) return 3.0;         // pre-1st = full 3 turns
+    if (inning >= 10) return 0.5;                  // extras — very rough
+    const h = String(half || "").toLowerCase();
+    // Rough mapping inning + half → remaining PAs per slot. Average
+    // across home + away since most user-facing props are full-game.
+    const tableTop = [3.0, 2.6, 2.2, 1.8, 1.4, 1.0, 0.7, 0.4, 0.1];
+    const tableBot = [2.8, 2.4, 2.0, 1.6, 1.2, 0.8, 0.5, 0.2, 0.0];
+    const idx = Math.max(0, Math.min(8, inning - 1));
+    if (h.startsWith("top") || h.startsWith("mid")) return tableTop[idx];
+    if (h.startsWith("bot") || h.startsWith("end")) return tableBot[idx];
+    return tableTop[idx];   // unknown half — default to "top"
 }
 
 
