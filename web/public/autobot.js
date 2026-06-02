@@ -513,6 +513,49 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const our_p         = chooseNo ? no_our_p      : our_p_yes;
         const edgePP        = chooseNo ? no_edge_pp    : yes_edge_pp;
 
+        // ── SANITY GATES — refuse trades the orderbook can't actually
+        // support, even if the math says enormous edge. These are the
+        // 'Gleyber Torres under 1 HR at 1¢' class of fires: the listed
+        // ask is at floor, our model says 92%, math says +91pp edge,
+        // but the offer is either stale, fat-fingered, or 1 contract
+        // deep behind a 90¢ wall. Real fills at those prices basically
+        // never happen on liquid Kalshi markets, and when they do, we'd
+        // be transacting against someone making a mistake — not actual
+        // edge. Skip them entirely.
+
+        // 1) Floor-ask guard. NO ask of 0-2¢ implies the market thinks
+        //    YES is 98-100% likely. If our model agrees (our_p < 5%),
+        //    edge is tiny → handled by edge threshold. If our model
+        //    disagrees massively (e.g., our_p = 92%), the disagreement
+        //    is the bug, not the opportunity. Same logic applies to
+        //    YES asks at floor.
+        if (askCents != null && askCents <= 2) {
+            log("skip", `Floor-ask guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()} at ${askCents}¢: market priced at floor, model edge can't be trusted at the tail (raw edge ${edgePP.toFixed(1)}pp)`);
+            continue;
+        }
+
+        // 2) Orderbook coherence — YES ask + NO ask should sum to
+        //    around 100¢ on a real two-sided market. If the sum is
+        //    well below 100, the book is broken/thin/stale and our
+        //    edge math against either side is unreliable.
+        if (yesAskCents != null && noAskCents != null) {
+            const askSum = yesAskCents + noAskCents;
+            if (askSum < 85 || askSum > 115) {
+                log("skip", `Orderbook coherence — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: YES+NO asks = ${askSum}¢ (expected ~100); book is broken or thin`);
+                continue;
+            }
+        }
+
+        // 3) Tail-probability guard — when our model's belief on the
+        //    side we'd take is > 95%, we're in the tail of the
+        //    distribution where calibration is worst. Even if the
+        //    market mispriced, the EV math (+99×1¢ - 1×0¢ → looks
+        //    huge) overweights the upside that almost never fills.
+        if (our_p > 0.95) {
+            log("skip", `Tail-probability guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()}: our_p ${(our_p*100).toFixed(1)}% is past 95% calibration ceiling`);
+            continue;
+        }
+
         // Determine opposing pitcher for hitter props (used by H2H
         // factor); the K-prop path already targets the SAME pitcher.
         let oppPitcherId = null;
