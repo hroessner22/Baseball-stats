@@ -66,15 +66,39 @@ async function hydrateInitialSession() {
     renderHeaderWidget();
 }
 
+// 'Signed in as X' should fire on the actual sign-in, not on every
+// session restore — Supabase emits SIGNED_IN on page reload when a
+// stored session is re-hydrated, which was making the toast pop on
+// every page load. Gate by a localStorage flag keyed to the user
+// id so a sign-out + sign-in by the SAME user stays quiet too.
+const LS_SIGNIN_TOASTED = "diamond_context_signin_toasted";
+function hasToastedSignIn(userId) {
+    if (!userId) return false;
+    try { return localStorage.getItem(LS_SIGNIN_TOASTED) === userId; }
+    catch { return false; }
+}
+function markToastedSignIn(userId) {
+    try { localStorage.setItem(LS_SIGNIN_TOASTED, userId || ""); } catch {}
+}
+
 supabase.auth.onAuthStateChange((event, session) => {
     _currentUser = session?.user || null;
     notifyChange();
     renderHeaderWidget();
     if (event === "SIGNED_IN") {
-        toast(`Signed in as ${_currentUser?.email}`, "ok");
+        const uid = _currentUser?.id;
+        if (!hasToastedSignIn(uid)) {
+            toast(`Signed in as ${_currentUser?.email}`, "ok");
+            markToastedSignIn(uid);
+        }
         maybeShowKalshiGuideOnSignIn(_currentUser);
     }
-    if (event === "SIGNED_OUT") toast("Signed out", "ok");
+    if (event === "SIGNED_OUT") {
+        // Clear the marker so the next sign-in (potentially a
+        // different user on the same browser) gets one toast.
+        try { localStorage.removeItem(LS_SIGNIN_TOASTED); } catch {}
+        toast("Signed out", "ok");
+    }
 });
 
 // Show the Kalshi guide automatically ONCE per user, the very first

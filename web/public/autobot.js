@@ -2081,40 +2081,55 @@ function bindBotPaneHandlers(overlay) {
             refreshDrawerContent();
         }
     });
-    overlay.querySelector("[data-bot-export-fires]")?.addEventListener("click", async () => {
+    overlay.querySelector("[data-bot-export-fires]")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
         try {
             const fires = getFires();
-            if (!fires.length) { toast("No fires recorded yet", "ok"); return; }
+            if (!fires.length) { flashBtn(btn, "No fires yet", "err"); toast("No fires recorded yet", "err"); return; }
             const blob = JSON.stringify(fires, null, 2);
             await navigator.clipboard.writeText(blob);
+            flashBtn(btn, `✓ Copied ${fires.length} fires`, "ok");
             toast(`✓ Exported ${fires.length} fires — copied to clipboard, paste anywhere`, "ok");
         } catch (err) {
             console.error("[bot] export-fires failed", err);
+            flashBtn(btn, "✗ Failed", "err");
             toast(`Copy failed: ${err?.message || err}`, "err");
         }
     });
-    overlay.querySelector("[data-bot-eod-review]")?.addEventListener("click", async () => {
+    overlay.querySelector("[data-bot-eod-review]")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
         try {
+            flashBtn(btn, "Running…", "ok", 0);   // 0 = don't auto-restore
             await runEodReview();
+            flashBtn(btn, "EOD review", "ok", 1);  // restore immediately
         } catch (err) {
             console.error("[bot] eod-review failed", err);
+            flashBtn(btn, "✗ Failed", "err");
             toast(`EOD review failed: ${err?.message || err}`, "err");
         }
     });
-    overlay.querySelector("[data-bot-export-decisions]")?.addEventListener("click", async () => {
+    overlay.querySelector("[data-bot-export-decisions]")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
         try {
-            if (!root.BotScoring) { toast("Scoring framework not loaded", "err"); return; }
+            if (!root.BotScoring) { flashBtn(btn, "Scoring missing", "err"); toast("Scoring framework not loaded", "err"); return; }
             const decisions = root.BotScoring.getScoredDecisions(2000);
-            if (!decisions.length) { toast("No decisions logged yet (bot needs to run with fresh JS first)", "ok"); return; }
+            if (!decisions.length) {
+                flashBtn(btn, "0 decisions", "err");
+                toast("No decisions logged yet (bot needs to run with fresh JS first)", "err");
+                return;
+            }
             const blob = JSON.stringify(decisions, null, 2);
             await navigator.clipboard.writeText(blob);
+            flashBtn(btn, `✓ Copied ${decisions.length}`, "ok");
             toast(`✓ Exported ${decisions.length} decisions — copied to clipboard, paste anywhere`, "ok");
         } catch (err) {
             console.error("[bot] export-decisions failed", err);
+            flashBtn(btn, "✗ Failed", "err");
             toast(`Copy failed: ${err?.message || err}`, "err");
         }
     });
     overlay.querySelector("[data-bot-copy-all]")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
         // CRITICAL: clipboard.writeText() in most browsers requires
         // the user-gesture context still be active. Any `await` on
         // a fetch BEFORE the clipboard write breaks that chain and
@@ -2145,10 +2160,12 @@ function bindBotPaneHandlers(overlay) {
             };
             const blob = JSON.stringify(bundle, null, 2);
             await navigator.clipboard.writeText(blob);
+            flashBtn(btn, `✓ Copied ${fires.length} fires + ${decisions.length} decisions`, "ok");
             toast(`✓ Copied to clipboard — ${fires.length} fires, ${decisions.length} decisions, ${logRows.length} log rows. Paste in chat.`, "ok");
         } catch (err) {
             const msg = err?.message || String(err);
             console.error("[bot] copy-all failed", err);
+            flashBtn(btn, "✗ Failed", "err");
             toast(`Copy failed: ${msg}. Open console for details.`, "err");
         }
     });
@@ -2296,6 +2313,31 @@ function timeStr(ts) {
     const d = new Date(ts);
     return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
 }
+// Flash the button label as inline confirmation feedback. Even
+// if the toast layer fails for some reason (z-index, ad blocker,
+// browser quirk), the user sees the button itself change.
+//   flashBtn(btn, "✓ Copied 33 fires", "ok")
+//   flashBtn(btn, "✗ Failed", "err")
+//   flashBtn(btn, "Running…", "ok", 0) — don't auto-restore
+function flashBtn(btn, message, kind = "ok", durationSec = 2.5) {
+    if (!btn) return;
+    if (!btn._origLabel) btn._origLabel = btn.textContent;
+    btn.textContent = message;
+    btn.classList.add(kind === "ok" ? "btn-flash-ok" : "btn-flash-err");
+    if (durationSec === 1) {
+        // Restore immediately (used as a "reset to original label").
+        btn.classList.remove("btn-flash-ok", "btn-flash-err");
+        btn.textContent = btn._origLabel;
+        return;
+    }
+    if (durationSec <= 0) return;   // 0 = keep flashed indefinitely
+    if (btn._flashTimer) clearTimeout(btn._flashTimer);
+    btn._flashTimer = setTimeout(() => {
+        btn.classList.remove("btn-flash-ok", "btn-flash-err");
+        btn.textContent = btn._origLabel;
+    }, durationSec * 1000);
+}
+
 function toast(msg, kind = "ok") {
     // Try Kalshi's toast surface first (older sites expose it);
     // otherwise render our own DOM-backed toast. The previous

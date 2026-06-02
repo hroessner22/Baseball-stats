@@ -9359,15 +9359,37 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border-color: rgba(34, 197, 94, 0.55);
 }
 
+/* Inline flash state on bot buttons — used as REDUNDANT
+   confirmation feedback so the user sees something happen even if
+   the toast layer fails for any reason. Briefly overrides the
+   button's base color with a bright accent ring + bg. */
+.btn-flash-ok {
+    background: rgba(34, 197, 94, 0.32) !important;
+    border-color: rgba(34, 197, 94, 0.85) !important;
+    color: #fff !important;
+    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.4),
+                0 0 16px rgba(34, 197, 94, 0.4);
+    transition: background 120ms, border-color 120ms, box-shadow 120ms;
+}
+.btn-flash-err {
+    background: rgba(239, 68, 68, 0.32) !important;
+    border-color: rgba(239, 68, 68, 0.85) !important;
+    color: #fff !important;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.4),
+                0 0 16px rgba(239, 68, 68, 0.4);
+    transition: background 120ms, border-color 120ms, box-shadow 120ms;
+}
+
 /* Bot's own toast layer — a real popup, not a console fallback.
-   Sits center-low on the viewport, scales in with a subtle bounce
-   so the user can't miss it. Auto-fades after 4s. */
+   Moved to TOP-CENTER (was bottom-80) so it can't be hidden
+   behind the bottom nav, active-bets strip, or drawer footer.
+   Scales in with a slight bounce so it actually catches the eye. */
 .bot-toasts {
     position: fixed;
-    bottom: 80px;
+    top: 80px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 11000;
+    z-index: 99999;       /* above EVERYTHING — drawer, modal, nav, nav-strip */
     display: flex;
     flex-direction: column;
     gap: 10px;
