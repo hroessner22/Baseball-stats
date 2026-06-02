@@ -1261,6 +1261,9 @@ function drawerHtml(initialTab) {
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
             Active Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
+          <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
+            Performance
+          </button>
           <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
             History <span class="bot-tab-count" data-history-count>0</span>
           </button>
@@ -1271,10 +1274,11 @@ function drawerHtml(initialTab) {
             Bot
           </button>
         </nav>
-        <div class="bot-tab-pane ${initialTab === "bets"      ? "active" : ""}" data-pane="bets"></div>
-        <div class="bot-tab-pane ${initialTab === "history"   ? "active" : ""}" data-pane="history"></div>
-        <div class="bot-tab-pane ${initialTab === "decisions" ? "active" : ""}" data-pane="decisions"></div>
-        <div class="bot-tab-pane ${initialTab === "bot"       ? "active" : ""}" data-pane="bot"></div>
+        <div class="bot-tab-pane ${initialTab === "bets"        ? "active" : ""}" data-pane="bets"></div>
+        <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
+        <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
+        <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
+        <div class="bot-tab-pane ${initialTab === "bot"         ? "active" : ""}" data-pane="bot"></div>
       </div>
     `;
 }
@@ -1302,10 +1306,11 @@ function bindDrawer(overlay) {
 async function refreshDrawerContent() {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
-    overlay.querySelector("[data-pane='bets']").innerHTML      = await renderOpenBetsPane();
-    overlay.querySelector("[data-pane='history']").innerHTML   = await renderHistoryPane();
-    overlay.querySelector("[data-pane='decisions']").innerHTML = renderDecisionsPane();
-    overlay.querySelector("[data-pane='bot']").innerHTML       = renderBotPane();
+    overlay.querySelector("[data-pane='bets']").innerHTML        = await renderOpenBetsPane();
+    overlay.querySelector("[data-pane='performance']").innerHTML = await renderPerformancePane();
+    overlay.querySelector("[data-pane='history']").innerHTML     = await renderHistoryPane();
+    overlay.querySelector("[data-pane='decisions']").innerHTML   = renderDecisionsPane();
+    overlay.querySelector("[data-pane='bot']").innerHTML         = renderBotPane();
     bindBotPaneHandlers(overlay);
     bindBetsPaneHandlers(overlay);
     // Update count chips on the Bets + History + Decisions tabs.
@@ -1676,6 +1681,276 @@ function renderRecentSection(fires, mps, resting, sourceTag, heading) {
       </div>
     `;
 }
+
+// ── Performance pane ──────────────────────────────────────────────
+//
+// 'How am I doing?' at a glance. Pulls the fire log + Kalshi
+// settlements, computes per-day P/L, win rates broken out by stat
+// type and edge band, and surfaces what the bot did well vs poorly.
+// All client-side — no new endpoint, data already lives in
+// localStorage + Kalshi.
+async function renderPerformancePane() {
+    const fires = getFires();
+    if (!fires.length) {
+        return `
+          <div class="bot-empty">
+            <p>No betting history yet.</p>
+            <p class="bot-empty-sub">Turn the bot on; every fire shows up here and rolls into the performance numbers as Kalshi settles each market.</p>
+          </div>
+        `;
+    }
+
+    let settlements = [];
+    let connected = false;
+    if (root.Kalshi && root.Kalshi.isConnected && root.Kalshi.isConnected()) {
+        connected = true;
+        try {
+            if (root.Kalshi.getSettlements) settlements = await root.Kalshi.getSettlements();
+        } catch { /* fall through with empty settlements */ }
+    }
+    const settleByTicker = new Map();
+    for (const s of settlements) {
+        if (s.ticker) settleByTicker.set(s.ticker, s);
+    }
+
+    // Per-fire P/L (positive = win, negative = loss, null = unsettled).
+    const enriched = fires.map((f) => {
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const settle = settleByTicker.get(f.ticker);
+        let pnl = null;
+        let state = "open";
+        if (settle) {
+            const yesCount = Number(settle.yes_count) || 0;
+            const noCount  = Number(settle.no_count)  || 0;
+            const revenue  = Number(settle.revenue)   || 0;
+            const fireSide = f.side || "yes";
+            const won = (fireSide === "yes")
+                ? (settle.market_result === "yes" && yesCount > 0)
+                : (settle.market_result === "no"  && noCount  > 0);
+            pnl   = revenue - cost;
+            state = won ? "won" : "lost";
+        }
+        return { ...f, cost, pnl, state };
+    });
+
+    const settled    = enriched.filter((f) => f.state !== "open");
+    const wins       = settled.filter((f) => f.state === "won");
+    const losses     = settled.filter((f) => f.state === "lost");
+    const winRate    = settled.length ? wins.length / settled.length : 0;
+    const totalPnl   = settled.reduce((s, f) => s + (f.pnl || 0), 0);
+    const totalCost  = settled.reduce((s, f) => s + f.cost, 0);
+    const roi        = totalCost > 0 ? totalPnl / totalCost : 0;
+
+    // Per-day rollup (last 14 days, UTC).
+    const dayPnl = new Map();   // YYYY-MM-DD → net cents
+    for (const f of settled) {
+        const day = (f.placed_at || "").slice(0, 10);
+        if (!day) continue;
+        dayPnl.set(day, (dayPnl.get(day) || 0) + (f.pnl || 0));
+    }
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const days = [];
+    for (let i = 13; i >= 0; i--) {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() - i);
+        const k = d.toISOString().slice(0, 10);
+        days.push({ key: k, pnl: dayPnl.get(k) || 0, isToday: k === todayKey });
+    }
+    const todayPnl = dayPnl.get(todayKey) || 0;
+
+    // Per-stat rollup.
+    const byStat = {};
+    for (const f of settled) {
+        const stat = f.kind === "moneyline" ? "moneyline" : (f.stat || "—");
+        if (!byStat[stat]) byStat[stat] = { wins: 0, losses: 0, pnl: 0 };
+        if (f.state === "won")  byStat[stat].wins   += 1;
+        if (f.state === "lost") byStat[stat].losses += 1;
+        byStat[stat].pnl += (f.pnl || 0);
+    }
+
+    // Per-edge-band rollup.
+    const bands = [
+        { label: "2-5pp",   min: 2,  max: 5 },
+        { label: "5-7pp",   min: 5,  max: 7 },
+        { label: "7-10pp",  min: 7,  max: 10 },
+        { label: "10pp+",   min: 10, max: 999 },
+    ];
+    const byBand = bands.map((b) => {
+        const inBand = settled.filter((f) =>
+            (f.edge_pp || 0) >= b.min && (f.edge_pp || 0) < b.max
+        );
+        return {
+            ...b,
+            count:  inBand.length,
+            wins:   inBand.filter((f) => f.state === "won").length,
+            losses: inBand.filter((f) => f.state === "lost").length,
+            pnl:    inBand.reduce((s, f) => s + (f.pnl || 0), 0),
+        };
+    });
+
+    // Per-source (bot vs manual) rollup.
+    const bot    = settled.filter((f) => f.source !== "manual");
+    const manual = settled.filter((f) => f.source === "manual");
+
+    return `
+      <div class="bot-status-banner">
+        <span class="bot-status-row">
+          <span class="bot-status-dot ${connected ? "bot-status-ok" : ""}"></span>
+          ${connected ? "Kalshi connected" : "Kalshi NOT connected — settle counts may be stale"}
+          · ${fires.length} bet${fires.length === 1 ? "" : "s"} placed, ${settled.length} settled
+        </span>
+      </div>
+
+      <!-- HEADLINE STATS — what you'd glance at first thing -->
+      <div class="bot-perf-headline">
+        ${perfStatCard("Today P/L",
+            (todayPnl >= 0 ? "+" : "") + "$" + (todayPnl/100).toFixed(2),
+            todayPnl >= 0 ? "win" : "lose")}
+        ${perfStatCard("All-time P/L",
+            (totalPnl >= 0 ? "+" : "") + "$" + (totalPnl/100).toFixed(2),
+            totalPnl >= 0 ? "win" : "lose")}
+        ${perfStatCard("Win rate",
+            settled.length ? (winRate * 100).toFixed(0) + "%" : "—",
+            winRate >= 0.5 ? "win" : settled.length ? "lose" : "")}
+        ${perfStatCard("ROI",
+            settled.length ? (roi >= 0 ? "+" : "") + (roi * 100).toFixed(1) + "%" : "—",
+            roi >= 0 ? "win" : "lose")}
+        ${perfStatCard("Settled", `${wins.length}-${losses.length}`, "")}
+        ${perfStatCard("Open", String(enriched.length - settled.length), "")}
+      </div>
+
+      <!-- 14-day P/L sparkline -->
+      <div class="bot-section">
+        <h3>Last 14 days <span class="bot-section-sub">net P/L per day</span></h3>
+        ${perfSparkline(days)}
+      </div>
+
+      <!-- Win rate by stat type -->
+      <div class="bot-section">
+        <h3>By bet type <span class="bot-section-sub">win rate + net P/L per category</span></h3>
+        <table class="bot-table bot-table-history">
+          <thead><tr><th>Type</th><th>W-L</th><th>Win %</th><th>Net P/L</th><th>Sample</th></tr></thead>
+          <tbody>
+            ${Object.entries(byStat).sort((a,b) => (b[1].wins+b[1].losses)-(a[1].wins+a[1].losses)).map(([stat, agg]) => {
+                const total = agg.wins + agg.losses;
+                const wr = total ? agg.wins/total : 0;
+                return `
+                  <tr>
+                    <td>${escapeText(shortStatLabel(stat))}</td>
+                    <td>${agg.wins}-${agg.losses}</td>
+                    <td>${total ? (wr*100).toFixed(0) + "%" : "—"}</td>
+                    <td class="${agg.pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${agg.pnl >= 0 ? "+" : ""}$${(agg.pnl/100).toFixed(2)}</td>
+                    <td><div class="bot-perf-bar"><span style="width:${total ? wr*100 : 0}%; background:${wr >= 0.5 ? "var(--accent-win)" : "var(--accent-live)"};"></span></div></td>
+                  </tr>
+                `;
+            }).join("") || `<tr><td colspan="5">No settled bets yet</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Win rate by edge band -->
+      <div class="bot-section">
+        <h3>By edge magnitude <span class="bot-section-sub">conviction tier vs result</span></h3>
+        <table class="bot-table bot-table-history">
+          <thead><tr><th>Edge band</th><th>W-L</th><th>Win %</th><th>Net P/L</th><th>Sample</th></tr></thead>
+          <tbody>
+            ${byBand.map((b) => {
+                const total = b.wins + b.losses;
+                const wr = total ? b.wins/total : 0;
+                return `
+                  <tr>
+                    <td>${b.label}</td>
+                    <td>${b.wins}-${b.losses}</td>
+                    <td>${total ? (wr*100).toFixed(0) + "%" : "—"}</td>
+                    <td class="${b.pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${b.pnl >= 0 ? "+" : ""}$${(b.pnl/100).toFixed(2)}</td>
+                    <td><div class="bot-perf-bar"><span style="width:${total ? wr*100 : 0}%; background:${wr >= 0.5 ? "var(--accent-win)" : "var(--accent-live)"};"></span></div></td>
+                  </tr>
+                `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      ${bot.length || manual.length ? `
+        <div class="bot-section">
+          <h3>Bot vs manual <span class="bot-section-sub">which path is working</span></h3>
+          <table class="bot-table bot-table-history">
+            <thead><tr><th>Source</th><th>Settled</th><th>Win %</th><th>Net P/L</th></tr></thead>
+            <tbody>
+              ${[
+                  { label: "BOT", arr: bot   },
+                  { label: "YOU", arr: manual },
+              ].filter(g => g.arr.length).map(g => {
+                  const w = g.arr.filter(f => f.state === "won").length;
+                  const l = g.arr.filter(f => f.state === "lost").length;
+                  const pnl = g.arr.reduce((s, f) => s + (f.pnl || 0), 0);
+                  const wr = (w + l) ? w / (w + l) : 0;
+                  return `
+                    <tr>
+                      <td>${g.label === "BOT" ? `<span class="bet-src bet-src-bot">BOT</span>` : `<span class="bet-src bet-src-user">YOU</span>`}</td>
+                      <td>${g.arr.length}</td>
+                      <td>${(w + l) ? (wr*100).toFixed(0) + "%" : "—"}</td>
+                      <td class="${pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${pnl >= 0 ? "+" : ""}$${(pnl/100).toFixed(2)}</td>
+                    </tr>
+                  `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : ""}
+    `;
+}
+
+// Small reusable stat card.
+function perfStatCard(label, value, tone) {
+    const cls = tone === "win" ? "bot-perf-stat-win"
+              : tone === "lose" ? "bot-perf-stat-lose"
+              : "";
+    return `
+      <div class="bot-perf-stat ${cls}">
+        <span class="bot-perf-stat-label">${escapeText(label)}</span>
+        <span class="bot-perf-stat-value">${escapeText(value)}</span>
+      </div>
+    `;
+}
+
+// 14-day P/L sparkline — inline SVG, bar-style. Green bars for
+// up days, red for down. Today gets a contrasting outline.
+function perfSparkline(days) {
+    const max = Math.max(1, ...days.map(d => Math.abs(d.pnl)));
+    const w = 600;
+    const h = 80;
+    const barW = w / days.length;
+    const midY = h / 2;
+    const bars = days.map((d, i) => {
+        const x = i * barW + 2;
+        const barH = (Math.abs(d.pnl) / max) * (h * 0.45);
+        const y = d.pnl >= 0 ? midY - barH : midY;
+        const color = d.pnl > 0 ? "var(--accent-win)"
+                    : d.pnl < 0 ? "var(--accent-live)"
+                    : "var(--text-faint)";
+        const ring = d.isToday ? `<rect x="${x - 1}" y="0" width="${barW - 2}" height="${h}" fill="none" stroke="var(--accent-action)" stroke-width="1" stroke-dasharray="2 2" rx="2"/>` : "";
+        return `
+          ${ring}
+          <rect x="${x}" y="${y}" width="${Math.max(2, barW - 4)}" height="${Math.max(2, barH)}" fill="${color}" rx="1"/>
+        `;
+    }).join("");
+    const labels = days.filter((_, i) => i === 0 || i === days.length - 1 || i === 6)
+        .map((d, idx) => {
+            const x = days.findIndex(x => x.key === d.key) * barW + barW/2;
+            const label = d.isToday ? "today"
+                        : new Date(d.key + "T00:00:00Z").toUTCString().slice(8, 11);
+            return `<text x="${x}" y="${h - 4}" font-size="9" fill="var(--text-faint)" text-anchor="middle" font-family="ui-monospace, monospace">${label}</text>`;
+        }).join("");
+    return `
+      <svg class="bot-perf-spark" viewBox="0 0 ${w} ${h + 14}" width="100%" preserveAspectRatio="none">
+        <line x1="0" y1="${midY}" x2="${w}" y2="${midY}" stroke="var(--border)" stroke-width="1"/>
+        ${bars}
+        ${labels}
+      </svg>
+    `;
+}
+
 
 function shortStatLabel(s) {
     switch (s) {
