@@ -1711,34 +1711,60 @@ async function renderPerformancePane() {
     }
 
     let settlements = [];
+    let fills = [];
     let connected = false;
     if (root.Kalshi && root.Kalshi.isConnected && root.Kalshi.isConnected()) {
         connected = true;
         try {
-            if (root.Kalshi.getSettlements) settlements = await root.Kalshi.getSettlements();
-        } catch { /* fall through with empty settlements */ }
+            const got = await Promise.all([
+                root.Kalshi.getSettlements ? root.Kalshi.getSettlements() : Promise.resolve([]),
+                root.Kalshi.getFills       ? root.Kalshi.getFills()       : Promise.resolve([]),
+            ]);
+            settlements = got[0] || [];
+            fills       = got[1] || [];
+        } catch { /* fall through with empty */ }
     }
     const settleByTicker = new Map();
     for (const s of settlements) {
         if (s.ticker) settleByTicker.set(s.ticker, s);
     }
+    // Build per-ticker sell-fill revenue. When the bot cashes out
+    // before market settle, the settlement record shows yes_count=0
+    // and revenue=0 (because we held nothing at settle time). The
+    // ACTUAL revenue from that bet lives in the sell fills.
+    // Settlement-based win/loss math missed every cashed-out winner.
+    const sellRevenueByTicker = new Map();
+    for (const f of fills) {
+        if (!f.ticker || !(Number(f.count) > 0)) continue;
+        const action = (f.action || "").toLowerCase();
+        if (action !== "sell") continue;
+        const side  = (f.side || "").toLowerCase();
+        const price = (side === "yes") ? f.yes_price : f.no_price;
+        if (!(price > 0)) continue;
+        sellRevenueByTicker.set(
+            f.ticker,
+            (sellRevenueByTicker.get(f.ticker) || 0) + Number(f.count) * price
+        );
+    }
 
-    // Per-fire P/L (positive = win, negative = loss, null = unsettled).
+    // Per-fire P/L. Real revenue = settlement revenue + cash-out
+    // proceeds. The bet is RESOLVED when we have either a
+    // settlement record OR a sell fill (we got paid).
     const enriched = fires.map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
-        const settle = settleByTicker.get(f.ticker);
+        const settle  = settleByTicker.get(f.ticker);
+        const sellRev = sellRevenueByTicker.get(f.ticker) || 0;
+        const settleRev = settle ? (Number(settle.revenue) || 0) : 0;
+        const totalRev  = settleRev + sellRev;
         let pnl = null;
         let state = "open";
-        if (settle) {
-            const yesCount = Number(settle.yes_count) || 0;
-            const noCount  = Number(settle.no_count)  || 0;
-            const revenue  = Number(settle.revenue)   || 0;
-            const fireSide = f.side || "yes";
-            const won = (fireSide === "yes")
-                ? (settle.market_result === "yes" && yesCount > 0)
-                : (settle.market_result === "no"  && noCount  > 0);
-            pnl   = revenue - cost;
-            state = won ? "won" : "lost";
+        if (settle || sellRev > 0) {
+            pnl = totalRev - cost;
+            // P/L sign is the truth — works for both settled wins
+            // AND cash-out wins. Was previously checking yes_count
+            // which goes to 0 the moment you sell, miscounting every
+            // cash-out winner as a loss.
+            state = pnl > 0 ? "won" : "lost";
         }
         return { ...f, cost, pnl, state };
     });
@@ -2131,33 +2157,26 @@ async function renderHistoryPane() {
         const sellFills = sellFillsByTicker.get(f.ticker) || [];
 
         let resultCell;
-        if (settle) {
-            const yesCount = Number(settle.yes_count) || 0;
-            const noCount  = Number(settle.no_count)  || 0;
-            const revenue  = Number(settle.revenue)   || 0;
-            const fireSide = f.side || "yes";
-            const won = (fireSide === "yes")
-                ? (settle.market_result === "yes" && yesCount > 0)
-                : (settle.market_result === "no"  && noCount  > 0);
-            const pnlDollars = (revenue - cost) / 100;
-            if (won) {
-                resultCell = `<span class="bet-result bet-result-won">WON +$${pnlDollars.toFixed(2)}</span>`;
-            } else {
-                resultCell = `<span class="bet-result bet-result-lost">LOST -$${(cost/100).toFixed(2)}</span>`;
-            }
-        } else if (sellFills.length) {
-            // Bot (or you) sold this position before settlement.
-            // Compute realized P/L from the SELL fill prices vs
-            // our entry cost. Weighted by contract count when
-            // multiple sell fills exist.
-            const totalSold = sellFills.reduce((s, x) => s + x.count, 0);
-            const grossSell = sellFills.reduce((s, x) => s + x.count * x.price, 0);
-            const pnlCents  = grossSell - cost;
+        // Real revenue = whatever Kalshi paid us at settle PLUS
+        // any cash-out proceeds. Either or both can be present —
+        // the previous code preferred settlement-only, which
+        // returned 0 for any bet we'd already sold and miscounted
+        // every cashed-out winner as a loss.
+        const sellRev   = sellFills.reduce((s, x) => s + x.count * x.price, 0);
+        const settleRev = settle ? (Number(settle.revenue) || 0) : 0;
+        const totalRev  = settleRev + sellRev;
+        if (settle || sellRev > 0) {
+            const pnlCents   = totalRev - cost;
             const pnlDollars = pnlCents / 100;
+            // Tag: SETTLED vs CASHED, based on which path produced
+            // the revenue. WON/LOST is just P/L sign.
+            const tag = sellRev > 0 && !settle ? "CASHED"
+                      : sellRev > 0 ? "CLOSED"     // both — sold then market settled
+                      : pnlCents >= 0 ? "WON" : "LOST";
             if (pnlCents >= 0) {
-                resultCell = `<span class="bet-result bet-result-won">CASHED +$${pnlDollars.toFixed(2)}</span>`;
+                resultCell = `<span class="bet-result bet-result-won">${tag} +$${pnlDollars.toFixed(2)}</span>`;
             } else {
-                resultCell = `<span class="bet-result bet-result-lost">CASHED -$${Math.abs(pnlDollars).toFixed(2)}</span>`;
+                resultCell = `<span class="bet-result bet-result-lost">${tag} -$${Math.abs(pnlDollars).toFixed(2)}</span>`;
             }
         } else if (positionTickers.has(f.ticker)) {
             resultCell = `<span class="bet-state bet-state-held">HELD</span>`;
@@ -2208,27 +2227,19 @@ async function renderHistoryPane() {
 
     const daySections = sortedDays.map((dayKey) => {
         const dayFires = byDay.get(dayKey);
-        // Day-scoped aggregates — counts BOTH settled bets AND
-        // cashed-out bets (sold via fills before settlement).
+        // Day-scoped aggregates — P/L sign as truth, revenue is
+        // the sum of settlement + cash-out fills.
         let dayWins = 0, dayLosses = 0, dayPnl = 0;
         for (const f of dayFires) {
             const cost = (f.contracts || 1) * (f.price_cents || 0);
             const s = settlementByTicker.get(f.ticker);
             const sellFills = sellFillsByTicker.get(f.ticker) || [];
-            if (s) {
-                const yesCount = Number(s.yes_count) || 0;
-                const noCount  = Number(s.no_count)  || 0;
-                const fireSide = f.side || "yes";
-                const won = (fireSide === "yes")
-                    ? (s.market_result === "yes" && yesCount > 0)
-                    : (s.market_result === "no"  && noCount  > 0);
-                dayPnl += (Number(s.revenue) || 0) - cost;
-                if (won) dayWins++; else dayLosses++;
-            } else if (sellFills.length) {
-                const grossSell = sellFills.reduce((sum, x) => sum + x.count * x.price, 0);
-                const pnl = grossSell - cost;
+            const sellRev   = sellFills.reduce((sum, x) => sum + x.count * x.price, 0);
+            const settleRev = s ? (Number(s.revenue) || 0) : 0;
+            if (s || sellRev > 0) {
+                const pnl = (settleRev + sellRev) - cost;
                 dayPnl += pnl;
-                if (pnl >= 0) dayWins++; else dayLosses++;
+                if (pnl > 0) dayWins++; else dayLosses++;
             }
         }
         const daySettled = dayWins + dayLosses;
@@ -2261,9 +2272,7 @@ async function renderHistoryPane() {
         `;
     }).join("");
 
-    // Top-line banner — net P/L across SETTLED and CASHED bets.
-    // Cash-outs (sold via fills before settlement) count too;
-    // historically we were ignoring them and missing wins.
+    // Top-line banner — P/L sign on combined revenue.
     let netCents = 0;
     let resolvedCount = 0;
     let resolvedWins  = 0;
@@ -2272,23 +2281,13 @@ async function renderHistoryPane() {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const s = settlementByTicker.get(f.ticker);
         const sellFills = sellFillsByTicker.get(f.ticker) || [];
-        if (s) {
+        const sellRev   = sellFills.reduce((sum, x) => sum + x.count * x.price, 0);
+        const settleRev = s ? (Number(s.revenue) || 0) : 0;
+        if (s || sellRev > 0) {
             resolvedCount++;
-            const yesCount = Number(s.yes_count) || 0;
-            const noCount  = Number(s.no_count)  || 0;
-            const fireSide = f.side || "yes";
-            const won = (fireSide === "yes")
-                ? (s.market_result === "yes" && yesCount > 0)
-                : (s.market_result === "no"  && noCount  > 0);
-            const pnl = (Number(s.revenue) || 0) - cost;
+            const pnl = (settleRev + sellRev) - cost;
             netCents += pnl;
-            if (won) resolvedWins++; else resolvedLosses++;
-        } else if (sellFills.length) {
-            resolvedCount++;
-            const grossSell = sellFills.reduce((sum, x) => sum + x.count * x.price, 0);
-            const pnl = grossSell - cost;
-            netCents += pnl;
-            if (pnl >= 0) resolvedWins++; else resolvedLosses++;
+            if (pnl > 0) resolvedWins++; else resolvedLosses++;
         }
     }
     const winRate = resolvedCount ? (resolvedWins / resolvedCount) : null;
