@@ -1764,9 +1764,9 @@ async function renderOpenBetsPane() {
           </div>
         `;
     }
-    let positions, orders, fills;
+    let positions, orders, fills, settlements;
     try {
-        [positions, orders, fills] = await Promise.all([
+        [positions, orders, fills, settlements] = await Promise.all([
             root.Kalshi.getPositions(),
             root.Kalshi.getOpenOrders(),
             // /portfolio/fills lists every trade execution Kalshi
@@ -1774,6 +1774,11 @@ async function renderOpenBetsPane() {
             // here so the user sees what ACTUALLY happened on
             // Kalshi's side — not just net position state.
             root.Kalshi.getFills ? root.Kalshi.getFills() : Promise.resolve([]),
+            // Settlements pulled here too — needed to compute the
+            // 'live' fire set (anything still in flight = not
+            // settled AND not cashed out). Without it, settled bets
+            // appear orphaned in the Bets pane.
+            root.Kalshi.getSettlements ? root.Kalshi.getSettlements() : Promise.resolve([]),
         ]);
     } catch (e) {
         return `<div class="bot-empty"><p>Couldn't load positions: ${escapeText(e.message || e)}</p></div>`;
@@ -1784,6 +1789,31 @@ async function renderOpenBetsPane() {
     const resting = (orders || []);
     const allFills = (fills || []);
     const fires   = getFires();
+
+    // Sell-fill + settlement sets for resolution checks below.
+    const sellTickers = new Set();
+    for (const f of allFills) {
+        if ((f.action || "").toLowerCase() === "sell" && f.ticker && Number(f.count) > 0) {
+            sellTickers.add(f.ticker);
+        }
+    }
+    const settleTickers = new Set((settlements || []).map((s) => s.ticker));
+    const mpsTickers    = new Set(mps.map((p) => p.ticker));
+    const restingTix    = new Set(resting.map((o) => o.ticker));
+
+    // LIVE FIRES = our fires that aren't already shown as a Kalshi
+    // position AND aren't resolved (no settlement, no cash-out).
+    // These are the 'in flight per our log but Kalshi-side state is
+    // ambiguous' bets — they should show in Bets, not in History,
+    // until Kalshi catches up or the market settles.
+    const liveFires = fires.filter((f) => {
+        if (!f.ticker) return false;
+        if (mpsTickers.has(f.ticker))     return false;   // shown as full position
+        if (settleTickers.has(f.ticker))  return false;   // settled = History
+        if (sellTickers.has(f.ticker))    return false;   // cashed out = History
+        if (restingTix.has(f.ticker))     return false;   // shown as resting (below)
+        return true;
+    });
 
     // Build a map ticker → most-recent bet record so we can both tag
     // the row's source AND surface the edge / model probabilities
@@ -1822,44 +1852,42 @@ async function renderOpenBetsPane() {
       </div>
     `;
 
+    // LIVE block — shown ALWAYS when liveFires is non-empty, even if
+    // Kalshi reports positions of its own. These are bets we placed
+    // that aren't yet resolved (no settlement, no sell-fill) and
+    // aren't already shown as a Kalshi market_position.
+    const liveBlock = liveFires.length
+        ? `
+            <div class="bot-recent-section">
+              <div class="bot-recent-head">
+                Live (per local log) — ${liveFires.length} bet${liveFires.length === 1 ? "" : "s"}
+                <span class="bot-recent-hint">Kalshi-side state not yet visible · refreshes every 12s</span>
+              </div>
+              <div class="bot-recent-list">
+                ${liveFires.slice(0, 30).map(renderRecentFireRow).join("")}
+              </div>
+            </div>
+          `
+        : "";
+
     if (!mps.length && !resting.length) {
-        // No live positions, no resting orders → this tab is technically
-        // empty. BUT — Kalshi's positions endpoint lags fills by 1-3s,
-        // and the bot's aggressive cash-out can close positions inside
-        // the same minute. So fires from the LAST 5 MINUTES get
-        // surfaced here as a 'just happened' strip — even if they're
-        // already closed Kalshi-side. Gives the user proof that bets
-        // are in fact firing.
-        const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-        const recentFires = fires.filter((f) => {
-            const t = new Date(f.placed_at || 0).getTime();
-            return t > fiveMinAgo;
-        });
+        // No live Kalshi positions, no resting orders. Still might
+        // have liveFires (bets we logged but Kalshi doesn't show in
+        // positions yet) — render those above the empty state.
         const hasFills = allFills.length > 0;
-        const recentBlock = recentFires.length
-            ? `
-                <div class="bot-recent-section">
-                  <div class="bot-recent-head">
-                    Last 5 min — ${recentFires.length} bet${recentFires.length === 1 ? "" : "s"} fired
-                    <span class="bot-recent-hint">closed already? check Fills + History</span>
-                  </div>
-                  <div class="bot-recent-list">
-                    ${recentFires.slice(0, 10).map(renderRecentFireRow).join("")}
-                  </div>
-                </div>
-              `
-            : "";
         return `
           ${statusBanner}
-          ${recentBlock}
-          <div class="bot-empty">
-            <p>No active bets right now.</p>
-            <p class="bot-empty-sub">
-              ${fires.length
-                  ? `Past bets are in <strong>History</strong> — ${fires.length} bet${fires.length === 1 ? "" : "s"} recorded.`
-                  : "Every bet — bot or manual — shows up here the moment it fills."}
-            </p>
-          </div>
+          ${liveBlock}
+          ${liveFires.length ? "" : `
+            <div class="bot-empty">
+              <p>No active bets right now.</p>
+              <p class="bot-empty-sub">
+                ${fires.length
+                    ? `Past bets are in <strong>History</strong> — resolved bets only.`
+                    : "Every bet — bot or manual — shows up here the moment it fills."}
+              </p>
+            </div>
+          `}
           ${hasFills ? renderFillsSection(allFills) : ""}
         `;
     }
@@ -1941,6 +1969,7 @@ async function renderOpenBetsPane() {
           </table>
         </div>
       ` : ""}
+      ${liveBlock}
       ${allFills.length ? renderFillsSection(allFills) : ""}
     `;
 }
@@ -2585,16 +2614,32 @@ async function renderHistoryPane() {
         `;
     };
 
-    // Group fires by local calendar day (YYYY-MM-DD). Order
+    // HISTORY = RESOLVED ONLY. A bet is resolved when EITHER:
+    //   - Kalshi has a settlement record for the ticker, OR
+    //   - We have at least one sell fill (cash-out).
+    // Anything else — HELD, RESTING, PLACED, or "Kalshi lost track" —
+    // belongs in the Bets pane, not here. Without this filter the
+    // History tab showed in-flight bets as 'PLACED' rows, which the
+    // user (correctly) called out as misclassified.
+    const resolvedFires = fires.filter((f) => {
+        const settle = settlementByTicker.get(f.ticker);
+        const sellFills = sellFillsByTicker.get(f.ticker) || [];
+        return !!settle || sellFills.length > 0;
+    });
+
+    // Group resolved fires by local calendar day (YYYY-MM-DD). Order
     // newest day first — within each day, newest bet first.
     const byDay = new Map();
-    for (const f of fires.slice(0, 500)) {
+    for (const f of resolvedFires.slice(0, 500)) {
         if (!f.placed_at) continue;
         const d = new Date(f.placed_at);
         const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
         if (!byDay.has(dayKey)) byDay.set(dayKey, []);
         byDay.get(dayKey).push(f);
     }
+    // Live count = total fires minus resolved. Show this in the
+    // status banner so the user knows where the in-flight ones went.
+    const liveCount = fires.length - resolvedFires.length;
     // Sort days descending and render each as its own section
     // with a day header showing the date + that day's W-L + net.
     const sortedDays = Array.from(byDay.keys()).sort().reverse();
@@ -2674,9 +2719,17 @@ async function renderHistoryPane() {
         }
     }
     const winRate = resolvedCount ? (resolvedWins / resolvedCount) : null;
+    const livePart = liveCount > 0
+        ? ` · <span class="bot-history-live-hint">${liveCount} still live → <strong>Bets</strong> tab</span>`
+        : "";
     const summary = resolvedCount > 0
-        ? `${resolvedCount} resolved · ${resolvedWins}-${resolvedLosses} (${(winRate * 100).toFixed(0)}%) · Net <strong class="${netCents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${netCents >= 0 ? "+" : ""}$${(netCents/100).toFixed(2)}</strong>`
-        : `${fires.length} placed · 0 resolved yet`;
+        ? `${resolvedCount} resolved · ${resolvedWins}-${resolvedLosses} (${(winRate * 100).toFixed(0)}%) · Net <strong class="${netCents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${netCents >= 0 ? "+" : ""}$${(netCents/100).toFixed(2)}</strong>${livePart}`
+        : `${fires.length} placed · 0 resolved yet${livePart}`;
+
+    // Empty resolved set → render banner + diag + a friendly empty
+    // state instead of rows. Avoids showing nothing when ALL the
+    // user's bets are in-flight.
+    const noResolvedYet = resolvedCount === 0;
 
     return `
       <div class="bot-status-banner">
@@ -2694,7 +2747,15 @@ async function renderHistoryPane() {
         Kalshi: ${(settlements || []).length} settlements, ${(fills || []).length} fills (${totalSellFills} sells) ·
         Mapped to our log: ${firesWithSettlement} settled, ${firesWithSellFills} cashed
       </div>
-      ${daySections}
+      ${noResolvedYet
+        ? `<div class="bot-empty">
+             <p>No resolved bets yet.</p>
+             <p class="bot-empty-sub">
+               History shows bets that have settled or cashed out.
+               ${liveCount > 0 ? `Your ${liveCount} live bet${liveCount === 1 ? "" : "s"} ${liveCount === 1 ? "is" : "are"} in <strong>Bets</strong>.` : ""}
+             </p>
+           </div>`
+        : daySections}
     `;
 }
 
