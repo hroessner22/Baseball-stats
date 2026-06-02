@@ -1489,18 +1489,18 @@ function drawerHtml(initialTab) {
     return `
       <div class="bot-drawer" role="dialog" aria-modal="true">
         <header class="bot-drawer-head">
-          <h2>Active Bets</h2>
+          <h2>Bot Console</h2>
           <button class="bot-drawer-close" aria-label="Close">×</button>
         </header>
         <nav class="bot-drawer-tabs" role="tablist">
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
-            Active Bets <span class="bot-tab-count" data-bets-count>0</span>
+            Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
           <button class="bot-tab ${initialTab === "questions" ? "active" : ""}" data-tab="questions" role="tab">
             Questions <span class="bot-tab-count bot-tab-unread" data-questions-count>0</span>
           </button>
           <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
-            Performance
+            Perf
           </button>
           <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
             History <span class="bot-tab-count" data-history-count>0</span>

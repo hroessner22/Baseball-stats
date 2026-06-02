@@ -8551,26 +8551,34 @@ button.md-game-outcome:active { transform: translateY(1px); }
 
 .bot-drawer-tabs {
     display: flex;
-    gap: 6px;
-    padding: 0 24px;
+    gap: 2px;
+    padding: 0 16px;
     border-bottom: 1px solid var(--border);
+    /* Horizontal scroll fallback for narrow viewports / when more
+       tabs are added — scrollbar hidden, mask hints at content. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
 }
+.bot-drawer-tabs::-webkit-scrollbar { display: none; }
 .bot-tab {
     flex: 0 0 auto;
     background: transparent;
     border: none;
     color: var(--text-dim);
-    padding: 12px 14px;
+    padding: 11px 9px;
     font: inherit;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     cursor: pointer;
     border-bottom: 2px solid transparent;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    white-space: nowrap;
     transition: color 120ms, border-color 120ms;
 }
 .bot-tab:hover { color: var(--text); }
