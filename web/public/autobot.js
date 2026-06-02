@@ -573,6 +573,43 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
 
+        // 5) PITCHER-PULLED guard (K-props only). Generalizes the
+        //    Wenceel principle: if the K-prop market re-priced
+        //    because the starter is out, our K-rate model is using
+        //    a pitcher who isn't on the mound. Same 'odds great for
+        //    a reason we don't see' failure mode.
+        //
+        //    Detection: starter's pitch count past p80 + 10 = pull
+        //    imminent or already happened. Cross-checked against
+        //    the live pitcher feed (getLivePitcherInfo). NO K bets
+        //    are extra dangerous here — they look incredibly cheap
+        //    because the over-N-K bet is essentially settled.
+        if (parsed.stat === "strikeouts") {
+            const pInfo = await getLivePitcherInfo(g.game_pk, parsed.player);
+            if (pInfo) {
+                const { pitchesThrown, profile } = pInfo;
+                const p80     = profile?.p80_pitches || 95;
+                const limit   = p80 + 10;
+                if (pitchesThrown >= limit) {
+                    log("skip", `Pitcher-pulled guard — ${parsed.player} at ${pitchesThrown} pitches (p80+10 = ${limit}); starter likely out, K model is stale`);
+                    continue;
+                }
+            }
+        }
+
+        // 6) PA-EXHAUSTION guard (hitter props). If there are <0.5
+        //    turns remaining for the lineup, the batter is unlikely
+        //    to get another PA — the market knows this, prices
+        //    accordingly, and our model still allocates expected
+        //    contributions. Same family of failure.
+        if (parsed.stat !== "strikeouts") {
+            const turnsLeft = modelProps?.game_state?.turns_remaining;
+            if (typeof turnsLeft === "number" && turnsLeft < 0.5) {
+                log("skip", `PA-exhaustion guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()}: only ${turnsLeft.toFixed(2)} turns left, model can't move from here`);
+                continue;
+            }
+        }
+
         // Determine opposing pitcher for hitter props (used by H2H
         // factor); the K-prop path already targets the SAME pitcher.
         let oppPitcherId = null;
