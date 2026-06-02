@@ -9380,6 +9380,226 @@ button.md-game-outcome:active { transform: translateY(1px); }
     transition: background 120ms, border-color 120ms, box-shadow 120ms;
 }
 
+/* ── EDGES VIEW ─────────────────────────────────────────────────
+   Ranked list of mispriced player props. Each row is a clickable
+   link into the game's Markets tab. Tier-colored magnitude badge
+   on the right (strong / moderate / marginal). */
+
+.edges-view {
+    flex: 1;
+    overflow: auto;
+    padding: 14px 24px 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    max-width: 1100px;
+    margin: 0 auto;
+    width: 100%;
+}
+.edges-view .empty { padding: 48px 16px; }
+
+.edges-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.edges-head h2 {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text);
+}
+.edges-head .edges-meta {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+}
+
+.edges-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: edge;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.edge-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: border-color 120ms, transform 120ms, background 120ms;
+}
+.edge-row:hover {
+    border-color: rgba(56, 189, 248, 0.45);
+    transform: translateX(2px);
+}
+.edge-row-strong {
+    border-left: 3px solid var(--accent-win);
+}
+.edge-row-moderate {
+    border-left: 3px solid #f59e0b;
+}
+.edge-row-marginal {
+    border-left: 3px solid var(--text-dim);
+    opacity: 0.85;
+}
+
+.edge-link {
+    display: grid;
+    grid-template-columns: 28px minmax(120px, 1.6fr) minmax(120px, 1.4fr) minmax(120px, 1fr) 72px;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 12px;
+    text-decoration: none;
+    color: inherit;
+    font-size: 12px;
+}
+
+.edge-rank {
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+.edge-row-strong .edge-rank { color: var(--accent-win); }
+
+.edge-player-block {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+.edge-player {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: -0.005em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.edge-matchup {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+}
+
+.edge-prop {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.edge-threshold {
+    color: var(--text);
+    font-weight: 700;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.edge-stat {
+    color: var(--text-dim);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+}
+.edge-side {
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+}
+.edge-side-over {
+    background: rgba(34, 197, 94, 0.14);
+    color: var(--accent-win);
+}
+.edge-side-under {
+    background: rgba(245, 158, 11, 0.14);
+    color: #f59e0b;
+}
+
+.edge-probs {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+.edge-prob-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+}
+.edge-prob-label {
+    font-size: 8px;
+    color: var(--text-dim);
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+}
+.edge-prob-val {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.edge-prob-dim {
+    color: var(--text-dim);
+    font-weight: 500;
+}
+
+.edge-magnitude {
+    text-align: right;
+    font-weight: 800;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+.edge-mag-strong {
+    background: rgba(34, 197, 94, 0.18);
+    color: var(--accent-win);
+}
+.edge-mag-moderate {
+    background: rgba(245, 158, 11, 0.16);
+    color: #f59e0b;
+}
+.edge-mag-marginal {
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text-dim);
+}
+
+.edges-foot {
+    font-size: 10px;
+    color: var(--text-faint);
+    line-height: 1.5;
+    padding: 8px 0 0;
+    max-width: 640px;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+}
+
+/* Narrow viewports — collapse columns. */
+@media (max-width: 700px) {
+    .edge-link {
+        grid-template-columns: 24px 1fr 60px;
+        grid-template-rows: auto auto;
+    }
+    .edge-player-block { grid-row: 1; grid-column: 2; }
+    .edge-rank { grid-row: 1; grid-column: 1; }
+    .edge-magnitude { grid-row: 1; grid-column: 3; }
+    .edge-prop  { grid-row: 2; grid-column: 1 / 4; }
+    .edge-probs { grid-row: 2; grid-column: 3; }
+}
+
+
 /* Bot's own toast layer — a real popup, not a console fallback.
    Moved to TOP-CENTER (was bottom-80) so it can't be hidden
    behind the bottom nav, active-bets strip, or drawer footer.

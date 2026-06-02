@@ -13,6 +13,7 @@ const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
+const edgesView = document.getElementById("edges-view");
 const teamView = document.getElementById("team-view");
 
 const BOARD_REFRESH_MS = 30_000;
@@ -25,6 +26,10 @@ const STANDINGS_REFRESH_MS = 5 * 60_000;
 const LEADERS_REFRESH_MS = 5 * 60_000;
 const MVP_REFRESH_MS = 5 * 60_000;
 const HOT_REFRESH_MS = 15_000;
+// Edges refresh every 30s. Slower than HOT (which polls live game
+// state) because our model probabilities only meaningfully shift
+// between PAs and Kalshi prices follow a similar cadence.
+const EDGES_REFRESH_MS = 30_000;
 // Markets dashboard polls every 20s — sportsbook lines move on that
 // order, and the upstream /api/markets is edge-cached for 30s anyway.
 const MARKETS_REFRESH_MS = 10_000;  // dashboard poll; per-game pane uses its own 8s timer
@@ -35,6 +40,7 @@ let standingsTimer = null;
 let leadersTimer = null;
 let mvpTimer = null;
 let hotTimer = null;
+let edgesTimer = null;
 let marketsDashboardTimer = null;
 let activeGameId = null;
 
@@ -160,6 +166,11 @@ function handleRoute() {
     if (hash === "#hot") {
         showHot();
         setActiveNav("hot");
+        return;
+    }
+    if (hash === "#edges") {
+        showEdges();
+        setActiveNav("edges");
         return;
     }
     const playerMatch = hash.match(/^#player\/(\d+)/);
@@ -309,6 +320,7 @@ function hideAllViews() {
     hotView.hidden = true;
     playerView.hidden = true;
     marketsView.hidden = true;
+    edgesView.hidden = true;
     teamView.hidden = true;
 }
 
@@ -321,6 +333,7 @@ function clearAllTimers() {
     if (leadersTimer)   { clearInterval(leadersTimer);   leadersTimer = null; }
     if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
+    if (edgesTimer)     { clearInterval(edgesTimer);     edgesTimer = null; }
     if (marketsDashboardTimer) { clearInterval(marketsDashboardTimer); marketsDashboardTimer = null; }
     if (teamTimer)      { clearInterval(teamTimer);      teamTimer = null; activeTeamTricode = null; }
     stopMarketsPoll();
@@ -3005,6 +3018,112 @@ function hotReason(g) {
     if (basesDesc) return `${basesDesc}, ${inn}`;
     return `${diff === 0 ? "Tied" : `${diff}-run game`} in the ${inn}`;
 }
+
+// ── EDGES VIEW ──────────────────────────────────────────────────
+// Ranked list of EVERY player-prop where our model's tail
+// probability disagrees with the market. Parallel to HOT (which
+// ranks live games by leverage) — EDGES ranks live props by our
+// edge magnitude. Sourced from /api/edges, which joins per-game
+// markets + model-props server-side and returns a flat sorted list.
+
+function showEdges() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    edgesView.hidden = false;
+    renderEmpty(edgesView, "Loading edges…", "");
+    refreshEdges();
+    edgesTimer = setInterval(refreshEdges, EDGES_REFRESH_MS);
+}
+
+async function refreshEdges() {
+    try {
+        const res = await fetch("/api/edges");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const edges = data.edges || [];
+        if (!edges.length) {
+            renderEmpty(edgesView,
+                "No edges right now.",
+                `Scanned ${data.counted_games || 0} games. The bot only sees mispricings when our model disagrees with Kalshi's price — and right now, it agrees with the market on every prop. Check back after the next PA.`,
+            );
+            return;
+        }
+        edgesView.innerHTML = renderEdges(edges, data);
+    } catch (e) {
+        renderEmpty(edgesView, "Couldn't load edges.", `${e.message || e}`);
+    }
+}
+
+function renderEdges(edges, data) {
+    const rows = edges.map(renderEdgeRow).join("");
+    return `
+      <header class="edges-head">
+        <h2>EDGES</h2>
+        <span class="edges-meta">
+          ${edges.length} mispriced prop${edges.length === 1 ? "" : "s"} across ${data.counted_games || 0} games
+          · sorted by |our model − market|
+        </span>
+      </header>
+      <ol class="edges-list">
+        ${rows}
+      </ol>
+      <footer class="edges-foot">
+        Edge = absolute difference between our tail probability and Kalshi's implied probability,
+        in percentage points. A 5pp+ edge is the bot's default fire threshold for player props.
+      </footer>
+    `;
+}
+
+function renderEdgeRow(e) {
+    const statLabel = shortStatLabel(e.stat);
+    const sideLabel = e.side === "no" ? "UNDER" : "OVER";
+    const sideCls   = e.side === "no" ? "edge-side-under" : "edge-side-over";
+    const ourPct    = (e.our_p * 100).toFixed(1);
+    const mktPct    = (e.market_p * 100).toFixed(1);
+    // Edge tier coloring — strong / moderate / marginal.
+    const tier = e.edge_pp >= 10 ? "strong"
+              : e.edge_pp >= 5  ? "moderate"
+              : "marginal";
+    return `
+      <li class="edge-row edge-row-${tier}">
+        <a class="edge-link" href="#game/${e.game_pk}/markets">
+          <span class="edge-rank">${e.rank}</span>
+          <span class="edge-player-block">
+            <span class="edge-player">${escapeHTML(e.player)}</span>
+            <span class="edge-matchup">${escapeHTML(e.matchup)}</span>
+          </span>
+          <span class="edge-prop">
+            <span class="edge-threshold">${e.threshold}+</span>
+            <span class="edge-stat">${statLabel}</span>
+            <span class="edge-side ${sideCls}">${sideLabel}</span>
+          </span>
+          <span class="edge-probs">
+            <span class="edge-prob-cell">
+              <span class="edge-prob-label">Our</span>
+              <span class="edge-prob-val">${ourPct}%</span>
+            </span>
+            <span class="edge-prob-cell">
+              <span class="edge-prob-label">Mkt</span>
+              <span class="edge-prob-val edge-prob-dim">${mktPct}%</span>
+            </span>
+          </span>
+          <span class="edge-magnitude edge-mag-${tier}">+${e.edge_pp.toFixed(1)}pp</span>
+        </a>
+      </li>
+    `;
+}
+
+function shortStatLabel(stat) {
+    switch (stat) {
+        case "home_runs":   return "HR";
+        case "total_bases": return "TB";
+        case "hits":        return "H";
+        case "strikeouts":  return "K";
+        default:            return String(stat || "").toUpperCase();
+    }
+}
+
 
 function renderAbout() {
     return `

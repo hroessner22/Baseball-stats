@@ -32,15 +32,17 @@
     <main id="about-view" class="about-view" hidden></main>
     <main id="player-view" class="player-view" hidden></main>
     <main id="markets-view" class="markets-view" hidden></main>
+    <main id="edges-view" class="edges-view" hidden></main>
     <main id="team-view" class="team-view" hidden></main>
 
     <nav aria-label="sections">
         <a href="#live" class="nav-item active" data-route="live"><span class="num">01</span> LIVE</a>
         <a href="#hot" class="nav-item" data-route="hot"><span class="num">02</span> HOT</a>
-        <a href="#markets" class="nav-item" data-route="markets"><span class="num">03</span> MARKETS</a>
-        <a href="#standings" class="nav-item" data-route="standings"><span class="num">04</span> STANDINGS</a>
-        <a href="#leaders" class="nav-item" data-route="leaders"><span class="num">05</span> LEADERS</a>
-        <a href="#mvp" class="nav-item" data-route="mvp"><span class="num">06</span> MVP</a>
+        <a href="#edges" class="nav-item" data-route="edges"><span class="num">03</span> EDGES</a>
+        <a href="#markets" class="nav-item" data-route="markets"><span class="num">04</span> MARKETS</a>
+        <a href="#standings" class="nav-item" data-route="standings"><span class="num">05</span> STANDINGS</a>
+        <a href="#leaders" class="nav-item" data-route="leaders"><span class="num">06</span> LEADERS</a>
+        <a href="#mvp" class="nav-item" data-route="mvp"><span class="num">07</span> MVP</a>
     </nav>
 
     <footer class="page-footer">
@@ -70,13 +72,13 @@
          so the bot can call scoreBet() / logScoredDecision().
          Query-string version pins Cloudflare cache so a fresh deploy
          doesn't serve stale JS from CDN edge. */ -->
-    <script src="bot-scoring.js?v=20260602e"></script>
+    <script src="bot-scoring.js?v=20260602f"></script>
     <!-- AutoBot: edge-detection bot + Open Bets drawer. Loads last
          so it can read window.Kalshi (must already be initialized). -->
-    <script src="autobot.js?v=20260602e"></script>
+    <script src="autobot.js?v=20260602f"></script>
     <!-- Active Bets strip: slim bottom widget showing every active
          position with deep-links + DraftKings-style progress bars
          on player props. Reads window.Kalshi and the bot fires log. -->
-    <script src="active-bets-strip.js?v=20260602e"></script>
+    <script src="active-bets-strip.js?v=20260602f"></script>
 </body>
 </html>
