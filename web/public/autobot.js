@@ -43,12 +43,12 @@
 const HARD_CAPS = {
     unit_cents_min:        25,     // $0.25 minimum
     unit_cents_max:        200,    // $2.00 maximum
-    // 61-day backtest (469 games, pythag baseline) calibration:
-    //   1-2pp edge:  49% win (random)
-    //   2-3pp edge:  63% win, +43.5% ROI ← signal cliff
-    //   3pp+ edge:   too-small sample
-    // Hard floor at 2pp keeps us above the random-noise zone.
-    edge_pp_min:           2,
+    // The Pythag-baseline backtest cliff (49% at 1-2pp, 63% at
+    // 2-3pp) was vs a dumb baseline. Kalshi isn't dumb. Live
+    // experience (down 50% today at the 2pp default) shows the
+    // 2pp signal does NOT survive an efficient market. Hard floor
+    // raised to 4pp — keeps the bot above 'noise vs Kalshi.'
+    edge_pp_min:           4,
     edge_pp_max:           20,
     daily_loss_cents_max:  500,    // $5 daily realized-loss limit
     open_exposure_max:     2000,   // $20 total open positions
@@ -57,37 +57,41 @@ const HARD_CAPS = {
 const DEFAULTS = {
     enabled:               false,
     unit_cents:            50,     // $0.50 per fire (user's spec)
-    // 61-day backtest (469 games, pythag baseline, May 14 day
-    // result was sample noise — bigger sample changed the picture):
-    //   1-2pp:  49% win (random)
-    //   2-3pp:  63% win, +43.5% ROI ← cliff
-    //   3pp+:   sample too small to conclude
-    // Default at 2pp puts us right above the random-noise zone.
-    // Maps directly: when our model says +2pp over a Pythag-
-    // baseline pregame line, we hit 63%. Kalshi is more efficient
-    // than Pythag so the in-game equivalent edge against Kalshi
-    // is rarer but each fire carries similar conviction.
-    edge_threshold_pp:     2,
-    // Savant agreement is a SOFT confidence amplifier, not a hard gate.
-    // Three states the bot encounters:
+    // 2pp default was vs a dumb Pythag baseline. Against Kalshi
+    // (efficient market) 2pp lands in the noise zone, and the
+    // user is down 50% today firing on those. Raised the default
+    // to 5pp — meaningfully fewer fires, but each one carries
+    // real conviction. The aggressive cash-out triggers below
+    // (live-EV, pitch-count, hitter-prop) lock in wins quickly,
+    // so we don't need a steady stream of small edges to be
+    // profitable.
+    edge_threshold_pp:     5,
+    // SEPARATE threshold for player props — they don't have a
+    // Savant cross-check and depend on per-PA modeling that
+    // needs in-game data to settle. Higher bar (7pp) until we
+    // build a track record on them.
+    player_prop_edge_threshold_pp: 7,
+    // Don't fire moneylines before this inning. Early-game WE
+    // moves on tiny events (one HR in the 1st can swing 8pp)
+    // and our model has the same volatility — most of our 'edge'
+    // before the 3rd is regression to mean, not real signal.
+    min_inning_for_moneyline: 3,
+    // Savant agreement is a SOFT confidence amplifier on
+    // moneylines, not a hard gate. Three states:
     //   - Savant agrees direction → fire at base edge_threshold_pp
-    //   - Savant disagrees        → require edge_threshold_pp + savant_disagree_penalty_pp
-    //   - Savant has no data (player props, pregame) → fire at base
-    // As our model accumulates positive results we can drop the penalty
-    // toward 0 — but it costs nothing to use Savant as a tiebreaker
-    // while we're building track record.
+    //   - Savant disagrees        → require base + savant_disagree_penalty_pp
+    //   - Savant has no data      → fire at base
     require_savant_agree:       false,
     savant_disagree_penalty_pp: 3,
-    profit_take_cents:     20,     // cash out at +20¢ on the contract
-    // SECOND cash-out trigger: when we've captured this fraction of the
-    // edge our model expected at fire-time, take profits and free the
-    // capital for the next opportunity. Computed as:
-    //   capture_fraction = (live_yes_bid - entry) / (our_p_cents - entry)
-    // Default 0.55 ≈ "lock in once the market has moved more than
-    // halfway to our model's fair value." Either trigger fires the sell
-    // — whichever hits first, so the absolute profit_take_cents floor
-    // still applies on bets where the original edge was huge.
-    live_ev_take_pct:      0.55,
+    // Cash-out tightened — sell sooner, lock in more wins.
+    // 15¢ absolute profit target (was 20) means we close winners
+    // faster; the live-EV capture trigger picks up partial wins
+    // we wouldn't otherwise touch.
+    profit_take_cents:     15,
+    // EV-capture trigger: sell when market has moved this fraction
+    // of the way to our model's fair value. Lowered 0.55 → 0.45 so
+    // we exit more positions before they round-trip back to entry.
+    live_ev_take_pct:      0.45,
     daily_loss_limit_cents: 500,   // $5 default — tightened by HARD_CAPS
     open_exposure_max:     2000,   // $20 default
     bet_player_props:      true,   // scan Kalshi player_prop markets too
@@ -152,6 +156,8 @@ function clampSettings(s) {
         enabled:                    !!s.enabled,
         unit_cents:                 clampInt(s.unit_cents, HARD_CAPS.unit_cents_min, HARD_CAPS.unit_cents_max),
         edge_threshold_pp:          clampInt(s.edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
+        player_prop_edge_threshold_pp: clampInt(s.player_prop_edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
+        min_inning_for_moneyline:   clampInt(s.min_inning_for_moneyline, 1, 8),
         require_savant_agree:       !!s.require_savant_agree,
         savant_disagree_penalty_pp: clampInt(s.savant_disagree_penalty_pp, 0, 10),
         profit_take_cents:          clampInt(s.profit_take_cents, 5, 60),
@@ -318,11 +324,16 @@ async function scanOneGame(g) {
     const savantHome = d.savant_we_home;
 
     // 1) Moneyline edges (our WE table vs Kalshi, with Savant as a
-    //    confidence amplifier).
+    //    confidence amplifier). Gated on inning ≥ min_inning_for_
+    //    moneyline — early-game WE moves on tiny events, our edge
+    //    there is mostly variance.
     if (ourHome != null) {
-        const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
-        for (const m of moneylines) {
-            await checkAndMaybeFire(g, m, ourHome, savantHome);
+        const gInning = parseInt(g.inning, 10) || 0;
+        if (gInning >= _state.settings.min_inning_for_moneyline) {
+            const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
+            for (const m of moneylines) {
+                await checkAndMaybeFire(g, m, ourHome, savantHome);
+            }
         }
     }
 
@@ -377,8 +388,10 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const market_p = yesAskCents / 100;
         const edgePP = (our_p_yes - market_p) * 100;
 
-        // No Savant signal for player props — fire at base threshold.
-        if (edgePP < _state.settings.edge_threshold_pp) continue;
+        // No Savant signal for player props, no maturity track record
+        // — use the SEPARATE prop threshold (default 7pp, higher than
+        // the 5pp moneyline bar) until we've earned confidence.
+        if (edgePP < _state.settings.player_prop_edge_threshold_pp) continue;
 
         const key = `${ticker}:yes`;
         if (_state.sessionBets.has(key)) continue;
@@ -1561,10 +1574,22 @@ function renderBotPane() {
             <small>$0.${String(s.unit_cents).padStart(2,"0")} per signal · cap $${(HARD_CAPS.unit_cents_max/100).toFixed(2)}</small>
           </label>
           <label>
-            <span>Edge threshold (pp)</span>
+            <span>Moneyline edge threshold (pp)</span>
             <input type="number" min="${HARD_CAPS.edge_pp_min}" max="${HARD_CAPS.edge_pp_max}"
                    step="1" value="${s.edge_threshold_pp}" data-bot-setting="edge_threshold_pp">
-            <small>Fire when our model > market by N pp · min ${HARD_CAPS.edge_pp_min}</small>
+            <small>Fire moneyline when our WE > market by N pp · min ${HARD_CAPS.edge_pp_min}pp (down from 2 — Kalshi is efficient)</small>
+          </label>
+          <label>
+            <span>Player-prop edge threshold (pp)</span>
+            <input type="number" min="${HARD_CAPS.edge_pp_min}" max="${HARD_CAPS.edge_pp_max}"
+                   step="1" value="${s.player_prop_edge_threshold_pp}" data-bot-setting="player_prop_edge_threshold_pp">
+            <small>Higher bar for props (no Savant cross-check, no track record yet)</small>
+          </label>
+          <label>
+            <span>Min inning for moneyline</span>
+            <input type="number" min="1" max="8" step="1"
+                   value="${s.min_inning_for_moneyline}" data-bot-setting="min_inning_for_moneyline">
+            <small>Skip moneylines before this inning — early-game WE swings on tiny events</small>
           </label>
           <label>
             <span>Profit-take (¢)</span>
