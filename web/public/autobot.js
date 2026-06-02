@@ -2060,16 +2060,36 @@ async function renderHistoryPane() {
     // Build ticker → [buy fill, sell fill] index. A SELL fill on a
     // ticker we BOUGHT means the bot cashed out — that's a realized
     // P/L the settlements endpoint doesn't see.
+    //
+    // Kalshi's action field has come back lowercase in testing but
+    // we normalize defensively — the previous case-sensitive check
+    // for 'sell' was routing some sells into the buy bucket and
+    // making cash-outs invisible.
     const buyFillsByTicker = new Map();
     const sellFillsByTicker = new Map();
     for (const f of (fills || [])) {
         if (!f.ticker || !(Number(f.count) > 0)) continue;
-        const side = (f.side || "").toLowerCase();
-        const price = (side === "yes") ? f.yes_price : f.no_price;
+        const side   = (f.side   || "").toLowerCase();
+        const action = (f.action || "").toLowerCase();
+        const price  = (side === "yes") ? f.yes_price : f.no_price;
         if (!(price > 0)) continue;
-        const target = (f.action === "sell" ? sellFillsByTicker : buyFillsByTicker);
+        const target = (action === "sell" ? sellFillsByTicker : buyFillsByTicker);
         if (!target.has(f.ticker)) target.set(f.ticker, []);
         target.get(f.ticker).push({ price, count: Number(f.count) });
+    }
+    // Sanity counts surfaced in the status banner — lets us see
+    // whether we're actually receiving sell fills from Kalshi
+    // when the user expects wins to be visible.
+    let totalSellFills = 0;
+    for (const arr of sellFillsByTicker.values()) totalSellFills += arr.length;
+    let firesWithSellFills = 0;
+    for (const f of fires) {
+        if (sellFillsByTicker.has(f.ticker)) firesWithSellFills++;
+    }
+    let firesWithSettlement = 0;
+    const settleTickers = new Set((settlements || []).map((s) => s.ticker));
+    for (const f of fires) {
+        if (settleTickers.has(f.ticker)) firesWithSettlement++;
     }
     const positionTickers = new Set(
         (positions?.market_positions || [])
@@ -2282,6 +2302,15 @@ async function renderHistoryPane() {
           <span class="bot-status-dot bot-status-ok"></span>
           ${summary}
         </span>
+      </div>
+      <!-- Diagnostic line — exposes how many Kalshi records we
+           pulled, and how many actually mapped onto our fires.
+           If 'fires-matched: 0' we know the lookup is failing
+           (ticker format mismatch / pagination / etc.) rather
+           than 'the user didn't actually win.' -->
+      <div class="bot-history-diag">
+        Kalshi: ${(settlements || []).length} settlements, ${(fills || []).length} fills (${totalSellFills} sells) ·
+        Mapped to our log: ${firesWithSettlement} settled, ${firesWithSellFills} cashed
       </div>
       ${daySections}
     `;

@@ -9010,6 +9010,22 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
+/* Diagnostic strip at top of History — shows how many Kalshi records
+   landed and how many actually mapped to our local fires. When fires
+   show as PLACED but the user knows they won, this line tells us why
+   (ticker mismatch, no settlement, pagination, etc.). */
+.bot-history-diag {
+    font-size: 10px;
+    color: var(--text-dim);
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    line-height: 1.6;
+}
+
 /* History tab — fires grouped by calendar day, each day getting
    its own card with a header showing the date, total bet count,
    and that day's W-L + net P/L (when there are settled bets). */
