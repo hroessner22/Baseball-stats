@@ -9010,6 +9010,67 @@ button.md-game-outcome:active { transform: translateY(1px); }
     border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
+/* History tab — fires grouped by calendar day, each day getting
+   its own card with a header showing the date, total bet count,
+   and that day's W-L + net P/L (when there are settled bets). */
+.bot-history-day {
+    margin-bottom: 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.45);
+}
+.bot-history-day-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(15, 23, 42, 0.7);
+    border-bottom: 1px solid var(--border);
+}
+.bot-history-day-title {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.bot-history-day-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.005em;
+}
+.bot-history-day-meta {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+}
+.bot-history-day-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.bot-history-day-record {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+.bot-history-day-pnl {
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(15, 23, 42, 0.6);
+}
+.bot-history-day .bot-table { margin: 0; }
+.bot-history-day .bot-table th,
+.bot-history-day .bot-table td {
+    padding-left: 14px;
+}
+
 /* Performance pane — the page you open every morning.
    Headline grid of 6 stat cards, sparkline of the last 14 days,
    then breakdowns by stat type / edge band / source. */

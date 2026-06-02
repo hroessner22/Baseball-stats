@@ -2033,11 +2033,14 @@ async function renderHistoryPane() {
         else lostCount++;
     }
 
-    const rows = fires.slice(0, 200).map((f) => {
+    // Helper that renders one fire row in the bet table — used
+    // inside each day's section.
+    const renderFireRow = (f) => {
         let label;
         if (f.kind === "player_prop" && f.player) {
             const stat = shortStatLabel(f.stat);
-            label = `${f.player} ${f.threshold}+ ${stat}`;
+            const side = (f.side || "yes") === "no" ? " · UNDER" : "";
+            label = `${f.player} ${f.threshold}+ ${stat}${side}`;
         } else if (f.bet_team && f.matchup) {
             label = `${f.bet_team} ML · ${f.matchup}`;
         } else {
@@ -2045,21 +2048,26 @@ async function renderHistoryPane() {
             label = t.length > 32 ? t.slice(0, 32) + "…" : t;
         }
         const placedAt = f.placed_at ? new Date(f.placed_at) : null;
-        const ago      = placedAt ? formatTimeAgo(placedAt) : "—";
+        const timeOnly = placedAt
+            ? `${String(placedAt.getHours()).padStart(2,"0")}:${String(placedAt.getMinutes()).padStart(2,"0")}`
+            : "—";
         const cost     = (f.contracts || 1) * (f.price_cents || 0);
         const settle   = settlementByTicker.get(f.ticker);
 
-        // Resolve the result column.
         let resultCell;
         if (settle) {
             const yesCount = Number(settle.yes_count) || 0;
+            const noCount  = Number(settle.no_count)  || 0;
             const revenue  = Number(settle.revenue)   || 0;
-            const won = settle.market_result === "yes" && yesCount > 0;
+            const fireSide = f.side || "yes";
+            const won = (fireSide === "yes")
+                ? (settle.market_result === "yes" && yesCount > 0)
+                : (settle.market_result === "no"  && noCount  > 0);
             const pnlDollars = (revenue - cost) / 100;
             if (won) {
-                resultCell = `<span class="bet-result bet-result-won">+$${pnlDollars.toFixed(2)}</span>`;
+                resultCell = `<span class="bet-result bet-result-won">WON +$${pnlDollars.toFixed(2)}</span>`;
             } else {
-                resultCell = `<span class="bet-result bet-result-lost">-$${(cost/100).toFixed(2)}</span>`;
+                resultCell = `<span class="bet-result bet-result-lost">LOST -$${(cost/100).toFixed(2)}</span>`;
             }
         } else if (positionTickers.has(f.ticker)) {
             resultCell = `<span class="bet-state bet-state-held">HELD</span>`;
@@ -2080,12 +2088,82 @@ async function renderHistoryPane() {
             <td>${f.contracts || 1}× @ ${f.price_cents}¢</td>
             <td>$${(cost/100).toFixed(2)}</td>
             <td>${resultCell}</td>
-            <td class="bot-time-ago">${ago}</td>
+            <td class="bot-time-ago">${timeOnly}</td>
           </tr>
+        `;
+    };
+
+    // Group fires by local calendar day (YYYY-MM-DD). Order
+    // newest day first — within each day, newest bet first.
+    const byDay = new Map();
+    for (const f of fires.slice(0, 500)) {
+        if (!f.placed_at) continue;
+        const d = new Date(f.placed_at);
+        const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+        if (!byDay.has(dayKey)) byDay.set(dayKey, []);
+        byDay.get(dayKey).push(f);
+    }
+    // Sort days descending and render each as its own section
+    // with a day header showing the date + that day's W-L + net.
+    const sortedDays = Array.from(byDay.keys()).sort().reverse();
+    const todayKey = (() => {
+        const t = new Date();
+        return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
+    })();
+    const yesterdayKey = (() => {
+        const y = new Date();
+        y.setDate(y.getDate() - 1);
+        return `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;
+    })();
+
+    const daySections = sortedDays.map((dayKey) => {
+        const dayFires = byDay.get(dayKey);
+        // Day-scoped aggregates (settled bets only).
+        let dayWins = 0, dayLosses = 0, dayPnl = 0;
+        for (const f of dayFires) {
+            const s = settlementByTicker.get(f.ticker);
+            if (!s) continue;
+            const cost = (f.contracts || 1) * (f.price_cents || 0);
+            const yesCount = Number(s.yes_count) || 0;
+            const noCount  = Number(s.no_count)  || 0;
+            const fireSide = f.side || "yes";
+            const won = (fireSide === "yes")
+                ? (s.market_result === "yes" && yesCount > 0)
+                : (s.market_result === "no"  && noCount  > 0);
+            dayPnl += (Number(s.revenue) || 0) - cost;
+            if (won) dayWins++; else dayLosses++;
+        }
+        const daySettled = dayWins + dayLosses;
+        const dayOpen    = dayFires.length - daySettled;
+        const dayLabel = formatDayLabel(dayKey, todayKey, yesterdayKey);
+        const pnlClass = dayPnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+        const pnlText  = `${dayPnl >= 0 ? "+" : ""}$${(dayPnl/100).toFixed(2)}`;
+
+        const rowsHtml = dayFires.map(renderFireRow).join("");
+        return `
+          <div class="bot-section bot-history-day">
+            <header class="bot-history-day-head">
+              <div class="bot-history-day-title">
+                <span class="bot-history-day-label">${escapeText(dayLabel)}</span>
+                <span class="bot-history-day-meta">${dayFires.length} bet${dayFires.length === 1 ? "" : "s"}</span>
+              </div>
+              <div class="bot-history-day-summary">
+                ${daySettled > 0
+                  ? `<span class="bot-history-day-record">${dayWins}-${dayLosses}</span>
+                     <span class="bot-history-day-pnl ${pnlClass}">${pnlText}</span>`
+                  : `<span class="bot-history-day-meta">${dayOpen} still open</span>`
+                }
+              </div>
+            </header>
+            <table class="bot-table bot-table-history">
+              <thead><tr><th>By</th><th>Bet</th><th>Size</th><th>Cost</th><th>Result</th><th>Time</th></tr></thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
         `;
     }).join("");
 
-    // Net P/L across SETTLED bets only.
+    // Net P/L across SETTLED bets only (top-line banner).
     let netCents = 0;
     let settledCount = 0;
     for (const f of fires) {
@@ -2108,14 +2186,19 @@ async function renderHistoryPane() {
           ${summary}
         </span>
       </div>
-      <div class="bot-section">
-        <h3>All bets <span class="bot-section-sub">most recent first · ${Math.min(fires.length, 200)} shown of ${fires.length}</span></h3>
-        <table class="bot-table bot-table-history">
-          <thead><tr><th>By</th><th>Bet</th><th>Size</th><th>Cost</th><th>Result</th><th>When</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
+      ${daySections}
     `;
+}
+
+// Render a YYYY-MM-DD as 'Today', 'Yesterday', or a long-form date.
+function formatDayLabel(key, todayKey, yesterdayKey) {
+    if (key === todayKey)     return "Today";
+    if (key === yesterdayKey) return "Yesterday";
+    const [y, m, d] = key.split("-").map(Number);
+    const date = new Date(y, m - 1, d);
+    const day  = date.toLocaleDateString(undefined, { weekday: "long" });
+    const mon  = date.toLocaleDateString(undefined, { month: "short" });
+    return `${day}, ${mon} ${d}`;
 }
 
 function bindBetsPaneHandlers(overlay) {
