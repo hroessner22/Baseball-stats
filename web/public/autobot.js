@@ -1594,7 +1594,21 @@ async function renderOpenBetsPane() {
 // actually go through" when /positions reports empty.
 function renderFillsSection(fills) {
     if (!fills.length) return "";
-    const rows = fills.slice(0, 30).map((f) => {
+    // Filter out junk entries — Kalshi's /portfolio/fills returns
+    // every order attempt, including ones that filled 0 contracts
+    // at no price. Those rows just showed '0× YES — 18h ago' over
+    // and over. Only show fills that actually moved contracts at
+    // a real price.
+    const real = fills.filter((f) => {
+        const count = Number(f.count) || 0;
+        if (count <= 0) return false;
+        const side = (f.side || "").toLowerCase();
+        const price = (side === "yes") ? f.yes_price : f.no_price;
+        if (price == null || price <= 0) return false;
+        return true;
+    });
+    if (!real.length) return "";
+    const rows = real.slice(0, 30).map((f) => {
         const t = f.ticker || "";
         const trimmed = t.length > 36 ? t.slice(0, 36) + "…" : t;
         const action = (f.action || "?").toLowerCase();
@@ -1608,14 +1622,14 @@ function renderFillsSection(fills) {
             <td><span class="bot-fill-action ${actionCls}">${action.toUpperCase()}</span></td>
             <td class="bot-ticker">${escapeText(trimmed)}</td>
             <td>${(f.count || 0)}× ${side.toUpperCase()}</td>
-            <td>${priceCents != null ? priceCents + "¢" : "—"}</td>
+            <td>${priceCents}¢</td>
             <td class="bot-time-ago">${ago}</td>
           </tr>
         `;
     }).join("");
     return `
       <div class="bot-section">
-        <h3>Kalshi fills <span class="bot-section-sub">last ${Math.min(fills.length, 30)} executed trades — buys + sells from your account</span></h3>
+        <h3>Kalshi fills <span class="bot-section-sub">last ${Math.min(real.length, 30)} executed trades — buys + sells from your account</span></h3>
         <table class="bot-table bot-table-history">
           <thead><tr><th>Action</th><th>Market</th><th>Side</th><th>Price</th><th>When</th></tr></thead>
           <tbody>${rows}</tbody>
