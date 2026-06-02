@@ -1482,25 +1482,23 @@ async function renderOpenBetsPane() {
     `;
 
     if (!mps.length && !resting.length) {
-        // Even with no Kalshi-reported active positions, surface
-        // recently-placed bets from the local log. This is the
-        // case where the user says "I placed bets, why don't I see
-        // them" — Kalshi may have settled / cashed out a position
-        // off the list while the record persists locally.
-        if (fires.length || allFills.length) {
-            return `
-              ${statusBanner}
-              ${allFills.length ? renderFillsSection(allFills) : ""}
-              ${fires.length ? renderRecentSection(fires, mps, resting, sourceTag,
-                  "Local fire log — bets the bot or you placed from this browser") : ""}
-            `;
-        }
+        // No live positions, no resting orders → this tab should be
+        // EMPTY. Everything else (old fires, settled bets) belongs
+        // in History. The Kalshi fills section still shows up
+        // because that's actual trade execution data, not the
+        // local fire log.
+        const hasFills = allFills.length > 0;
         return `
           ${statusBanner}
           <div class="bot-empty">
             <p>No active bets right now.</p>
-            <p class="bot-empty-sub">Every bet — bot or manual — shows up here the moment it fills.</p>
+            <p class="bot-empty-sub">
+              ${fires.length
+                  ? `Past bets are in <strong>History</strong> — ${fires.length} bet${fires.length === 1 ? "" : "s"} recorded.`
+                  : "Every bet — bot or manual — shows up here the moment it fills."}
+            </p>
           </div>
+          ${hasFills ? renderFillsSection(allFills) : ""}
         `;
     }
     // Live YES prices in parallel so the P/L is fresh.
@@ -1582,8 +1580,6 @@ async function renderOpenBetsPane() {
         </div>
       ` : ""}
       ${allFills.length ? renderFillsSection(allFills) : ""}
-      ${fires.length ? renderRecentSection(fires, mps, resting, sourceTag,
-          "Recent activity — last 10 from your local bet log") : ""}
     `;
 }
 
@@ -1966,6 +1962,43 @@ function perfSparkline(days) {
 }
 
 
+// Natural-language bet label, used everywhere a fire is rendered.
+// Examples:
+//   { side: 'yes', stat: 'total_bases', threshold: 2, player: 'A. Judge' }
+//     → 'A. Judge over 2 total bases'
+//   { side: 'no', stat: 'home_runs',  threshold: 1, player: 'J. Soto' }
+//     → 'J. Soto under 1 home run'
+//   { kind: 'moneyline', bet_team: 'NYY', matchup: 'NYY@TB' }
+//     → 'NYY moneyline (NYY@TB)'
+function betLabel(f) {
+    if (f.kind === "player_prop" && f.player && f.stat) {
+        const direction = (f.side || "yes") === "no" ? "under" : "over";
+        const statText  = statFullName(f.stat, f.threshold);
+        return `${f.player} ${direction} ${f.threshold} ${statText}`;
+    }
+    if (f.bet_team && f.matchup) {
+        return `${f.bet_team} moneyline (${f.matchup})`;
+    }
+    if (f.ticker) {
+        return f.ticker.length > 32 ? f.ticker.slice(0, 32) + "…" : f.ticker;
+    }
+    return "—";
+}
+
+// Pluralized full name of a stat key — used in betLabel above so
+// the natural-language form reads like 'over 2 total bases'
+// rather than 'over 2 total_bases'.
+function statFullName(stat, threshold) {
+    const plural = threshold !== 1;
+    switch (stat) {
+        case "home_runs":   return plural ? "home runs"   : "home run";
+        case "hits":        return plural ? "hits"        : "hit";
+        case "total_bases": return plural ? "total bases" : "total base";
+        case "strikeouts":  return plural ? "strikeouts"  : "strikeout";
+        default:            return String(stat || "");
+    }
+}
+
 function shortStatLabel(s) {
     switch (s) {
         case "home_runs":   return "HR";
@@ -2004,21 +2037,39 @@ async function renderHistoryPane() {
           </div>
         `;
     }
-    // Pull positions + open orders + settlements in parallel so we can
-    // assign the most-accurate state to each fire-log entry:
-    //   WON / LOST    → Kalshi settled the market (revenue field tells P/L)
+    // Pull positions + open orders + settlements + fills in parallel.
+    // Each gives us a different lens on a fire's outcome:
+    //   WON / LOST    → settled by Kalshi (revenue field tells final P/L)
+    //   CASHED        → we sold the position via fills before settle
+    //                   (P/L = sell fill price - buy fill price per ct)
     //   HELD          → ticker is in current positions
     //   RESTING       → ticker is in current open orders
-    //   PLACED        → none of the above; we don't know yet
-    let positions = null, orders = null, settlements = null;
+    //   PLACED        → none of the above; the bet probably failed to
+    //                   fill or is too old for Kalshi's settlement window
+    let positions = null, orders = null, settlements = null, fills = null;
     try {
-        [positions, orders, settlements] = await Promise.all([
+        [positions, orders, settlements, fills] = await Promise.all([
             root.Kalshi.getPositions(),
             root.Kalshi.getOpenOrders(),
             root.Kalshi.getSettlements ? root.Kalshi.getSettlements() : Promise.resolve([]),
+            root.Kalshi.getFills       ? root.Kalshi.getFills()       : Promise.resolve([]),
         ]);
     } catch (e) {
         return `<div class="bot-empty"><p>Couldn't load Kalshi history: ${escapeText(e.message || e)}</p></div>`;
+    }
+    // Build ticker → [buy fill, sell fill] index. A SELL fill on a
+    // ticker we BOUGHT means the bot cashed out — that's a realized
+    // P/L the settlements endpoint doesn't see.
+    const buyFillsByTicker = new Map();
+    const sellFillsByTicker = new Map();
+    for (const f of (fills || [])) {
+        if (!f.ticker || !(Number(f.count) > 0)) continue;
+        const side = (f.side || "").toLowerCase();
+        const price = (side === "yes") ? f.yes_price : f.no_price;
+        if (!(price > 0)) continue;
+        const target = (f.action === "sell" ? sellFillsByTicker : buyFillsByTicker);
+        if (!target.has(f.ticker)) target.set(f.ticker, []);
+        target.get(f.ticker).push({ price, count: Number(f.count) });
     }
     const positionTickers = new Set(
         (positions?.market_positions || [])
@@ -2050,23 +2101,14 @@ async function renderHistoryPane() {
     // Helper that renders one fire row in the bet table — used
     // inside each day's section.
     const renderFireRow = (f) => {
-        let label;
-        if (f.kind === "player_prop" && f.player) {
-            const stat = shortStatLabel(f.stat);
-            const side = (f.side || "yes") === "no" ? " · UNDER" : "";
-            label = `${f.player} ${f.threshold}+ ${stat}${side}`;
-        } else if (f.bet_team && f.matchup) {
-            label = `${f.bet_team} ML · ${f.matchup}`;
-        } else {
-            const t = f.ticker || "";
-            label = t.length > 32 ? t.slice(0, 32) + "…" : t;
-        }
+        const label = betLabel(f);
         const placedAt = f.placed_at ? new Date(f.placed_at) : null;
         const timeOnly = placedAt
             ? `${String(placedAt.getHours()).padStart(2,"0")}:${String(placedAt.getMinutes()).padStart(2,"0")}`
             : "—";
         const cost     = (f.contracts || 1) * (f.price_cents || 0);
         const settle   = settlementByTicker.get(f.ticker);
+        const sellFills = sellFillsByTicker.get(f.ticker) || [];
 
         let resultCell;
         if (settle) {
@@ -2082,6 +2124,20 @@ async function renderHistoryPane() {
                 resultCell = `<span class="bet-result bet-result-won">WON +$${pnlDollars.toFixed(2)}</span>`;
             } else {
                 resultCell = `<span class="bet-result bet-result-lost">LOST -$${(cost/100).toFixed(2)}</span>`;
+            }
+        } else if (sellFills.length) {
+            // Bot (or you) sold this position before settlement.
+            // Compute realized P/L from the SELL fill prices vs
+            // our entry cost. Weighted by contract count when
+            // multiple sell fills exist.
+            const totalSold = sellFills.reduce((s, x) => s + x.count, 0);
+            const grossSell = sellFills.reduce((s, x) => s + x.count * x.price, 0);
+            const pnlCents  = grossSell - cost;
+            const pnlDollars = pnlCents / 100;
+            if (pnlCents >= 0) {
+                resultCell = `<span class="bet-result bet-result-won">CASHED +$${pnlDollars.toFixed(2)}</span>`;
+            } else {
+                resultCell = `<span class="bet-result bet-result-lost">CASHED -$${Math.abs(pnlDollars).toFixed(2)}</span>`;
             }
         } else if (positionTickers.has(f.ticker)) {
             resultCell = `<span class="bet-state bet-state-held">HELD</span>`;
@@ -2132,20 +2188,28 @@ async function renderHistoryPane() {
 
     const daySections = sortedDays.map((dayKey) => {
         const dayFires = byDay.get(dayKey);
-        // Day-scoped aggregates (settled bets only).
+        // Day-scoped aggregates — counts BOTH settled bets AND
+        // cashed-out bets (sold via fills before settlement).
         let dayWins = 0, dayLosses = 0, dayPnl = 0;
         for (const f of dayFires) {
-            const s = settlementByTicker.get(f.ticker);
-            if (!s) continue;
             const cost = (f.contracts || 1) * (f.price_cents || 0);
-            const yesCount = Number(s.yes_count) || 0;
-            const noCount  = Number(s.no_count)  || 0;
-            const fireSide = f.side || "yes";
-            const won = (fireSide === "yes")
-                ? (s.market_result === "yes" && yesCount > 0)
-                : (s.market_result === "no"  && noCount  > 0);
-            dayPnl += (Number(s.revenue) || 0) - cost;
-            if (won) dayWins++; else dayLosses++;
+            const s = settlementByTicker.get(f.ticker);
+            const sellFills = sellFillsByTicker.get(f.ticker) || [];
+            if (s) {
+                const yesCount = Number(s.yes_count) || 0;
+                const noCount  = Number(s.no_count)  || 0;
+                const fireSide = f.side || "yes";
+                const won = (fireSide === "yes")
+                    ? (s.market_result === "yes" && yesCount > 0)
+                    : (s.market_result === "no"  && noCount  > 0);
+                dayPnl += (Number(s.revenue) || 0) - cost;
+                if (won) dayWins++; else dayLosses++;
+            } else if (sellFills.length) {
+                const grossSell = sellFills.reduce((sum, x) => sum + x.count * x.price, 0);
+                const pnl = grossSell - cost;
+                dayPnl += pnl;
+                if (pnl >= 0) dayWins++; else dayLosses++;
+            }
         }
         const daySettled = dayWins + dayLosses;
         const dayOpen    = dayFires.length - daySettled;
@@ -2177,21 +2241,40 @@ async function renderHistoryPane() {
         `;
     }).join("");
 
-    // Net P/L across SETTLED bets only (top-line banner).
+    // Top-line banner — net P/L across SETTLED and CASHED bets.
+    // Cash-outs (sold via fills before settlement) count too;
+    // historically we were ignoring them and missing wins.
     let netCents = 0;
-    let settledCount = 0;
+    let resolvedCount = 0;
+    let resolvedWins  = 0;
+    let resolvedLosses = 0;
     for (const f of fires) {
-        const s = settlementByTicker.get(f.ticker);
-        if (!s) continue;
-        settledCount++;
         const cost = (f.contracts || 1) * (f.price_cents || 0);
-        const revenue = Number(s.revenue) || 0;
-        netCents += (revenue - cost);
+        const s = settlementByTicker.get(f.ticker);
+        const sellFills = sellFillsByTicker.get(f.ticker) || [];
+        if (s) {
+            resolvedCount++;
+            const yesCount = Number(s.yes_count) || 0;
+            const noCount  = Number(s.no_count)  || 0;
+            const fireSide = f.side || "yes";
+            const won = (fireSide === "yes")
+                ? (s.market_result === "yes" && yesCount > 0)
+                : (s.market_result === "no"  && noCount  > 0);
+            const pnl = (Number(s.revenue) || 0) - cost;
+            netCents += pnl;
+            if (won) resolvedWins++; else resolvedLosses++;
+        } else if (sellFills.length) {
+            resolvedCount++;
+            const grossSell = sellFills.reduce((sum, x) => sum + x.count * x.price, 0);
+            const pnl = grossSell - cost;
+            netCents += pnl;
+            if (pnl >= 0) resolvedWins++; else resolvedLosses++;
+        }
     }
-    const winRate = settledCount ? (wonCount / settledCount) : null;
-    const summary = settledCount > 0
-        ? `${settledCount} settled · ${wonCount}-${lostCount} (${(winRate * 100).toFixed(0)}%) · Net <strong class="${netCents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${netCents >= 0 ? "+" : ""}$${(netCents/100).toFixed(2)}</strong>`
-        : `${fires.length} placed · 0 settled yet`;
+    const winRate = resolvedCount ? (resolvedWins / resolvedCount) : null;
+    const summary = resolvedCount > 0
+        ? `${resolvedCount} resolved · ${resolvedWins}-${resolvedLosses} (${(winRate * 100).toFixed(0)}%) · Net <strong class="${netCents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${netCents >= 0 ? "+" : ""}$${(netCents/100).toFixed(2)}</strong>`
+        : `${fires.length} placed · 0 resolved yet`;
 
     return `
       <div class="bot-status-banner">
