@@ -1464,6 +1464,12 @@ function orderbookNoBidCents(ob) {
 // ── UI: drawer with Open Bets + Bot tabs ──────────────────────────
 
 let _drawerOpen = false;
+let _drawerRefreshTimer = null;
+// Auto-refresh every 12s while the drawer is open. Catches Kalshi's
+// 1-3s eventual consistency lag after a fill AND catches positions
+// the bot has cashed out in the background. 12s = faster than the
+// bot's 30s scan, so users see fresh data even mid-cycle.
+const DRAWER_AUTO_REFRESH_MS = 12_000;
 
 function openDrawer(initialTab = "bets") {
     if (_drawerOpen) return;
@@ -1474,11 +1480,18 @@ function openDrawer(initialTab = "bets") {
     document.body.appendChild(overlay);
     bindDrawer(overlay);
     refreshDrawerContent();
+    // Periodic pull while open — without this, a placed bet won't
+    // appear until the user re-clicks a tab.
+    if (_drawerRefreshTimer) clearInterval(_drawerRefreshTimer);
+    _drawerRefreshTimer = setInterval(() => {
+        if (_drawerOpen) refreshDrawerContent();
+    }, DRAWER_AUTO_REFRESH_MS);
 }
 
 function closeDrawer() {
     document.querySelector(".bot-drawer-overlay")?.remove();
     _drawerOpen = false;
+    if (_drawerRefreshTimer) { clearInterval(_drawerRefreshTimer); _drawerRefreshTimer = null; }
 }
 
 function refreshDrawerIfOpen() {
@@ -1810,14 +1823,35 @@ async function renderOpenBetsPane() {
     `;
 
     if (!mps.length && !resting.length) {
-        // No live positions, no resting orders → this tab should be
-        // EMPTY. Everything else (old fires, settled bets) belongs
-        // in History. The Kalshi fills section still shows up
-        // because that's actual trade execution data, not the
-        // local fire log.
+        // No live positions, no resting orders → this tab is technically
+        // empty. BUT — Kalshi's positions endpoint lags fills by 1-3s,
+        // and the bot's aggressive cash-out can close positions inside
+        // the same minute. So fires from the LAST 5 MINUTES get
+        // surfaced here as a 'just happened' strip — even if they're
+        // already closed Kalshi-side. Gives the user proof that bets
+        // are in fact firing.
+        const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+        const recentFires = fires.filter((f) => {
+            const t = new Date(f.placed_at || 0).getTime();
+            return t > fiveMinAgo;
+        });
         const hasFills = allFills.length > 0;
+        const recentBlock = recentFires.length
+            ? `
+                <div class="bot-recent-section">
+                  <div class="bot-recent-head">
+                    Last 5 min — ${recentFires.length} bet${recentFires.length === 1 ? "" : "s"} fired
+                    <span class="bot-recent-hint">closed already? check Fills + History</span>
+                  </div>
+                  <div class="bot-recent-list">
+                    ${recentFires.slice(0, 10).map(renderRecentFireRow).join("")}
+                  </div>
+                </div>
+              `
+            : "";
         return `
           ${statusBanner}
+          ${recentBlock}
           <div class="bot-empty">
             <p>No active bets right now.</p>
             <p class="bot-empty-sub">
@@ -1908,6 +1942,27 @@ async function renderOpenBetsPane() {
         </div>
       ` : ""}
       ${allFills.length ? renderFillsSection(allFills) : ""}
+    `;
+}
+
+// Compact row for the "last 5 min" recent-fires strip. Just label
+// + side + cost + time-ago — enough to confirm 'yes the bot fired
+// this minute' without duplicating the full active-position card.
+function renderRecentFireRow(f) {
+    const label   = escapeText(betLabel(f));
+    const side    = (f.side || "yes").toUpperCase();
+    const sideCls = side === "NO" ? "bet-side-no" : "bet-side-yes";
+    const cost    = ((f.contracts || 1) * (f.price_cents || 0) / 100).toFixed(2);
+    const ago     = formatNotifTime(f.placed_at);
+    return `
+      <div class="bot-recent-row">
+        <span class="bot-recent-label">${label}</span>
+        <span class="bot-recent-meta">
+          <span class="${sideCls}">${side}</span>
+          $${cost}
+          <span class="bot-recent-ts">${ago}</span>
+        </span>
+      </div>
     `;
 }
 
