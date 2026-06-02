@@ -107,7 +107,11 @@ async function refresh() {
         }));
     } else if (fires.length) {
         mode = "recent";
-        const top = fires.slice(0, 6);
+        // Show every recorded fire (capped at log size 500) — the
+        // strip is horizontally scrollable so the user can sweep
+        // through all of them. Previously we capped at 6 which
+        // made the strip look like it was hiding bets.
+        const top = fires.slice(0, 30);
         entries = await Promise.all(top.map(async (f) => {
             const progress = await computeProgress(f);
             return { kind: "recent", fire: f, progress };

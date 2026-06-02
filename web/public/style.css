@@ -379,6 +379,17 @@ main.board {
     align-items: center;
     gap: 6px;
     font-size: 10px;
+    /* The generic .player-row (used inside the live game pane) has
+       10px×14px padding, a surface background, and a border — that
+       turns each AT BAT / PITCHING row into an inset card ~50px
+       tall. On the slate tiles we want a one-line row instead, so
+       null those styles. */
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    min-height: 18px;
+    max-width: none;
 }
 .tile .tile-players .player-row .label {
     color: var(--text-dim);
@@ -532,8 +543,8 @@ main.board {
     display: none;
 }
 .tile .tile-live-photo {
-    width: 28px;
-    height: 28px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--bg);
     object-fit: cover;
@@ -541,8 +552,8 @@ main.board {
     display: block;
 }
 .tile .tile-live-photo-empty {
-    width: 28px;
-    height: 28px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--bg);
     display: block;
@@ -8438,13 +8449,15 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .active-bets-strip {
     position: fixed;
     left: 16px;
-    right: 200px;
+    /* Tightened right edge: launcher is ~170px so 184px clearance is
+       enough, recovering 16px of chip area. */
+    right: 184px;
     bottom: 84px;
     z-index: 5000;
     display: none;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px 8px 12px;
+    gap: 8px;
+    padding: 6px 8px 6px 10px;
     background: rgba(11, 18, 32, 0.96);
     border: 1px solid rgba(148, 163, 184, 0.22);
     border-radius: 12px;
@@ -8527,14 +8540,14 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .abs-chip {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
+    gap: 6px;
+    padding: 4px 8px;
     background: rgba(30, 41, 59, 0.6);
     border: 1px solid rgba(148, 163, 184, 0.15);
     border-radius: 8px;
     text-decoration: none;
     color: var(--text);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     line-height: 1.2;
     flex-shrink: 0;
@@ -8554,12 +8567,12 @@ button.md-game-outcome:active { transform: translateY(1px); }
 
 .abs-src {
     display: inline-block;
-    padding: 2px 6px;
+    padding: 1px 5px;
     border-radius: 999px;
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 800;
-    letter-spacing: 0.08em;
-    min-width: 32px;
+    letter-spacing: 0.06em;
+    min-width: 26px;
     text-align: center;
 }
 .abs-src-bot {
@@ -8580,8 +8593,8 @@ button.md-game-outcome:active { transform: translateY(1px); }
    when the leg hits its target. */
 .abs-progress {
     display: inline-block;
-    width: 56px;
-    height: 8px;
+    width: 40px;
+    height: 6px;
     background: rgba(15, 23, 42, 0.7);
     border-radius: 999px;
     overflow: hidden;
@@ -8599,11 +8612,11 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: linear-gradient(90deg, var(--accent-win) 0%, #4ade80 100%);
 }
 .abs-progress-text {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
     font-weight: 700;
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
 }
 .abs-progress-pending { color: var(--text-faint); }
 
