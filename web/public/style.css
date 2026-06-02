@@ -377,13 +377,12 @@ main.board {
 }
 .tile .tile-players .player-row {
     display: grid;
-    grid-template-columns: 46px 26px minmax(0, 1fr);
+    /* Was 46|26 — at 12px label font the 'PITCHING' glyph chain
+       overran 46px and clipped the trailing G. 64px gives it
+       breathing room without eating into the name column. */
+    grid-template-columns: 64px 26px minmax(0, 1fr);
     align-items: center;
     gap: 6px;
-    /* Bumped 10 → 12 so player names read at a comfortable size
-       relative to the 13px team name and 18px score — the previous
-       10px was too small next to the bigger glyphs above and made
-       the AT BAT / PITCHING rows feel like an afterthought. */
     font-size: 14px;
     /* The generic .player-row (used inside the live game pane) has
        10px×14px padding, a surface background, and a border — that
@@ -6355,12 +6354,17 @@ button.md-game-outcome:hover {
 button.md-game-outcome:active { transform: translateY(1px); }
 
 .md-game-outcome {
+    /* Was horizontal flex — long American odds like -1567 + a 94%
+       label could not coexist with a team-name column inside a
+       ~80px cell, so the numerals slid past the cell border.
+       Stacked vertically: name on top, odds row below. Each row
+       uses the full cell width and reads cleanly. */
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 4px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
     font-size: 12px;
-    padding: 3px 6px;
+    padding: 5px 8px;
 }
 .md-game-outcome.is-fav .md-game-out-name { font-weight: 700; }
 .md-game-outcome.is-fav .md-game-out-am { color: var(--accent-win); }
@@ -6369,20 +6373,26 @@ button.md-game-outcome:active { transform: translateY(1px); }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* Was 95px from when cards were 360px wide. With the 240px
-       cards, columns are ~78px each, so a 95px cap forces every
-       label past 'WSH' into ellipsis even when there's no real
-       overflow. Drop to flex: 1 + min-width: 0 so the name uses
-       whatever space is left after the odds column, ellipsizing
-       only when truly necessary. */
-    flex: 1;
-    min-width: 0;
+    /* In the vertical layout, name owns the full top line. */
+    width: 100%;
+    font-size: 12px;
+    font-weight: 600;
+    /* Logo + label as flex so the team logo sits inline with the
+       team abbreviation. The renderer prepends an .md-team-logo img. */
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
 }
 .md-game-out-odds {
+    /* In the vertical layout: am + pct sit side by side on a
+       second line, full-width, right-aligned so values column-
+       align nicely between sibling rows. */
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0px;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+    width: 100%;
+    justify-content: flex-end;
     flex-shrink: 0;
 }
 .md-game-out-am {
@@ -6395,6 +6405,26 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text-dim);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
+}
+
+/* Small team logo for inline use next to abbreviations — picked
+   up by the markets cards, score tiles, and anywhere else we say
+   "MIA" / "WSH" / etc. Logos are served by ESPN's CDN keyed by
+   lowercase MLB tri-code; the renderer falls back to a hidden img
+   if a code isn't recognized. */
+.team-logo,
+.md-team-logo {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
+    flex-shrink: 0;
+    display: inline-block;
+    vertical-align: middle;
+}
+.team-logo-sm,
+.md-team-logo-sm {
+    width: 14px;
+    height: 14px;
 }
 .md-game-empty {
     color: var(--text-faint);

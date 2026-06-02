@@ -448,6 +448,7 @@ function renderTile(g) {
         <div class="matchup">
           <div class="team">
             <span class="team-id">
+              ${inlineTeamLogo(g.away, { size: 20, class: "team-logo" })}
               <span class="name">${g.away}</span>
               ${recAway ? `<span class="rec">${recAway}</span>` : ""}
             </span>
@@ -455,6 +456,7 @@ function renderTile(g) {
           </div>
           <div class="team">
             <span class="team-id">
+              ${inlineTeamLogo(g.home, { size: 20, class: "team-logo" })}
               <span class="name">${g.home}</span>
               ${recHome ? `<span class="rec">${recHome}</span>` : ""}
             </span>
@@ -616,6 +618,48 @@ function inlineAvatar(mlbam, opts = {}) {
         return `<span class="${cls} ${cls}-empty" aria-hidden="true" style="width:${size}px;height:${size}px;"></span>`;
     }
     return `<img class="${cls}" src="${playerHeadshotSpot(mlbam, cdnSize)}" alt="${escapeHTMLAttr(label)}" loading="lazy" width="${size}" height="${size}" onerror="this.style.opacity='0';"/>`;
+}
+
+// ESPN CDN serves MLB team logos keyed by lowercase tri-code. Same
+// pattern every baseball site uses; we follow suit so users see the
+// real club marks inline next to abbreviations rather than 3-letter
+// text shouting in isolation. Falls back to a placeholder (which
+// onerror hides) when the abbreviation isn't recognized.
+const TEAM_LOGO_OVERRIDE = {
+    // ESPN's CDN serves AZ for Arizona Diamondbacks even though
+    // most baseball APIs (incl. MLB Stats) say "ARI". A few similar
+    // mismatches; map them here so the right glyph loads.
+    "ARI": "ari", "AZ": "ari",
+    "ATH": "oak", "OAK": "oak",
+    "WSH": "wsh", "WAS": "wsh",
+    "TBR": "tb",  "TB":  "tb",
+    "KCR": "kc",  "KC":  "kc",
+    "SDP": "sd",  "SD":  "sd",
+    "SFG": "sf",  "SF":  "sf",
+    "CWS": "chw", "CHW": "chw",
+};
+function teamLogoCdnSlug(abbr) {
+    if (!abbr) return null;
+    const up = String(abbr).toUpperCase().trim();
+    if (TEAM_LOGO_OVERRIDE[up]) return TEAM_LOGO_OVERRIDE[up];
+    return up.toLowerCase();
+}
+function teamLogoUrl(abbr, size = 40) {
+    const slug = teamLogoCdnSlug(abbr);
+    if (!slug) return null;
+    return `https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/${slug}.png`;
+}
+function inlineTeamLogo(abbr, opts = {}) {
+    const size = opts.size || 18;
+    const cls  = opts.class || "team-logo";
+    if (!abbr) {
+        return `<span class="${cls} ${cls}-empty" aria-hidden="true" style="width:${size}px;height:${size}px;display:inline-block;"></span>`;
+    }
+    const url = teamLogoUrl(abbr);
+    if (!url) {
+        return `<span class="${cls} ${cls}-empty" aria-hidden="true" style="width:${size}px;height:${size}px;display:inline-block;"></span>`;
+    }
+    return `<img class="${cls}" src="${url}" alt="${escapeHTMLAttr(abbr)}" loading="lazy" width="${size}" height="${size}" onerror="this.style.opacity='0';"/>`;
 }
 function bsPhoto(mlbam) {
     return inlineAvatar(mlbam, { size: 32, class: "bs-photo" });
@@ -868,7 +912,9 @@ function renderLeaderCard(cat) {
 }
 
 function renderLeaderRow(l) {
-    const team = l.team ? `<span class="leader-team">${l.team}</span>` : "";
+    const team = l.team
+        ? `<span class="leader-team">${inlineTeamLogo(l.team, { size: 14, class: "team-logo team-logo-sm" })}${l.team}</span>`
+        : "";
     const photo = inlineAvatar(l.person_id, { size: 32, class: "leader-photo", alt: l.name });
     const nameHtml = l.person_id
         ? `<a class="leader-name player-link" href="#player/${l.person_id}">${shortName(l.name)}</a>`
@@ -1183,9 +1229,9 @@ function renderMarketsDashboardGameCard(g, lookup) {
         <header class="md-game-head">
           <a class="md-game-teams-link" href="${href}">
             <div class="md-game-teams">
-              <span class="md-game-away">${away}</span>
+              <span class="md-game-away">${inlineTeamLogo(away, { size: 18, class: "md-team-logo" })}${away}</span>
               <span class="md-game-at">@</span>
-              <span class="md-game-home">${home}</span>
+              <span class="md-game-home">${inlineTeamLogo(home, { size: 18, class: "md-team-logo" })}${home}</span>
             </div>
           </a>
           <div class="md-game-meta">
@@ -1750,6 +1796,15 @@ function renderMdMiniMarket(markets, kind) {
     return outcomes.slice(0, 2).map((o) => {
         const american = o.american;
         const isFav = isAmericanFavorite(american) || o.probability >= 0.5;
+        // Extract the team tri-code from the outcome name so we can
+        // prepend the team logo. Outcome names look like "MIA",
+        // "Tigers -8.5", "Over 8.5 runs scored" — pull the first
+        // alpha word and let teamLogoCdnSlug normalize it. Falls back
+        // gracefully for non-team outcomes (Over/Under).
+        const firstWord = (o.name || "").trim().split(/\s+/)[0];
+        const logo = /^[A-Z]{2,4}$/.test(firstWord)
+            ? inlineTeamLogo(firstWord, { size: 16, class: "md-team-logo" })
+            : "";
         // Each outcome is a button → opens bet calculator preloaded
         // with this side (handler in attachMdBetHandlers below).
         return `
@@ -1761,7 +1816,7 @@ function renderMdMiniMarket(markets, kind) {
                   data-source="${escapeHTMLAttr(o.source || "")}"
                   data-kind="${escapeHTMLAttr(kind)}"
                   data-handicap="${escapeHTMLAttr(String(o.handicap ?? ""))}">
-            <span class="md-game-out-name">${escapeHTML(o.name)}</span>
+            <span class="md-game-out-name">${logo}${escapeHTML(o.name)}</span>
             <span class="md-game-out-odds">
               ${american != null ? `<span class="md-game-out-am">${formatAmericanOdds(american)}</span>` : ""}
               <span class="md-game-out-pct">${fmtPct(o.probability)}</span>
@@ -2876,11 +2931,11 @@ function renderHotCard(g, lev, rank) {
         </header>
         <div class="hot-matchup">
           <div class="hot-team">
-            <span class="hot-team-name">${g.away}</span>
+            <span class="hot-team-name">${inlineTeamLogo(g.away, { size: 18, class: "team-logo" })}${g.away}</span>
             <span class="hot-team-score">${g.away_score}</span>
           </div>
           <div class="hot-team">
-            <span class="hot-team-name">${g.home}</span>
+            <span class="hot-team-name">${inlineTeamLogo(g.home, { size: 18, class: "team-logo" })}${g.home}</span>
             <span class="hot-team-score">${g.home_score}</span>
           </div>
         </div>
@@ -3223,7 +3278,9 @@ function renderRaceCard(race) {
 }
 
 function renderCandidate(c) {
-    const team = c.team ? `<span class="cand-team">${c.team}</span>` : "";
+    const team = c.team
+        ? `<span class="cand-team">${inlineTeamLogo(c.team, { size: 14, class: "team-logo team-logo-sm" })}${c.team}</span>`
+        : "";
     const statCells = c.stats.map((s, i) => `
       <div class="cand-stat ${i === 0 ? "primary" : ""}">
         <span class="cand-stat-value">${s.value}</span>
