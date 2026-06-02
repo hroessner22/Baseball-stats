@@ -138,11 +138,27 @@ export async function onRequest(context) {
         // the feed under `boxscore.teams[X].players[ID{pitcher}].stats.
         // pitching.battersFaced`. Pulled below.
         const battersFaced = teams[side].pitcher_bf || 0;
-        const totalPA = Math.max(
+        const pitchesThrown = teams[side].pitcher_pitches || 0;
+        const baseRemaining = Math.max(
             0,
             PA_PER_STARTING_PITCHER - battersFaced,
         );
-        if (totalPA === 0) continue;
+        // Pitch-count haircut. Once a starter passes 80 pitches the
+        // probability he stays in for another full lineup turn drops
+        // sharply; by 100-105 the manager almost always has the
+        // bullpen up. Piecewise linear ramp matches what bullpen
+        // usage data shows across the league:
+        //   <80:        no haircut (full remaining)
+        //   80–95:      50% effective
+        //   95–105:     20% effective
+        //   105+:       ~0 (almost certainly being pulled now)
+        let pitchCountFactor = 1.0;
+        if (pitchesThrown >= 105)      pitchCountFactor = 0.05;
+        else if (pitchesThrown >= 95)  pitchCountFactor = 0.20;
+        else if (pitchesThrown >= 80)  pitchCountFactor = 0.50;
+        else if (pitchesThrown >= 70)  pitchCountFactor = 0.75;
+        const totalPA = baseRemaining * pitchCountFactor;
+        if (totalPA <= 0) continue;
         // Spread the remaining PAs evenly across the opposing lineup.
         // A starter naturally cycles the lineup ~3x — uniform allocation
         // is the right zero-information prior across all 9 spots.
@@ -163,9 +179,12 @@ export async function onRequest(context) {
             strikeouts: poissonTailMap(lambda, THRESHOLDS.strikeouts),
             _meta: {
                 ...(modelProps[pitcherId]?._meta || {}),
-                expected_k:   round4(lambda),
-                batters_left: totalPA,
-                bf_so_far:    battersFaced,
+                expected_k:           round4(lambda),
+                batters_left:         round4(totalPA),
+                batters_left_uncap:   baseRemaining,
+                bf_so_far:            battersFaced,
+                pitches_thrown:       pitchesThrown,
+                pitch_count_factor:   pitchCountFactor,
             },
         };
     }
@@ -205,10 +224,16 @@ function shapeSide(side, probable) {
     // `pitchers`), fall back to `probablePitcher` for pregame.
     let pitcherId = pitcherIds[0] || probable?.id || null;
     let pitcherBf = 0;
+    let pitcherPitches = 0;
     let pitcherName = null;
     if (pitcherId) {
         const pRow = players[`ID${pitcherId}`];
         pitcherBf = pRow?.stats?.pitching?.battersFaced || 0;
+        // Pitch count drives the remaining-BF estimate downstream —
+        // a starter at 95 pitches in the 6th is one bad batter from
+        // being pulled, regardless of how many BF the static
+        // PA_PER_STARTING_PITCHER constant would predict.
+        pitcherPitches = pRow?.stats?.pitching?.pitchesThrown || 0;
         pitcherName = pRow?.person?.fullName || probable?.fullName || null;
     } else if (probable?.fullName) {
         pitcherName = probable.fullName;
@@ -246,11 +271,12 @@ function shapeSide(side, probable) {
         }
     }
     return {
-        team:         side.team?.abbreviation || side.team?.triCode || null,
-        pitcher_id:   pitcherId,
-        pitcher_name: pitcherName,
-        pitcher_bf:   pitcherBf,
-        batters:      Array.from(byOrder.values()).sort((a, b) => a.order - b.order),
+        team:           side.team?.abbreviation || side.team?.triCode || null,
+        pitcher_id:     pitcherId,
+        pitcher_name:   pitcherName,
+        pitcher_bf:     pitcherBf,
+        pitcher_pitches: pitcherPitches,
+        batters:        Array.from(byOrder.values()).sort((a, b) => a.order - b.order),
     };
 }
 
