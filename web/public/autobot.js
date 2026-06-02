@@ -134,12 +134,16 @@ const DEFAULTS = {
     // factor, which is what 'we have a real edge here' looks like in
     // practice. Set lower for more shots, higher for fewer/better.
     min_conviction:        0.40,
-    // MONEYLINE BUDGET RESERVE — cents reserved EXCLUSIVELY for
-    // moneyline (win-expectancy) fires. Player-prop fires must leave
-    // at least this much headroom under open_exposure_max so a WE
-    // signal can always trade even when prop opportunities saturate
-    // the rest of the cap.
-    moneyline_reserve_cents: 500,   // $5 reserved for WE bets
+    // MONEYLINE BUDGET RESERVE — FRACTION of open_exposure_max
+    // held back EXCLUSIVELY for moneyline (win-expectancy) fires.
+    // Player-prop exposure caps at (1 - reserve) × open_exposure_max
+    // so a WE signal can always trade even when prop opportunities
+    // saturate the rest. WE path itself can use the FULL cap, so
+    // a 50% reserve = 'props get up to half, WE can use everything'.
+    //
+    // Defaults to 0.50 per user direction: 'set it at 50% available
+    // on player props and 50% on WE bets.'
+    moneyline_reserve_pct: 0.50,
 };
 
 const SCAN_INTERVAL_MS    = 30_000;
@@ -210,7 +214,7 @@ function clampSettings(s) {
         daily_loss_limit_cents:     clampInt(s.daily_loss_limit_cents, 100, HARD_CAPS.daily_loss_cents_max),
         open_exposure_max:          clampInt(s.open_exposure_max, 200, HARD_CAPS.open_exposure_max),
         min_conviction:             clampFloat(s.min_conviction, 0, 1),
-        moneyline_reserve_cents:    clampInt(s.moneyline_reserve_cents, 0, HARD_CAPS.open_exposure_max),
+        moneyline_reserve_pct:      clampFloat(s.moneyline_reserve_pct, 0, 0.95),
         bet_player_props:           s.bet_player_props !== false,
     };
 }
@@ -580,17 +584,19 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const contracts = Math.floor(_state.settings.unit_cents / askCents);
         if (contracts < 1) continue;
         const tradeCostCents = contracts * askCents;
-        // MONEYLINE BUDGET RESERVE — player props must leave at least
-        // `moneyline_reserve_cents` of headroom under the open-exposure
-        // cap so a WE signal can always fire even when 40 props worth
-        // of edge are all crying out at once. Moneyline path has no
-        // such reservation (it CAN use the full cap including the
-        // reserved portion).
-        const propsCapCents = _state.settings.open_exposure_max - _state.settings.moneyline_reserve_cents;
+        // MONEYLINE BUDGET RESERVE — player props cap at
+        // (1 - reserve_pct) × open_exposure_max. Moneyline path has
+        // no such reservation (it can use the full cap including the
+        // reserved portion). With 50% reserve and $20 cap: props get
+        // up to $10 open, WE can still use the full $20.
+        const reservePct    = _state.settings.moneyline_reserve_pct;
+        const reserveCents  = Math.round(_state.settings.open_exposure_max * reservePct);
+        const propsCapCents = _state.settings.open_exposure_max - reserveCents;
         if (computeOpenExposureCents() + tradeCostCents > propsCapCents) {
             if (score) root.BotScoring.logScoredDecision(score, {
                 action: "skip", reason: "moneyline_reserve_protected",
-                reserve_cents: _state.settings.moneyline_reserve_cents,
+                reserve_cents: reserveCents,
+                reserve_pct:   reservePct,
                 side,
             });
             continue;
@@ -2749,11 +2755,11 @@ function renderBotPane() {
             <small>Total open positions cap · ceiling $${(HARD_CAPS.open_exposure_max/100).toFixed(0)}</small>
           </label>
           <label>
-            <span>Moneyline reserve ($)</span>
-            <input type="number" min="0" max="${HARD_CAPS.open_exposure_max/100}" step="1"
-                   value="${(s.moneyline_reserve_cents/100).toFixed(0)}"
-                   data-bot-setting-dollar="moneyline_reserve_cents">
-            <small>Reserved exclusively for WE bets — player props must leave this much under the cap so a moneyline can always fire</small>
+            <span>Moneyline reserve (% of cap)</span>
+            <input type="number" min="0" max="95" step="5"
+                   value="${Math.round(s.moneyline_reserve_pct * 100)}"
+                   data-bot-setting-pct="moneyline_reserve_pct">
+            <small>= $${(s.open_exposure_max * s.moneyline_reserve_pct / 100).toFixed(2)} reserved for WE bets · player props cap at $${(s.open_exposure_max * (1 - s.moneyline_reserve_pct) / 100).toFixed(2)} open</small>
           </label>
           <label>
             <span>Min conviction (0–1)</span>
