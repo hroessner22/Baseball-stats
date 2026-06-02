@@ -280,6 +280,10 @@ main.board {
     border-radius: var(--radius);
     padding: 8px 12px 10px;
     display: flex;
+    /* Distribute the limited content (matchup + state + body +
+       WE bar) so the bar always hugs the bottom and the body
+       fills the middle. Without this, short Final tiles left a
+       gap of dead space below the W/L/S row. */
     flex-direction: column;
     gap: 5px;
     text-decoration: none;
@@ -304,6 +308,28 @@ main.board {
         0 1px 3px rgba(0, 0, 0, 0.4),
         0 0 0 1px rgba(239, 68, 68, 0.2);
 }
+
+/* Every other live tile gets a subtle border-left accent so the
+   slate visually separates Live games from Preview / Final at a
+   glance, without competing with the top-card red ring. */
+.tile[data-status="Live"] {
+    border-left: 2px solid rgba(239, 68, 68, 0.55);
+    padding-left: 11px;   /* 12 - 1 of the extra border, keeps text on-grid */
+}
+
+/* Final tiles read 'done' — slightly faded surface, slightly
+   muted border. The eye reaches Live tiles first; Final tiles
+   sit quietly until you tap. */
+.tile[data-status="Final"] {
+    background: rgba(15, 23, 42, 0.45);
+    border-color: rgba(148, 163, 184, 0.15);
+}
+.tile[data-status="Final"] .team .name,
+.tile[data-status="Final"] .team .score {
+    color: var(--text-dim);
+}
+.tile[data-status="Final"] .team .name { font-weight: 700; }   /* was 800 */
+.tile[data-status="Final"] .team .rec  { opacity: 0.7; }
 
 .tile .matchup {
     display: flex;
@@ -364,7 +390,12 @@ main.board {
     color: var(--accent-live);
 }
 .tile[data-status="Final"] .state {
+    /* 'FINAL' reads as a quiet badge — letter-spaced, dim, but
+       distinct enough from 'PREVIEW' / 'LIVE' to anchor the eye. */
     color: var(--text-dim);
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    padding: 2px 0;
 }
 
 /* Live batter / pitcher block. Filled in by hydrateLiveTile after the
@@ -458,6 +489,10 @@ main.board {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    /* Auto top margin pushes the WE bar to the bottom of the tile
+       in the flex column, so the matchup + state + body always
+       fill the upper portion and the bar is visually anchored. */
+    margin-top: auto;
 }
 .tile .tile-we .we-bar {
     height: 4px;
@@ -490,6 +525,10 @@ main.board {
     text-align: center;
     letter-spacing: 0.01em;
     line-height: 1.35;
+    /* Pad the body block slightly so a Final tile's W/L/S row
+       sits centered between the team header above and the WE bar
+       below instead of crowding either edge. */
+    padding: 6px 0 4px;
 }
 .tile .tile-extra .dim {
     color: var(--text-dim);
@@ -502,6 +541,12 @@ main.board {
     align-items: center;
     gap: 5px;
     vertical-align: middle;
+}
+/* Decision row (W / L / S) breathes — separator '·' between
+   pitcher decisions gets a touch of spacing so the row reads as
+   a sequence, not a run-on. */
+.tile .tile-decision + .tile-decision {
+    margin-left: 4px;
 }
 .tile .tile-photo {
     width: 22px;
@@ -602,29 +647,30 @@ main.board {
     display: block;
 }
 
-/* HOT pill for close, late-inning live games. Top-right corner, red badge
-   with a pulsing white dot — same visual grammar as the header LIVE pill. */
+/* HOT pill for close, late-inning live games. Moved to TOP-LEFT
+   so it doesn't sit on top of the away-team score in the top-right
+   corner. Same visual grammar as the header LIVE pill. */
 .tile .hot-pill {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: -4px;
+    left: 10px;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 7px 3px 6px;
-    border-radius: 4px;
+    gap: 3px;
+    padding: 2px 6px 2px 5px;
+    border-radius: 3px;
     background: var(--accent-live);
     color: #fff;
-    font-size: 10px;
+    font-size: 8px;
     font-weight: 800;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.14em;
     line-height: 1;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.45);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
     z-index: 2;
 }
 .tile .hot-pill .dot {
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
     background: #fff;
     animation: pulse 1.5s ease-in-out infinite;
