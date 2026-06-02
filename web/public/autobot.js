@@ -12,7 +12,7 @@
 // To re-enable bot trading: flip this constant to `false`, deploy,
 // hard-refresh. Local settings are preserved through the kill.
 // ═════════════════════════════════════════════════════════════════
-const BOT_KILLED = true;
+const BOT_KILLED = false;
 
 // DIAMOND:CONTEXT auto-bet bot.
 //
@@ -78,8 +78,13 @@ const BOT_KILLED = true;
 // ── Hard safety caps (UI cannot exceed these) ─────────────────────
 
 const HARD_CAPS = {
-    unit_cents_min:        25,     // $0.25 minimum
-    unit_cents_max:        200,    // $2.00 maximum
+    // 2026-06-02: hard ceiling lowered from $2.00 → $0.10 after the
+    // user lost most of their bankroll to NO-side prop bets that
+    // were stale-model edges (event already happened, NO at 1¢).
+    // User direction: 'lower the amount to 10 cents a bet and no
+    // more.' Floor lowered to 1¢ so the cap can actually take effect.
+    unit_cents_min:        1,      // $0.01 minimum
+    unit_cents_max:        10,     // $0.10 maximum — HARD locked
     // The Pythag-baseline backtest cliff (49% at 1-2pp, 63% at
     // 2-3pp) was vs a dumb baseline. Kalshi isn't dumb. Live
     // experience (down 50% today at the 2pp default) shows the
@@ -87,13 +92,15 @@ const HARD_CAPS = {
     // raised to 4pp — keeps the bot above 'noise vs Kalshi.'
     edge_pp_min:           4,
     edge_pp_max:           20,
-    daily_loss_cents_max:  500,    // $5 daily realized-loss limit
-    open_exposure_max:     2000,   // $20 total open positions
+    // Bankroll is now $2.25. Daily loss limit dropped to $1 so the
+    // bot can't drain the rest of the account in one bad afternoon.
+    daily_loss_cents_max:  100,    // $1 daily realized-loss limit
+    open_exposure_max:     100,    // $1 total open positions
 };
 
 const DEFAULTS = {
     enabled:               false,
-    unit_cents:            50,     // $0.50 per fire (user's spec)
+    unit_cents:            10,     // $0.10 per fire (user's spec)
     // 2pp default was vs a dumb Pythag baseline. Against Kalshi
     // (efficient market) 2pp lands in the noise zone, and the
     // user is down 50% today firing on those. Raised the default
@@ -141,8 +148,8 @@ const DEFAULTS = {
     // — backed by the math above, not by 'we feel like we should
     // sell sooner.'
     live_ev_take_pct:      0.55,
-    daily_loss_limit_cents: 500,   // $5 default — tightened by HARD_CAPS
-    open_exposure_max:     2000,   // $20 default
+    daily_loss_limit_cents: 100,   // $1 — bankroll is $2.25, can't afford $5
+    open_exposure_max:     100,    // $1 total open — same reason
     bet_player_props:      true,   // scan Kalshi player_prop markets too
     // TRUE-ADVANTAGE GATE — required confidence from the multi-factor
     // scoring framework. score.confidence is normalized 0..1 (2 factors
@@ -673,11 +680,24 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // No Savant signal for player props, no maturity track record
         // — use the SEPARATE prop threshold (default 7pp, higher than
         // the 5pp moneyline bar) until we've earned confidence.
+        //
+        // NO-BIAS CORRECTION (2026-06-02). User direction: 'why are
+        // you betting NO so much.' Rare-event prop markets (1+ HR,
+        // 1+ hit at threshold 1) systematically price YES around
+        // 10¢ / NO around 90¢, so a model that disagrees by 2pp
+        // always lands on the NO side. NO bets pay 11¢ per contract
+        // when they win and lose 89¢ when they lose — high variance,
+        // tiny edge, and easily ruined by a single stale-model fire.
+        // Require an EXTRA 4pp of edge for NO bets to compensate.
         const propThreshold = _state.settings.player_prop_edge_threshold_pp;
-        if (edgePP < propThreshold) {
+        const effectivePropThreshold = side === "no"
+            ? propThreshold + 4
+            : propThreshold;
+        if (edgePP < effectivePropThreshold) {
             if (score) root.BotScoring.logScoredDecision(score, {
                 action: "skip", reason: "edge_below_threshold",
-                threshold_pp: propThreshold,
+                threshold_pp: effectivePropThreshold,
+                no_bias_penalty_applied: side === "no",
                 side,
             });
             continue;
@@ -3261,10 +3281,11 @@ function renderBotPane() {
         </div>
         <div class="bot-settings-recos">
           <button class="bot-reset-recos" data-bot-reset-recos>Apply recommended defaults</button>
-          <small>Snaps every setting on this panel to the tuned values discussed in this session:
-            $0.50 unit · 5pp moneyline / 7pp prop · min inning 3 · 50/50 reserve · huge-edge 12pp → 60%
-            cap · 0.40 conviction · 20¢ take · 55% EV-capture · $5 daily loss · $20 exposure · soft
-            Savant +3pp · props on. Bot ON/OFF state is preserved.</small>
+          <small>Snaps every setting on this panel to the tuned values for the $2.25 bankroll:
+            <strong>$0.10 unit (hard cap)</strong> · 5pp moneyline / 7pp prop YES / 11pp prop NO ·
+            min inning 3 · 50/50 reserve · huge-edge 12pp → 60% cap · 0.40 conviction · 20¢ take ·
+            55% EV-capture · <strong>$1 daily loss · $1 exposure</strong> · soft Savant +3pp · props
+            on. Bot ON/OFF state is preserved.</small>
         </div>
         <p class="bot-settings-note">
           Moneyline uses Savant as a confidence amplifier (soft gate by default). Player props
