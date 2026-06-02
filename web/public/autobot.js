@@ -352,7 +352,20 @@ async function runScan() {
             disable();
             return;
         }
-        // Open-exposure check.
+        // Open-exposure check. Was reading a stale _state.openPositions
+        // that only refreshed when the drawer's Bets tab rendered.
+        // If the drawer was closed (the common case while the bot
+        // runs in background), _state.openPositions stayed empty
+        // forever and the cap check returned 0. Now refresh
+        // SYNCHRONOUSLY from Kalshi every scan so the cap is real.
+        if (root.Kalshi && root.Kalshi.getPositions) {
+            try {
+                const posResp = await root.Kalshi.getPositions();
+                _state.openPositions =
+                    (posResp?.market_positions || [])
+                        .filter((p) => (p.position || 0) !== 0);
+            } catch { /* fall through with stale snapshot */ }
+        }
         const exposureCents = computeOpenExposureCents();
         if (exposureCents >= _state.settings.open_exposure_max) {
             log("skip", `Open exposure $${(exposureCents/100).toFixed(2)} >= cap $${(_state.settings.open_exposure_max/100).toFixed(2)}; skipping this scan`);
@@ -1400,6 +1413,17 @@ async function runCashoutCheck() {
             // Successful sell — reset the per-ticker failure streak
             // so a future single hiccup doesn't immediately notify.
             if (root._botSellFails) root._botSellFails.delete(p.ticker);
+            // DAILY-LOSS TRACKER. Was broken: the dailyLoss.cents
+            // counter was only ever READ for the limit check, never
+            // INCREMENTED. So the '$5 daily loss limit' never fired
+            // no matter how much the bot lost. Increment on every
+            // realized loss (profitPerContract * qty < 0) so the
+            // limit can actually stop the bot.
+            const realizedCents = profitPerContract * qty;
+            if (realizedCents < 0) {
+                _state.dailyLoss.cents += Math.abs(realizedCents);
+                persistDailyLoss();
+            }
         } catch (e) {
             const msg = String(e?.message || e);
             log("err", `Sell failed for ${p.ticker}: ${msg}`);
@@ -1438,12 +1462,21 @@ async function hasOpenSellOrder(ticker) {
     } catch { return false; }
 }
 
+// Was broken for NO positions — the previous 'if (qty <= 0)
+// continue' skipped every NO holding because Kalshi reports
+// those with NEGATIVE position values. Bot was firing NO bets
+// almost exclusively (NO-bias on rare-event prop markets), so
+// the exposure cap saw \$0 forever and let every trade through.
+// THAT is how the 50% reserve became fictional.
 function computeOpenExposureCents() {
     let cents = 0;
     for (const p of _state.openPositions) {
-        const qty = (p.position || 0);
-        if (qty <= 0) continue;
-        const entry = p.average_yes_price ?? p.average_cost_cents ?? 0;
+        const qty = Math.abs(p.position || 0);   // count BOTH sides
+        if (qty === 0) continue;
+        const entry = p.average_yes_price
+                   ?? p.average_no_price
+                   ?? p.average_cost_cents
+                   ?? 0;
         cents += qty * entry;
     }
     return cents;
