@@ -296,7 +296,18 @@ async function runScan() {
             persistDailyLoss();
         }
         if (_state.dailyLoss.cents >= _state.settings.daily_loss_limit_cents) {
-            log("halt", `Daily loss limit hit ($${(_state.dailyLoss.cents/100).toFixed(2)}); bot will resume tomorrow`);
+            const lossDollars  = (_state.dailyLoss.cents / 100).toFixed(2);
+            const limitDollars = (_state.settings.daily_loss_limit_cents / 100).toFixed(2);
+            log("halt", `Daily loss limit hit ($${lossDollars}); bot will resume tomorrow`);
+            // Notify — bot has stopped on its own; user should decide
+            // whether to raise the limit, stop for the day, or accept.
+            notify({
+                level:      "warn",
+                title:      "Daily loss limit reached — bot paused",
+                body:       `Realized loss $${lossDollars} ≥ limit $${limitDollars}. ` +
+                            `Bot stopped trading for today. Adjust the limit in Settings if you want it to resume.`,
+                dedupe_key: `daily-loss-hit:${todayUtcDate()}`,
+            });
             disable();
             return;
         }
@@ -319,10 +330,40 @@ async function runScan() {
                 const balanceCents = await root.Kalshi.getBalance();
                 if (balanceCents != null && balanceCents < 1) {
                     log("halt", `Kalshi balance $${(balanceCents/100).toFixed(2)} — nothing to bet with; skipping scan`);
+                    // Track consecutive zero-balance scans — one is
+                    // a flicker (settlement in flight), three is the
+                    // user actually needs to deposit.
+                    root._botZeroBalScans = (root._botZeroBalScans || 0) + 1;
+                    if (root._botZeroBalScans >= 3) {
+                        notify({
+                            level:      "warn",
+                            title:      "Kalshi balance below $0.01",
+                            body:       "3 scans in a row hit a zero balance — nothing to bet with. " +
+                                        "Deposit on Kalshi or lower the unit size to keep trading.",
+                            dedupe_key: "balance-zero",
+                            action: { label: "Open Kalshi", href: "https://kalshi.com/account/deposit" },
+                        });
+                    }
                     _state.lastScanAt = Date.now();
                     return;
                 }
+                // Reset streak on any positive balance.
+                root._botZeroBalScans = 0;
             } catch { /* If balance fetch fails, fall through to per-fire check */ }
+        }
+        // Auth-loss check — if we were previously connected and now
+        // aren't (token expired mid-session), surface it. Otherwise
+        // the bot silently does nothing while every scan no-ops.
+        if (root.Kalshi && root.Kalshi.isConnected && !root.Kalshi.isConnected()) {
+            notify({
+                level:      "error",
+                title:      "Kalshi disconnected — reconnect to resume",
+                body:       "Bot can't place or sell orders without an active Kalshi session. " +
+                            "Click the Kalshi pill (top-right) to reconnect.",
+                dedupe_key: "kalshi-disconnected",
+            });
+            _state.lastScanAt = Date.now();
+            return;
         }
 
         // 1) Live games
@@ -572,6 +613,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             if (root.Kalshi.invalidateBalanceCache) {
                 root.Kalshi.invalidateBalanceCache();
             }
+            // Any successful order resets the insufficient-funds streak.
+            root._botInsufStreak = 0;
             _state.sessionBets.add(key);
             persistSessionBets();
             // Capture the FULL context for forward analysis.
@@ -620,6 +663,19 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 // iteration sees truth.
                 if (root.Kalshi.invalidateBalanceCache) {
                     root.Kalshi.invalidateBalanceCache();
+                }
+                // Streak counter: 5 in a row = user needs to deposit
+                // or lower unit size.
+                root._botInsufStreak = (root._botInsufStreak || 0) + 1;
+                if (root._botInsufStreak >= 5) {
+                    notify({
+                        level:      "warn",
+                        title:      "Kalshi balance too low for new orders",
+                        body:       `5 consecutive orders rejected for insufficient funds. ` +
+                                    `Deposit on Kalshi or lower the unit size in Settings.`,
+                        dedupe_key: "insufficient-funds",
+                        action: { label: "Open Kalshi", href: "https://kalshi.com/account/deposit" },
+                    });
                 }
             }
         }
@@ -787,6 +843,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             price: yesAskCents,
             action: "buy",
         });
+        root._botInsufStreak = 0;
         _state.sessionBets.add(key);
         persistSessionBets();
         recordFiredBet({
@@ -831,6 +888,17 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             await sleep(10000);
         } else if (/insufficient/i.test(msg)) {
             if (root.Kalshi.invalidateBalanceCache) root.Kalshi.invalidateBalanceCache();
+            root._botInsufStreak = (root._botInsufStreak || 0) + 1;
+            if (root._botInsufStreak >= 5) {
+                notify({
+                    level:      "warn",
+                    title:      "Kalshi balance too low for new orders",
+                    body:       `5 consecutive orders rejected for insufficient funds. ` +
+                                `Deposit on Kalshi or lower the unit size in Settings.`,
+                    dedupe_key: "insufficient-funds",
+                    action: { label: "Open Kalshi", href: "https://kalshi.com/account/deposit" },
+                });
+            }
         }
     }
 }
@@ -1157,8 +1225,34 @@ async function runCashoutCheck() {
                 { ticker: p.ticker, qty, yesBidCents, entryCents,
                   profitPerContract, captureFraction, order: result });
             toast(`Bot: sold ${qty}× ${p.ticker} +${profitPerContract}¢/contract (${triggerTag})`, "ok");
+            // Successful sell — reset the per-ticker failure streak
+            // so a future single hiccup doesn't immediately notify.
+            if (root._botSellFails) root._botSellFails.delete(p.ticker);
         } catch (e) {
-            log("err", `Sell failed for ${p.ticker}: ${e.message || e}`);
+            const msg = String(e?.message || e);
+            log("err", `Sell failed for ${p.ticker}: ${msg}`);
+            // Track repeats — bot retries every 30s anyway, so a
+            // single failure is transient. Notify after 3 in a row:
+            // either the market is locked, the order is stuck, or
+            // something Kalshi-side needs human action.
+            const failMap = (root._botSellFails ||= new Map());
+            const n       = (failMap.get(p.ticker) || 0) + 1;
+            failMap.set(p.ticker, n);
+            if (n >= 3) {
+                notify({
+                    level:      "error",
+                    title:      `Stuck position — can't sell ${p.ticker}`,
+                    body:       `${n} cash-out attempts rejected (${msg}). ` +
+                                `Position: ${qty}× ${heldSide.toUpperCase()} ` +
+                                `@ entry ${entryCents}¢, live bid ${yesBidCents}¢. ` +
+                                `May need manual exit on Kalshi.`,
+                    dedupe_key: `sell-stuck:${p.ticker}`,
+                    action: {
+                        label: "Open on Kalshi",
+                        href:  `https://kalshi.com/markets/${encodeURIComponent(p.ticker)}`,
+                    },
+                });
+            }
         }
     }
 }
@@ -1367,6 +1461,9 @@ function drawerHtml(initialTab) {
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
             Active Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
+          <button class="bot-tab ${initialTab === "questions" ? "active" : ""}" data-tab="questions" role="tab">
+            Questions <span class="bot-tab-count bot-tab-unread" data-questions-count>0</span>
+          </button>
           <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
             Performance
           </button>
@@ -1381,6 +1478,7 @@ function drawerHtml(initialTab) {
           </button>
         </nav>
         <div class="bot-tab-pane ${initialTab === "bets"        ? "active" : ""}" data-pane="bets"></div>
+        <div class="bot-tab-pane ${initialTab === "questions"   ? "active" : ""}" data-pane="questions"></div>
         <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
         <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
         <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
@@ -1413,19 +1511,108 @@ async function refreshDrawerContent() {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
     overlay.querySelector("[data-pane='bets']").innerHTML        = await renderOpenBetsPane();
+    overlay.querySelector("[data-pane='questions']").innerHTML   = renderQuestionsPane();
     overlay.querySelector("[data-pane='performance']").innerHTML = await renderPerformancePane();
     overlay.querySelector("[data-pane='history']").innerHTML     = await renderHistoryPane();
     overlay.querySelector("[data-pane='decisions']").innerHTML   = renderDecisionsPane();
     overlay.querySelector("[data-pane='bot']").innerHTML         = renderBotPane();
     bindBotPaneHandlers(overlay);
     bindBetsPaneHandlers(overlay);
-    // Update count chips on the Bets + History + Decisions tabs.
+    bindQuestionsPaneHandlers(overlay);
+    // Update count chips on the Bets + Questions + History + Decisions tabs.
     const betsCt = overlay.querySelector("[data-bets-count]");
     if (betsCt) betsCt.textContent = String(_state.openPositions.length);
+    const qCt = overlay.querySelector("[data-questions-count]");
+    if (qCt && root.BotNotifications) {
+        const unread = root.BotNotifications.unreadCount();
+        qCt.textContent = String(unread);
+        qCt.classList.toggle("has-unread", unread > 0);
+    }
     const histCt = overlay.querySelector("[data-history-count]");
     if (histCt) histCt.textContent = String(getFires().length);
     const decCt = overlay.querySelector("[data-decisions-count]");
     if (decCt && root.BotScoring) decCt.textContent = String(root.BotScoring.getScoredDecisions(2000).length);
+}
+
+function renderQuestionsPane() {
+    if (!root.BotNotifications) {
+        return `<div class="bot-empty">Notifications module not loaded.</div>`;
+    }
+    const items = root.BotNotifications.list(100);
+    if (!items.length) {
+        return `
+          <div class="bot-empty bot-questions-empty">
+            <p>Nothing needs your attention.</p>
+            <p class="bot-help">The bot will surface a question here only when
+              it hits something it can't fix on its own — a stuck position,
+              auth loss, daily-loss-limit pause, or repeated insufficient-funds
+              rejections.</p>
+          </div>`;
+    }
+    const rows = items.map(renderNotifRow).join("");
+    return `
+      <div class="bot-questions-head">
+        <button class="bot-notif-mark-all" data-mark-all-read>Mark all read</button>
+        <button class="bot-notif-clear-all" data-clear-notifs>Clear all</button>
+      </div>
+      <div class="bot-notif-list">${rows}</div>
+    `;
+}
+
+function renderNotifRow(n) {
+    const when     = formatNotifTime(n.ts);
+    const levelCls = `notif-${n.level || "warn"}`;
+    const readCls  = n.acknowledged ? " is-read" : "";
+    const countTag = (n.count && n.count > 1) ? ` <span class="bot-notif-count">×${n.count}</span>` : "";
+    const actionA  = n.action && n.action.href
+        ? `<a class="bot-notif-action" href="${escapeText(n.action.href)}" target="_blank" rel="noopener">${escapeText(n.action.label || "Open")}</a>`
+        : "";
+    const readBtn  = n.acknowledged
+        ? ""
+        : `<button class="bot-notif-mark" data-mark-read="${escapeText(n.id)}">Mark read</button>`;
+    return `
+      <div class="bot-notif ${levelCls}${readCls}">
+        <div class="bot-notif-head">
+          <span class="bot-notif-title">${escapeText(n.title)}${countTag}</span>
+          <span class="bot-notif-ts">${when}</span>
+        </div>
+        <div class="bot-notif-body">${escapeText(n.body)}</div>
+        <div class="bot-notif-actions">
+          ${actionA}
+          ${readBtn}
+        </div>
+      </div>
+    `;
+}
+
+function formatNotifTime(iso) {
+    const d   = new Date(iso);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) {
+        return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function bindQuestionsPaneHandlers(overlay) {
+    overlay.querySelectorAll("[data-mark-read]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const id = btn.dataset.markRead;
+            root.BotNotifications?.markRead(id);
+            refreshDrawerContent();
+        });
+    });
+    overlay.querySelector("[data-mark-all-read]")?.addEventListener("click", () => {
+        root.BotNotifications?.markAllRead();
+        refreshDrawerContent();
+    });
+    overlay.querySelector("[data-clear-notifs]")?.addEventListener("click", () => {
+        if (confirm("Clear all questions?")) {
+            root.BotNotifications?.clear();
+            refreshDrawerContent();
+        }
+    });
 }
 
 // ── Decisions pane ────────────────────────────────────────────────
@@ -2950,6 +3137,17 @@ function flashBtn(btn, message, kind = "ok", durationSec = 2.5) {
     }, durationSec * 1000);
 }
 
+// notify() — single chokepoint for "this needs human attention."
+// Writes to the persistent notification log AND surfaces a toast
+// so the user sees it even if the drawer is closed. Routine fail
+// modes the bot self-recovers from never reach here.
+function notify(args) {
+    if (!args || !args.title) return;
+    root.BotNotifications?.push(args);
+    const kind = (args.level === "error" || args.level === "warn") ? "err" : "ok";
+    toast(`⚠️ ${args.title}`, kind);
+}
+
 function toast(msg, kind = "ok") {
     // Try Kalshi's toast surface first (older sites expose it);
     // otherwise render our own DOM-backed toast. The previous
@@ -2982,6 +3180,27 @@ function toast(msg, kind = "ok") {
 // ── Bootstrap ─────────────────────────────────────────────────────
 
 loadState();
+
+// Auto-refresh the drawer when a new notification fires so the
+// Questions badge updates in real time without the user reopening.
+window.addEventListener("bot-notification-change", () => {
+    const overlay = document.querySelector(".bot-drawer-overlay");
+    if (!overlay) return;
+    // Only update what's cheap to touch: the badge + the pane
+    // (avoid a full refreshDrawerContent which re-pulls Kalshi).
+    const qCt = overlay.querySelector("[data-questions-count]");
+    if (qCt && root.BotNotifications) {
+        const unread = root.BotNotifications.unreadCount();
+        qCt.textContent = String(unread);
+        qCt.classList.toggle("has-unread", unread > 0);
+    }
+    const pane = overlay.querySelector("[data-pane='questions']");
+    if (pane && pane.classList.contains("active")) {
+        pane.innerHTML = renderQuestionsPane();
+        bindQuestionsPaneHandlers(overlay);
+    }
+});
+
 // Render the launcher on DOMContentLoaded (or now if already past).
 if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
