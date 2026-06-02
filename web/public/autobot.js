@@ -1,38 +1,59 @@
 // DIAMOND:CONTEXT auto-bet bot.
 //
-// One screen, one job: scan live MLB games every 30 s, find moneyline
-// markets where our model's win probability AND Baseball Savant's WP
-// both disagree with Kalshi by more than the edge threshold (in the
-// SAME direction), and fire a small order on Kalshi to take the
-// mispricing. Then, while we hold the position, watch the Kalshi
-// mid-price — if it moves into our favor enough that selling now is
-// more EV than waiting for settlement, sell to lock in the gain.
+// ═════════════════════════════════════════════════════════════════
+// SYSTEM OVERVIEW (as of 2026-06)
+// ═════════════════════════════════════════════════════════════════
+// Every 30s the bot scans every live MLB game and decides whether
+// to FIRE a bet on Kalshi. Every 30s it also scans every open
+// position and decides whether to SELL. Both paths route through
+// the same multi-factor scoring framework (bot-scoring.js) so we
+// can review every decision after-the-fact.
 //
-// Why two engines: our matchup engine is decent (Brier 0.69) but not
-// perfect. Baseball Savant has its own WP model trained on the
-// Statcast event log. Requiring BOTH to disagree with the market in
-// the same direction filters out single-engine calibration errors —
-// the single worst tail risk for an autobetter.
+// MARKETS THE BOT TRADES:
+//   1. Moneyline (game outcome) — our WE model vs Kalshi
+//   2. Player props (K, HR, hits, total bases) — our prop tail
+//      probabilities (model-props endpoint) vs Kalshi YES/NO
+//   3. (BOTH SIDES) For props, we consider YES (over) AND NO
+//      (under) — whichever has the bigger edge wins.
 //
-// Why moneyline only (for now): both engines produce game-level win
-// probability. Neither produces calibrated spread / total / player-
-// prop probabilities. The bot only fires where we have two-engine
-// confirmation; anything else is single-engine and rides without a
-// safety net.
+// SCORING (see bot-scoring.js for full breakdown):
+//   F1 model_edge        — our_p vs market (weight 1.0)
+//   F2 savant_alignment  — Savant cross-check ±1.5pp (weight 0.5)
+//   F3 pitch_count       — K-prop pitcher removal risk (weight 0.8)
+//   F4 pa_remaining      — hitter-prop turns left (weight 0.7)
+//   F5 pitcher_recent_form — last 5 starts (weight 0.6)
+//   F6 batter_recent_form  — last 15 games (weight 0.6)
+//   F7 h2h               — career batter-vs-pitcher (sample weighted)
 //
-// Safety rails baked in at the constant level (UI cannot bypass):
-//   - $0.50 unit per fire (configurable 25¢ – $2)
-//   - One bet per (ticker, side) per session — no piling on
-//   - $5 daily realized-loss limit — bot pauses for the day
-//   - $20 total open exposure ceiling — bot pauses until positions close
-//   - Edge threshold floor: 3pp (UI can't go lower)
-//   - Off by default; user flips the toggle to start each session
+// CASH-OUT TRIGGERS (any one fires the sell):
+//   T1 ABS    — profit ≥ profit_take_cents (default 20¢)
+//   T2 EV-CAPTURE — captured ≥ live_ev_take_pct of original edge (0.55)
+//   T3 LIVE-EV — live model fair within 3¢ of market price
+//   T4 PITCH-COUNT — pitcher past their personal p80 (K-props only)
+//   T5 HITTER — late inning + threshold met / model cooled / no PAs left
 //
-// Storage:
-//   - localStorage: settings, session bet set, today's loss tally,
-//     activity log (last 100 entries)
-//   - All bot state survives page reloads but resets cleanly on
-//     day boundaries (loss tally only)
+// SAFETY RAILS (HARD_CAPS — UI cannot bypass):
+//   - 4pp edge floor (UI can't go lower than 4pp)
+//   - $5 daily realized-loss limit → bot pauses for the day
+//   - $20 total open exposure ceiling → bot pauses until positions close
+//   - Unit per fire 25¢ – $2 (default 50¢)
+//   - One bet per (ticker, side) per session
+//   - Off by default; user flips the toggle to start
+//
+// LEARNING LOOP:
+//   - Every consideration (fire / skip / cash-out) is logged with
+//     full factor breakdown to localStorage["diamond_context_bot_decisions"]
+//   - End-of-day: drawer → Bot tab → "EOD review" pulls Kalshi
+//     settlements + grades each decision, returning factor win rates,
+//     skip analysis, and weight-tuning suggestions.
+//   - Suggestions are SUGGESTIONS ONLY — never auto-applied.
+//
+// STORAGE:
+//   - localStorage: settings, session bet set, daily loss tally,
+//     activity log (last 100), bot fires (last 500), scored
+//     decisions (last 2000)
+//   - Bot state survives page reloads; loss tally resets at UTC day
+//     boundary.
 
 (function (root) {
 "use strict";
@@ -917,6 +938,38 @@ async function runCashoutCheck() {
         }
 
         if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell) continue;
+        // Compute the parallel score so EOD can analyze cash-out
+        // timing alongside the imperative-trigger decisions. The
+        // imperative triggers still drive the actual sells; this
+        // is observation only.
+        let cashoutScore = null;
+        if (root.BotScoring && root.BotScoring.scoreCashout) {
+            try {
+                const livePCents = (fire && fire.kind === "player_prop")
+                    ? await getLivePlayerPropPCents(fire) : null;
+                const pitchInfo = (fire?.stat === "strikeouts")
+                    ? await getLivePitcherInfo(fire.game_pk, fire.player) : null;
+                const gameInfo = (fire?.kind === "player_prop")
+                    ? await getLiveGameState(fire.game_pk) : null;
+                cashoutScore = await root.BotScoring.scoreCashout({
+                    ticker:             p.ticker,
+                    contracts:          qty,
+                    entry_cents:        entryCents,
+                    live_yes_bid_cents: heldSide === "yes" ? yesBidCents : null,
+                    live_yes_ask_cents: heldSide === "yes" ? null : (100 - yesBidCents),
+                    placed_at_ts:       fire?.placed_at ? Date.parse(fire.placed_at) : null,
+                    our_p_at_entry:     fire?.our_p,
+                    stat:               fire?.stat,
+                    threshold:          fire?.threshold,
+                    player_id:          null,
+                    game_pk:            fire?.game_pk,
+                    live_p:             livePCents != null ? livePCents / 100 : null,
+                    pitch_info:         pitchInfo,
+                    game_state:         gameInfo,
+                });
+            } catch { /* observability only — never blocks sell */ }
+        }
+
         // Already have a sell order resting?
         if (await hasOpenSellOrder(p.ticker)) continue;
 
@@ -937,6 +990,21 @@ async function runCashoutCheck() {
             if (hitPitchCount)   triggerParts.push(`+pitch (${pitchCountDetail})`);
             if (hitHitterSell)   triggerParts.push(`+hit (${hitterSellDetail})`);
             const triggerTag = triggerParts.join(" / ");
+            // Log the cash-out decision for EOD review — pairs with
+            // the BUY scoreBet at fire time, so we can see whether
+            // the imperative triggers fired earlier / later than
+            // scoreCashout's sell_score would have suggested.
+            if (cashoutScore && root.BotScoring.logScoredDecision) {
+                root.BotScoring.logScoredDecision(cashoutScore, {
+                    action:           "cashout",
+                    ticker:           p.ticker,
+                    side:             heldSide,
+                    qty,
+                    sell_price_cents: yesBidCents,
+                    profit_cents:     profitPerContract * qty,
+                    triggers:         triggerParts,
+                });
+            }
             log("sell", `SELL ${qty}× ${p.ticker} ${heldSide.toUpperCase()} @ ${yesBidCents}¢` +
                 ` (entry ${entryCents}¢, +${profitPerContract}¢/contract = $${((profitPerContract*qty)/100).toFixed(2)} profit, trigger: ${triggerTag})`,
                 { ticker: p.ticker, qty, yesBidCents, entryCents,
@@ -1155,13 +1223,17 @@ function drawerHtml(initialTab) {
           <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
             History <span class="bot-tab-count" data-history-count>0</span>
           </button>
+          <button class="bot-tab ${initialTab === "decisions" ? "active" : ""}" data-tab="decisions" role="tab">
+            Decisions <span class="bot-tab-count" data-decisions-count>0</span>
+          </button>
           <button class="bot-tab ${initialTab === "bot" ? "active" : ""}" data-tab="bot" role="tab">
             Bot
           </button>
         </nav>
-        <div class="bot-tab-pane ${initialTab === "bets"    ? "active" : ""}" data-pane="bets"></div>
-        <div class="bot-tab-pane ${initialTab === "history" ? "active" : ""}" data-pane="history"></div>
-        <div class="bot-tab-pane ${initialTab === "bot"     ? "active" : ""}" data-pane="bot"></div>
+        <div class="bot-tab-pane ${initialTab === "bets"      ? "active" : ""}" data-pane="bets"></div>
+        <div class="bot-tab-pane ${initialTab === "history"   ? "active" : ""}" data-pane="history"></div>
+        <div class="bot-tab-pane ${initialTab === "decisions" ? "active" : ""}" data-pane="decisions"></div>
+        <div class="bot-tab-pane ${initialTab === "bot"       ? "active" : ""}" data-pane="bot"></div>
       </div>
     `;
 }
@@ -1189,16 +1261,109 @@ function bindDrawer(overlay) {
 async function refreshDrawerContent() {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
-    overlay.querySelector("[data-pane='bets']").innerHTML    = await renderOpenBetsPane();
-    overlay.querySelector("[data-pane='history']").innerHTML = await renderHistoryPane();
-    overlay.querySelector("[data-pane='bot']").innerHTML     = renderBotPane();
+    overlay.querySelector("[data-pane='bets']").innerHTML      = await renderOpenBetsPane();
+    overlay.querySelector("[data-pane='history']").innerHTML   = await renderHistoryPane();
+    overlay.querySelector("[data-pane='decisions']").innerHTML = renderDecisionsPane();
+    overlay.querySelector("[data-pane='bot']").innerHTML       = renderBotPane();
     bindBotPaneHandlers(overlay);
     bindBetsPaneHandlers(overlay);
-    // Update count chips on the Bets + History tabs.
+    // Update count chips on the Bets + History + Decisions tabs.
     const betsCt = overlay.querySelector("[data-bets-count]");
     if (betsCt) betsCt.textContent = String(_state.openPositions.length);
     const histCt = overlay.querySelector("[data-history-count]");
     if (histCt) histCt.textContent = String(getFires().length);
+    const decCt = overlay.querySelector("[data-decisions-count]");
+    if (decCt && root.BotScoring) decCt.textContent = String(root.BotScoring.getScoredDecisions(2000).length);
+}
+
+// ── Decisions pane ────────────────────────────────────────────────
+//
+// Shows the bot's latest scored decisions with full factor
+// breakdown — what it considered, what it decided, why. Lets the
+// user audit the scoring framework in real time without waiting
+// for EOD review.
+function renderDecisionsPane() {
+    if (!root.BotScoring) {
+        return `<div class="bot-empty"><p>Scoring framework not loaded.</p></div>`;
+    }
+    const all = root.BotScoring.getScoredDecisions(100);
+    if (!all.length) {
+        return `
+          <div class="bot-empty">
+            <p>No decisions logged yet.</p>
+            <p class="bot-empty-sub">Turn the bot on; every consideration (fire / skip / cash-out) gets logged here with the factor breakdown that produced it.</p>
+          </div>
+        `;
+    }
+    const rows = all.slice(0, 50).map((d) => {
+        const action = d.decision?.action || "—";
+        const actionCls = action === "fire"
+            ? "bet-result-won"
+            : action === "skip"
+            ? "bet-state-placed"
+            : "bet-state-resting";
+        const ts = d.meta?.scored_at ? new Date(d.meta.scored_at) : null;
+        const ago = ts ? formatTimeAgo(ts) : "—";
+        let label;
+        if (d.meta?.kind === "player_prop" && d.meta?.player) {
+            label = `${d.meta.player} ${d.meta.threshold}+ ${shortStatLabel(d.meta.stat)}`;
+        } else if (d.meta?.kind === "moneyline") {
+            label = `${d.meta.matchup} ML`;
+        } else if (d.meta?.ticker) {
+            label = String(d.meta.ticker).slice(0, 30);
+        } else {
+            label = "—";
+        }
+        const side = d.decision?.side || "yes";
+        const sideTag = side === "no"
+            ? `<span class="bet-state bet-state-placed">NO</span>`
+            : `<span class="bet-state bet-state-held">YES</span>`;
+        const factorChips = (d.factors || [])
+            .filter((f) => f && f.present)
+            .map((f) => `
+              <span class="bot-factor-chip ${(f.adjust_pp ?? 0) > 0 ? "is-pos" : (f.adjust_pp ?? 0) < 0 ? "is-neg" : ""}">
+                ${escapeText(f.name)}: ${f.adjust_pp >= 0 ? "+" : ""}${(f.adjust_pp ?? 0).toFixed(1)}pp
+              </span>
+            `).join("");
+        const reasonText = d.decision?.reason
+            ? `<span class="bot-decision-reason">${escapeText(d.decision.reason)}</span>`
+            : "";
+        return `
+          <tr>
+            <td><span class="bet-state ${actionCls}">${action.toUpperCase()}</span></td>
+            <td>${sideTag}</td>
+            <td>${escapeText(label)}</td>
+            <td>${d.adjusted_p != null ? (d.adjusted_p * 100).toFixed(1) + "%" : "—"}</td>
+            <td>${d.edge_pp != null ? (d.edge_pp >= 0 ? "+" : "") + d.edge_pp.toFixed(1) + "pp" : "—"}</td>
+            <td>${d.confidence != null ? (d.confidence * 100).toFixed(0) + "%" : "—"}</td>
+            <td><div class="bot-factor-row">${factorChips}${reasonText}</div></td>
+            <td class="bot-time-ago">${ago}</td>
+          </tr>
+        `;
+    }).join("");
+    // Summary numbers.
+    const fires = all.filter((d) => d.decision?.action === "fire").length;
+    const skips = all.filter((d) => d.decision?.action === "skip").length;
+    const cashouts = all.filter((d) => d.decision?.action === "cashout").length;
+    return `
+      <div class="bot-status-banner">
+        <span class="bot-status-row">
+          <span class="bot-status-dot bot-status-ok"></span>
+          ${all.length} decisions logged · ${fires} fires · ${skips} skips · ${cashouts} cash-outs
+        </span>
+      </div>
+      <div class="bot-section">
+        <h3>Latest 50 <span class="bot-section-sub">most recent first · factor chips show ± adjustment magnitude</span></h3>
+        <table class="bot-table bot-table-history">
+          <thead><tr>
+            <th>Action</th><th>Side</th><th>Bet</th>
+            <th>Adj P</th><th>Edge</th><th>Conf</th>
+            <th>Factors</th><th>When</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
 }
 
 
@@ -1798,6 +1963,7 @@ function renderBotPane() {
           <div class="bot-log-actions">
             <button class="bot-eod-review" data-bot-eod-review>EOD review</button>
             <button class="bot-export-fires" data-bot-export-fires>Export fires (${getFires().length})</button>
+            <button class="bot-export-fires" data-bot-export-decisions>Export decisions (${root.BotScoring ? root.BotScoring.getScoredDecisions(2000).length : 0})</button>
             ${logEntries.length ? `<button class="bot-clear-log" data-bot-clear-log>Clear log</button>` : ""}
           </div>
         </div>
@@ -1885,6 +2051,19 @@ function bindBotPaneHandlers(overlay) {
     });
     overlay.querySelector("[data-bot-eod-review]")?.addEventListener("click", async () => {
         await runEodReview();
+    });
+    overlay.querySelector("[data-bot-export-decisions]")?.addEventListener("click", async () => {
+        if (!root.BotScoring) { toast("Scoring framework not loaded", "err"); return; }
+        const decisions = root.BotScoring.getScoredDecisions(2000);
+        if (!decisions.length) { toast("No decisions logged yet", "ok"); return; }
+        const blob = JSON.stringify(decisions, null, 2);
+        try {
+            await navigator.clipboard.writeText(blob);
+            toast(`Copied ${decisions.length} decisions to clipboard`, "ok");
+        } catch {
+            const w = window.open("", "_blank");
+            if (w) { w.document.body.innerText = blob; }
+        }
     });
 }
 

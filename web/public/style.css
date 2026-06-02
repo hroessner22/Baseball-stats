@@ -9072,6 +9072,42 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: rgba(56, 189, 248, 0.22);
 }
 
+/* Decisions pane — factor chips show each signal's adjustment
+   to the probability estimate. Green = positive (push us toward
+   bet), red = negative (push toward skip), gray = neutral. */
+.bot-factor-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+}
+.bot-factor-chip {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.bot-factor-chip.is-pos {
+    background: rgba(34, 197, 94, 0.16);
+    color: var(--accent-win);
+}
+.bot-factor-chip.is-neg {
+    background: rgba(239, 68, 68, 0.16);
+    color: var(--accent-live);
+}
+.bot-decision-reason {
+    font-size: 9px;
+    color: var(--text-faint);
+    font-style: italic;
+    margin-left: 4px;
+}
+
 /* Action pills on the Kalshi fills table — BUY in action-blue,
    SELL in accent-win green so the pair reads as 'entered/exited.'
    10px matches the rest of the badge family. */

@@ -33,6 +33,60 @@ const root = (typeof globalThis !== "undefined") ? globalThis : window;
 const LS_DECISIONS = "diamond_context_bot_decisions";
 const DECISIONS_MAX = 2000;
 
+// ═══════════════════════════════════════════════════════════════
+// TUNABLE PARAMETERS
+// ═══════════════════════════════════════════════════════════════
+// Adjustments here change the bot's behavior. After enough
+// decisions log, the EOD review's auto-tuner will recommend
+// concrete changes to these numbers — they're not arbitrary.
+//
+// Per-factor WEIGHTS control how much each signal contributes to
+// the confidence number. Higher weight = signal counts more.
+//
+// Per-factor ADJUSTMENT MAGNITUDES control how many percentage
+// points a factor can shift our probability estimate. Bigger
+// numbers = more aggressive adjustment.
+//
+// All values here are starting points calibrated against intuition
+// + the math from the cash-out walk-through (0.55 capture point
+// for EV breakeven). After 50+ settled bets per factor, the
+// suggestWeightAdjustments() function will recommend ±15% nudges
+// based on observed win rates.
+const TUNABLES = {
+    weights: {
+        model_edge:           1.0,   // the headline signal — our model vs market
+        savant_alignment:     0.5,   // Savant agree/disagree (moneyline only)
+        pitch_count:          0.8,   // K-prop pitcher removal risk
+        pa_remaining:         0.7,   // hitter-prop game-state turns left
+        pitcher_recent_form:  0.6,   // last 5 starts ERA/K9 trend
+        batter_recent_form:   0.6,   // last 15 games OPS trend
+        h2h:                  1.0,   // sample-weighted; max here is the ceiling
+    },
+    adjustments: {
+        // ±pp adjustments by factor band. See each builder for
+        // the exact thresholds (e.g. OPS buckets, pitch count
+        // distance from p80, etc.).
+        savant_max:           1.5,   // ±1.5pp on agreement/disagreement
+        pitch_count_max:     10,     // -10pp at p80+10
+        pa_remaining_max:    10,     // -10pp at <0.5 turns
+        recent_form_max:      5,     // ±5pp range
+        h2h_max:              3,     // ±3pp on OPS-based bucket
+        h2h_k_pct_penalty:    2,     // extra -2pp on K-props if H2H K% ≥35%
+    },
+    h2h_thresholds: {
+        min_pa_for_signal:   10,     // below this, factor returns present=false
+        weight_ramp_start:   10,     // 10 PA → 0.4 weight
+        weight_ramp_end:     60,     // 60 PA → 1.0 weight
+    },
+    cashout: {
+        // Sell-score breakpoints. Higher sell_score = more pressure
+        // to close the position.
+        profit_take_floor:   20,     // matches autobot setting; ≥20¢ profit pegs sell pressure
+        edge_remaining_cutoff: 3,    // ≤3pp model edge left → high sell pressure
+        time_in_position_threshold_min: 120,  // hold >2hrs starts adding sell pressure
+    },
+};
+
 // ── Score a buying decision ──────────────────────────────────────
 //
 // opportunity = {
