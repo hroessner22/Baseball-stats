@@ -2158,7 +2158,12 @@ async function refreshDrawerContent() {
     bindPracticePaneHandlers(overlay);
     // Update count chips on the Bets + Questions + Practice + History + Decisions tabs.
     const betsCt = overlay.querySelector("[data-bets-count]");
-    if (betsCt) betsCt.textContent = String(_state.openPositions.length);
+    if (betsCt) {
+        const count = _state.settings.practice_mode
+            ? getPracticeFires().length
+            : _state.openPositions.length;
+        betsCt.textContent = String(count);
+    }
     const qCt = overlay.querySelector("[data-questions-count]");
     if (qCt && root.BotNotifications) {
         const unread = root.BotNotifications.unreadCount();
@@ -2641,7 +2646,96 @@ function renderDecisionsPane() {
 
 // ── Open Bets pane ────────────────────────────────────────────────
 
+async function renderPracticeBetsPane() {
+    const fires = getPracticeFires();
+    const bankroll = computePracticeBankroll();
+    const banner = `
+      <div class="bot-status-banner bot-practice-banner">
+        <span class="bot-status-row">
+          <span class="bot-practice-mode-on" style="margin-right:8px">PRACTICE</span>
+          Virtual bankroll: <strong>$${(bankroll.available_cents/100).toFixed(2)}</strong> of $${(bankroll.starting_cents/100).toFixed(2)} ·
+          ${fires.length} practice bet${fires.length === 1 ? "" : "s"} placed
+        </span>
+      </div>
+    `;
+    if (!fires.length) {
+        return `
+          ${banner}
+          <div class="bot-empty">
+            <p>No practice bets yet.</p>
+            <p class="bot-empty-sub">Turn the bot ON and the next signal that passes every gate will land here as a virtual buy.</p>
+          </div>
+        `;
+    }
+    // Pull live bid per ticker so each row shows mark-to-market.
+    const tickers = [...new Set(fires.map((f) => f.ticker))];
+    const obMap = new Map();
+    if (root.Kalshi && root.Kalshi.getOrderbook) {
+        const results = await Promise.allSettled(tickers.map(async (t) => {
+            const ob = await root.Kalshi.getOrderbook(t);
+            return { t, ob };
+        }));
+        for (const r of results) {
+            if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
+        }
+    }
+    let totalCost = 0, totalLive = 0;
+    const rows = fires.slice(0, 100).map((f) => {
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const ob   = obMap.get(f.ticker);
+        const liveBid = ob
+            ? (f.side === "no" ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob))
+            : null;
+        let pnlText = "—", pnlCls = "";
+        if (liveBid != null) {
+            const liveVal = (f.contracts || 1) * liveBid;
+            const pnl = liveVal - cost;
+            pnlCls = pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+            pnlText = `${pnl >= 0 ? "+" : ""}$${(pnl/100).toFixed(2)}`;
+            totalCost += cost;
+            totalLive += liveVal;
+        }
+        const label = escapeText(betLabel(f));
+        const sideTag = f.side === "no" ? "NO" : "YES";
+        const sideCls = f.side === "no" ? "bet-side-no" : "bet-side-yes";
+        const when    = formatNotifTime(f.placed_at);
+        return `
+          <div class="bot-recent-row">
+            <span class="bot-recent-label">${label}</span>
+            <span class="bot-recent-meta">
+              <span class="${sideCls}">${sideTag}</span>
+              $${(cost/100).toFixed(2)}
+              ${liveBid != null ? `→ ${liveBid}¢` : ""}
+              <span class="${pnlCls}">${pnlText}</span>
+              <span class="bot-recent-ts">${when}</span>
+            </span>
+          </div>
+        `;
+    }).join("");
+    const totalPnl = totalLive - totalCost;
+    const totalCls = totalPnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+    const totalTxt = `${totalPnl >= 0 ? "+" : ""}$${(totalPnl/100).toFixed(2)}`;
+    return `
+      ${banner}
+      <div class="bot-recent-section">
+        <div class="bot-recent-head">
+          Practice bets · ${fires.length} placed
+          <span class="bot-recent-hint">live mark-to-market <strong class="${totalCls}">${totalTxt}</strong></span>
+        </div>
+        <div class="bot-recent-list">${rows}</div>
+      </div>
+    `;
+}
+
 async function renderOpenBetsPane() {
+    // PRACTICE MODE — show virtual practice fires instead of Kalshi
+    // positions. User asked for practice bets to appear in the Bets
+    // section too, not just the Practice tab. The Practice tab is
+    // still the authoritative paper-trading view; this is a mirror
+    // so a user toggling between tabs sees the same bets everywhere.
+    if (_state.settings.practice_mode) {
+        return await renderPracticeBetsPane();
+    }
     if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
         return `
           <div class="bot-empty">

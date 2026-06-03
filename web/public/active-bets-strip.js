@@ -21,8 +21,10 @@
 
 const REFRESH_MS = 30000;
 const BOX_TTL_MS = 30000;
-const LS_FIRES   = "diamond_context_bot_fires";
-const LS_COLLAPSED = "diamond_context_strip_collapsed";
+const LS_FIRES          = "diamond_context_bot_fires";
+const LS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
+const LS_SETTINGS       = "diamond_context_bot_settings";
+const LS_COLLAPSED      = "diamond_context_strip_collapsed";
 const root = (typeof globalThis !== "undefined") ? globalThis : window;
 
 let stripEl = null;
@@ -64,8 +66,29 @@ function getFires() {
     catch { return []; }
 }
 
+function getPracticeFires() {
+    try { return JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
+    catch { return []; }
+}
+
+function isPracticeMode() {
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_SETTINGS) || "{}");
+        return s.practice_mode === true;
+    } catch { return false; }
+}
+
 async function refresh() {
     if (!stripEl) return;
+
+    // PRACTICE MODE — render practice fires as the active strip
+    // instead of Kalshi positions. Kalshi may not even be connected
+    // and the bot is still firing virtual bets that the user wants
+    // to see at-a-glance.
+    if (isPracticeMode()) {
+        return refreshPractice();
+    }
+
     if (!root.Kalshi || !root.Kalshi.isConnected || !root.Kalshi.isConnected()) {
         hide();
         return;
@@ -274,6 +297,33 @@ function bindToggle() {
 }
 function show() { stripEl.classList.add("is-visible"); }
 function hide() { stripEl.classList.remove("is-visible"); }
+
+// Practice-mode strip rendering. Shows every practice fire as a
+// chip — same surface area as the real strip, just sourced from
+// the practice fire log, no Kalshi calls. Each chip carries a
+// PRACTICE tag so it's never confused with real positions.
+async function refreshPractice() {
+    const fires = getPracticeFires();
+    if (!fires.length) { hide(); return; }
+    const recent = fires.slice(0, 20);
+    const titleText = `PRACTICE · ${fires.length}`;
+    const collapsed = localStorage.getItem(LS_COLLAPSED) === "1";
+    const toggleIcon  = collapsed ? "▲" : "▼";
+    stripEl.innerHTML = `
+      <button class="abs-toggle" data-strip-toggle
+              aria-expanded="${!collapsed}"
+              aria-label="${collapsed ? "Show practice bets" : "Hide practice bets"}"
+              title="${collapsed ? "Show practice bets" : "Hide practice bets"}">
+        <span class="abs-toggle-icon">${toggleIcon}</span>
+        <span class="abs-toggle-label">${titleText}</span>
+      </button>
+      ${collapsed ? "" : `
+        <div class="abs-chips">${recent.map((f) => renderRecentChip({ fire: f, progress: null })).join("")}</div>
+      `}
+    `;
+    bindToggle();
+    show();
+}
 
 
 // ── Boxscore plumbing ────────────────────────────────────────────
