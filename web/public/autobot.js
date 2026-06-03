@@ -91,10 +91,11 @@ const HARD_CAPS = {
     // fire on small but real edges.
     edge_pp_min:           2,
     edge_pp_max:           20,
-    // Bankroll is now $2.25. Daily loss limit dropped to $1 so the
-    // bot can't drain the rest of the account in one bad afternoon.
-    daily_loss_cents_max:  100,    // $1 daily realized-loss limit
-    open_exposure_max:     100,    // $1 total open positions
+    // User direction 2026-06-03: 'no more than 2 dollars lost.'
+    // Daily loss limit lifted to $2. Open exposure also $2 so the
+    // 50/50 split gives $1 to props + $1 to moneylines.
+    daily_loss_cents_max:  200,    // $2 daily realized-loss limit
+    open_exposure_max:     200,    // $2 total open positions
 };
 
 const DEFAULTS = {
@@ -144,8 +145,8 @@ const DEFAULTS = {
     // — backed by the math above, not by 'we feel like we should
     // sell sooner.'
     live_ev_take_pct:      0.55,
-    daily_loss_limit_cents: 100,   // $1 — bankroll is $2.25, can't afford $5
-    open_exposure_max:     100,    // $1 total open — same reason
+    daily_loss_limit_cents: 200,   // $2 — per user 'no more than 2 dollars lost'
+    open_exposure_max:     200,    // $2 total open ($1 props / $1 ML via 50/50)
     bet_player_props:      true,   // scan Kalshi player_prop markets too
     // TRUE-ADVANTAGE GATE — required factor agreement. New math (post
     // 2026-06-03) is fraction of factor weight that agrees with the
@@ -892,7 +893,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 // User approval mode: propose to the queue rather than
                 // auto-firing. The bet is recorded as a fire ONLY after
                 // the user clicks Approve in the Practice tab.
-                proposePracticeBet({
+                recordPracticeFire({
                     kind:          "player_prop",
                     ticker, side, contracts,
                     price_cents:   askCents,
@@ -950,8 +951,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 });
                 _state.sessionBets.add(key);
                 persistSessionBets();
-                log("buy-practice", `[PRACTICE] proposed ${contracts}× ${parsed.player} ${(side === "no" ? "UNDER" : "OVER")} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢ — awaiting approval`);
-                toast(`Proposal: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${(side === "no" ? "UNDER" : "OVER")} @ ${askCents}¢`, "ok");
+                log("buy-practice", `[PRACTICE] auto-fired ${contracts}× ${parsed.player} ${(side === "no" ? "UNDER" : "OVER")} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢`);
+                toast(`Practice: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${(side === "no" ? "UNDER" : "OVER")} @ ${askCents}¢`, "ok");
                 await sleep(50);
                 continue;
             }
@@ -1213,7 +1214,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
                 log("skip", `[PRACTICE] bankroll exhausted: $${(bankroll.available_cents/100).toFixed(2)} available, ${tradeCostCents}¢ cost`);
                 return;
             }
-            proposePracticeBet({
+            recordPracticeFire({
                 kind:          "moneyline",
                 ticker,
                 side:          "yes",
@@ -1252,8 +1253,8 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             });
             _state.sessionBets.add(key);
             persistSessionBets();
-            log("buy-practice", `[PRACTICE] proposed ${contracts}× ${tail} YES @ ${yesAskCents}¢ (edge ${edgePP.toFixed(1)}pp) — awaiting approval`);
-            toast(`Proposal: ${tail} YES @ ${yesAskCents}¢`, "ok");
+            log("buy-practice", `[PRACTICE] auto-fired ${contracts}× ${tail} YES @ ${yesAskCents}¢ (edge ${edgePP.toFixed(1)}pp)`);
+            toast(`Practice: ${tail} YES @ ${yesAskCents}¢`, "ok");
             return;
         }
         const result = await root.Kalshi.placeOrder({
@@ -2607,8 +2608,9 @@ async function renderPracticePane() {
             <p>No practice bets yet.</p>
             <p class="bot-empty-sub">
               Flip practice mode ON, turn the bot on, and every bet
-              the bot wants to take will land here for you to approve
-              or decline (with an optional note so it can learn).
+              it auto-fires will land here. Live mark-to-market P/L
+              is computed from the current market bid for each side.
+              No money moves.
             </p>
           </div>
         `;
@@ -4311,9 +4313,8 @@ function renderBotPane() {
           <small>Snaps every setting on this panel to the tuned values:
             <strong>$0.10 unit (hard cap)</strong> · <strong>3pp moneyline</strong> / 7pp prop YES /
             11pp prop NO · min inning 3 · 50/50 reserve · <strong>0.30 conviction</strong> · 20¢ take ·
-            55% EV-capture · <strong>$1 daily loss · $1 exposure</strong> · soft Savant +3pp · props
-            on. Volume + persistent edge wins — WE is our strongest signal, fire on small edges
-            and let the math compound.</small>
+            55% EV-capture · <strong>$2 daily loss · $2 exposure ($1 props / $1 ML)</strong> · soft
+            Savant +3pp · props on. Volume + persistent edge wins.</small>
         </div>
         <p class="bot-settings-note">
           Moneyline uses Savant as a confidence amplifier (soft gate by default). Player props
