@@ -54,32 +54,52 @@ export async function onRequest(context) {
         return jsonResponse({ error: "path must start with /trade-api/v2/" }, 400);
     }
 
-    // ── SERVER-SIDE BUY KILL ─────────────────────────────────────────
-    // Set to true to refuse every BUY order placement at the proxy,
-    // regardless of which client or which cached version sent it. The
-    // browser-side BOT_KILLED flag only protects the tab it's loaded
-    // in; stale tabs with running timers from before a kill ship can
-    // still place bets. This is the bypass-proof seal.
+    // ── SERVER-SIDE BUY PROTECTIONS ──────────────────────────────────
+    // Bypass-proof — runs on the Cloudflare Worker every Kalshi call
+    // routes through. Stale tabs running old client code CANNOT get
+    // around these. SELLs always pass; only BUYs are filtered.
     //
-    // What's blocked: POST /trade-api/v2/portfolio/orders with action
-    // 'buy' in the body. SELLS still pass (so existing positions can
-    // be exited). Everything else (positions, fills, balance, etc.)
-    // passes normally.
+    // BUYS_KILLED       — kill switch. true = no BUYs at all.
+    // NO_SIDE_KILLED    — block side: 'no' BUYs (regardless of edge).
+    // UNIT_CAP_CENTS    — max total cost per single order (count×price).
     //
-    // To re-enable BUY placement: set BUYS_KILLED = false and deploy.
-    const BUYS_KILLED = false;
-    if (BUYS_KILLED
-        && String(method).toUpperCase() === "POST"
+    // Update these constants + deploy to change behavior.
+    const BUYS_KILLED    = false;
+    const NO_SIDE_KILLED = true;   // user: 'stop only buying NOs'
+    const UNIT_CAP_CENTS = 10;     // user: '10 cents a bet and no more'
+
+    if (String(method).toUpperCase() === "POST"
         && String(path).includes("/portfolio/orders")) {
         let parsedBody = null;
         try { parsedBody = body && typeof body === "string" ? JSON.parse(body) : body; }
         catch { parsedBody = null; }
         const action = String(parsedBody?.action || "").toLowerCase();
+        const side   = String(parsedBody?.side   || "").toLowerCase();
+        const count  = Number(parsedBody?.count) || 0;
+        const yesP   = Number(parsedBody?.yes_price) || 0;
+        const noP    = Number(parsedBody?.no_price)  || 0;
+        const price  = side === "no" ? noP : yesP;
+        const cost   = count * price;
+
         if (action === "buy") {
-            return jsonResponse({
-                error: "BUY orders are disabled server-side",
-                hint:  "All bot BUY placements are blocked at the proxy. SELL orders (cash-out) still work.",
-            }, 503);
+            if (BUYS_KILLED) {
+                return jsonResponse({
+                    error: "BUY orders are disabled server-side",
+                    hint:  "Set BUYS_KILLED=false in proxy.js to re-enable.",
+                }, 503);
+            }
+            if (NO_SIDE_KILLED && side === "no") {
+                return jsonResponse({
+                    error: "NO-side BUYs are disabled server-side",
+                    hint:  "Set NO_SIDE_KILLED=false in proxy.js to re-enable.",
+                }, 503);
+            }
+            if (cost > UNIT_CAP_CENTS) {
+                return jsonResponse({
+                    error: "Order cost exceeds server-side unit cap",
+                    hint:  `Cost ${cost}¢ > cap ${UNIT_CAP_CENTS}¢ (${count}×${price}¢). Lower count or price.`,
+                }, 503);
+            }
         }
     }
     // Auth headers are OPTIONAL — public Kalshi endpoints like
