@@ -3129,6 +3129,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 12px 0 100px;
     display: flex;
     flex-direction: column;
+    /* User feedback: 'it feels very close.' Scale down the whole game
+       view ~10% so cards / field / cards-pane breathe. zoom is the
+       right primitive — unlike transform: scale it reflows the
+       layout so click targets / hover / scroll all stay aligned with
+       the visual representation. Chrome / Safari / Edge support it
+       natively; Firefox 126+ also supports it. */
+    zoom: 0.9;
 }
 .game-view .empty { padding: 48px 16px; }
 
