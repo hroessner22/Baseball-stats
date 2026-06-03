@@ -777,18 +777,21 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const contracts = Math.floor(_state.settings.unit_cents / askCents);
         if (contracts < 1) continue;
         const tradeCostCents = contracts * askCents;
-        // HARD 50/50 SPLIT — per user direction 2026-06-02 ('50% of
-        // bets on the moneylines and the other 50 on player props.
-        // that is a hard line'). Removed the huge-edge override —
-        // even a 30pp prop edge can't borrow from the moneyline
-        // budget anymore. Both sides are symmetric and equal.
-        //
-        // Cap math: props get 50% of open_exposure_max in their own
-        // exposure bucket. Unknown-kind positions count against
-        // BOTH caps (manual user bets can't bypass the split).
+        // HARD 50/50 SPLIT — applies in BOTH real mode and practice
+        // mode. In real mode: cap = settings.open_exposure_max, split
+        // is checked against Kalshi positions. In practice mode: cap
+        // = practice_starting_bankroll_cents (scales the split to the
+        // virtual bankroll), split checked against the practice fire
+        // log. Same RULE, just keyed to the bankroll the bot is
+        // actually spending from.
         const propsCapPct = 1 - _state.settings.moneyline_reserve_pct;
-        const propsCapCents = Math.round(_state.settings.open_exposure_max * propsCapPct);
-        const expSplit = computeOpenExposureByKindCents();
+        const exposureBase = _state.settings.practice_mode
+            ? _state.settings.practice_starting_bankroll_cents
+            : _state.settings.open_exposure_max;
+        const propsCapCents = Math.round(exposureBase * propsCapPct);
+        const expSplit = _state.settings.practice_mode
+            ? computePracticeExposureByKind()
+            : computeOpenExposureByKindCents();
         const propsExposure = expSplit.player_prop + expSplit.unknown;
         if (propsExposure + tradeCostCents > propsCapCents) {
             if (score) root.BotScoring.logScoredDecision(score, {
@@ -1099,20 +1102,19 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         return;   // unit too small to buy even 1 contract at this price
     }
 
-    // HARD 50/50 SPLIT (moneyline side). Symmetric to the props
-    // cap — moneyline exposure is independently capped at the
-    // moneyline_reserve_pct fraction of open_exposure_max. This is
-    // the missing half: before today, moneylines could borrow from
-    // the props budget; now they can't. Both sides equal, both
-    // sides hard.
-    //
-    // Unknown-kind positions count against BOTH caps so a manual
-    // user moneyline bet still constrains the bot's moneyline
-    // exposure even without a fire record.
+    // HARD 50/50 SPLIT (moneyline side). Symmetric to props side
+    // and to practice mode (see scanPlayerProps). Cap base is the
+    // practice bankroll in practice mode, open_exposure_max in
+    // real mode.
     const tradeCostCents = contracts * yesAskCents;
     const mlCapPct = _state.settings.moneyline_reserve_pct;
-    const mlCapCents = Math.round(_state.settings.open_exposure_max * mlCapPct);
-    const mlSplit = computeOpenExposureByKindCents();
+    const mlExposureBase = _state.settings.practice_mode
+        ? _state.settings.practice_starting_bankroll_cents
+        : _state.settings.open_exposure_max;
+    const mlCapCents = Math.round(mlExposureBase * mlCapPct);
+    const mlSplit = _state.settings.practice_mode
+        ? computePracticeExposureByKind()
+        : computeOpenExposureByKindCents();
     const mlExposure = mlSplit.moneyline + mlSplit.unknown;
     if (mlExposure + tradeCostCents > mlCapCents) {
         if (score) root.BotScoring.logScoredDecision(score, {
@@ -1313,6 +1315,20 @@ function computePracticeBankroll() {
         total_cost_cents: totalCost,
         available_cents:  Math.max(0, starting - totalCost),
     };
+}
+
+// Kind-split open exposure for practice fires — used so the same
+// 50/50 split that constrains real-money fires also constrains
+// practice fires, scaled to the practice bankroll. Returns cost
+// (contracts × price) accumulated across ALL practice fires by kind.
+function computePracticeExposureByKind() {
+    let moneyline = 0, player_prop = 0;
+    for (const f of getPracticeFires()) {
+        const cost = (f.contracts || 0) * (f.price_cents || 0);
+        if (f.kind === "moneyline") moneyline += cost;
+        else                         player_prop += cost;
+    }
+    return { moneyline, player_prop, unknown: 0 };
 }
 
 
