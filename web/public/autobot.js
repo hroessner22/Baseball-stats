@@ -761,41 +761,28 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const contracts = Math.floor(_state.settings.unit_cents / askCents);
         if (contracts < 1) continue;
         const tradeCostCents = contracts * askCents;
-        // MONEYLINE BUDGET RESERVE — player props cap at
-        // (1 - reserve_pct) × open_exposure_max NORMALLY. HUGE-EDGE
-        // OVERRIDE: when the factor-adjusted edge for this prop is
-        // big enough (≥ huge_edge_pp, default 12pp), the cap lifts
-        // to huge_edge_cap_pct (default 60%) so genuinely strong
-        // signals aren't blocked just to protect the WE budget.
+        // HARD 50/50 SPLIT — per user direction 2026-06-02 ('50% of
+        // bets on the moneylines and the other 50 on player props.
+        // that is a hard line'). Removed the huge-edge override —
+        // even a 30pp prop edge can't borrow from the moneyline
+        // budget anymore. Both sides are symmetric and equal.
         //
-        // Multi-factor gate above already required min_conviction +
-        // adjusted edge ≥ 7pp, so a 12pp adjusted edge means several
-        // factors are strongly confirming. Safe to push harder.
-        //
-        // Moneyline path has no reservation — it can still use the
-        // full cap including the reserved half.
-        const adjEdgePP    = score ? (Number(score.edge_pp) || edgePP) : edgePP;
-        const isHugeEdge   = adjEdgePP >= _state.settings.huge_edge_pp;
-        const propsCapPct  = isHugeEdge
-            ? _state.settings.huge_edge_cap_pct
-            : (1 - _state.settings.moneyline_reserve_pct);
+        // Cap math: props get 50% of open_exposure_max in their own
+        // exposure bucket. Unknown-kind positions count against
+        // BOTH caps (manual user bets can't bypass the split).
+        const propsCapPct = 1 - _state.settings.moneyline_reserve_pct;
         const propsCapCents = Math.round(_state.settings.open_exposure_max * propsCapPct);
-        if (computeOpenExposureCents() + tradeCostCents > propsCapCents) {
+        const expSplit = computeOpenExposureByKindCents();
+        const propsExposure = expSplit.player_prop + expSplit.unknown;
+        if (propsExposure + tradeCostCents > propsCapCents) {
             if (score) root.BotScoring.logScoredDecision(score, {
-                action: "skip", reason: "moneyline_reserve_protected",
-                cap_cents:     propsCapCents,
-                cap_pct:       propsCapPct,
-                is_huge_edge:  isHugeEdge,
-                adjusted_edge_pp: adjEdgePP,
+                action: "skip", reason: "props_cap_hit",
+                cap_cents:           propsCapCents,
+                cap_pct:             propsCapPct,
+                current_props_open:  propsExposure,
                 side,
             });
             continue;
-        }
-        // Log when we INVOKE the huge-edge override so it shows up in
-        // EOD review — special circumstance, want to see how often
-        // it fires and whether those bets actually win.
-        if (isHugeEdge) {
-            log("buy", `HUGE EDGE override — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} adj ${adjEdgePP.toFixed(1)}pp, props cap raised to ${(propsCapPct*100).toFixed(0)}%`);
         }
         // Same hard balance guard as moneyline path — refuse to even
         // submit the order if Kalshi balance can't cover it.
@@ -1022,9 +1009,28 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         return;   // unit too small to buy even 1 contract at this price
     }
 
-    // Double-check exposure won't blow past the cap with this trade.
+    // HARD 50/50 SPLIT (moneyline side). Symmetric to the props
+    // cap — moneyline exposure is independently capped at the
+    // moneyline_reserve_pct fraction of open_exposure_max. This is
+    // the missing half: before today, moneylines could borrow from
+    // the props budget; now they can't. Both sides equal, both
+    // sides hard.
+    //
+    // Unknown-kind positions count against BOTH caps so a manual
+    // user moneyline bet still constrains the bot's moneyline
+    // exposure even without a fire record.
     const tradeCostCents = contracts * yesAskCents;
-    if (computeOpenExposureCents() + tradeCostCents > _state.settings.open_exposure_max) {
+    const mlCapPct = _state.settings.moneyline_reserve_pct;
+    const mlCapCents = Math.round(_state.settings.open_exposure_max * mlCapPct);
+    const mlSplit = computeOpenExposureByKindCents();
+    const mlExposure = mlSplit.moneyline + mlSplit.unknown;
+    if (mlExposure + tradeCostCents > mlCapCents) {
+        if (score) root.BotScoring.logScoredDecision(score, {
+            action: "skip", reason: "moneyline_cap_hit",
+            cap_cents:        mlCapCents,
+            cap_pct:          mlCapPct,
+            current_ml_open:  mlExposure,
+        });
         return;
     }
     // Hard balance check — if Kalshi reports less cash than this
@@ -1486,17 +1492,48 @@ async function hasOpenSellOrder(ticker) {
 // the exposure cap saw \$0 forever and let every trade through.
 // THAT is how the 50% reserve became fictional.
 function computeOpenExposureCents() {
-    let cents = 0;
+    const split = computeOpenExposureByKindCents();
+    return split.moneyline + split.player_prop + split.unknown;
+}
+
+// Kind-aware exposure split — needed for the HARD 50/50 cap.
+// Returns { moneyline, player_prop, unknown } in cents. We match
+// each Kalshi position to its fire record by ticker to identify
+// the bet kind. Unknown bucket (manual bets or pre-bot positions)
+// counts against BOTH caps so the user can't accidentally bypass
+// the split by manually trading and then letting the bot fire on
+// top — strict by design.
+function computeOpenExposureByKindCents() {
+    let moneyline = 0;
+    let player_prop = 0;
+    let unknown = 0;
+    const fires = getFires();
+    const fireByTicker = new Map();
+    for (const f of fires) {
+        if (f.ticker && !fireByTicker.has(f.ticker)) fireByTicker.set(f.ticker, f);
+    }
     for (const p of _state.openPositions) {
-        const qty = Math.abs(p.position || 0);   // count BOTH sides
+        const qty = Math.abs(p.position || 0);
         if (qty === 0) continue;
         const entry = p.average_yes_price
                    ?? p.average_no_price
                    ?? p.average_cost_cents
                    ?? 0;
-        cents += qty * entry;
+        const cost = qty * entry;
+        const fire = fireByTicker.get(p.ticker);
+        let kind = fire?.kind;
+        if (!kind && p.ticker) {
+            // Heuristic from Kalshi ticker shape:
+            //   KXMLBGAME-... → moneyline
+            //   KXMLB{HR|HIT|KS|TB}-... → player_prop
+            if (/^KXMLBGAME/i.test(p.ticker))           kind = "moneyline";
+            else if (/^KXMLB(HR|HIT|KS|TB)/i.test(p.ticker)) kind = "player_prop";
+        }
+        if (kind === "moneyline")      moneyline   += cost;
+        else if (kind === "player_prop") player_prop += cost;
+        else                            unknown     += cost;
     }
-    return cents;
+    return { moneyline, player_prop, unknown };
 }
 
 // Stop sending orders Kalshi will reject for insufficient funds.

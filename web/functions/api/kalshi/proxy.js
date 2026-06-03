@@ -67,7 +67,7 @@ export async function onRequest(context) {
     // passes normally.
     //
     // To re-enable BUY placement: set BUYS_KILLED = false and deploy.
-    const BUYS_KILLED = true;
+    const BUYS_KILLED = false;
     if (BUYS_KILLED
         && String(method).toUpperCase() === "POST"
         && String(path).includes("/portfolio/orders")) {
