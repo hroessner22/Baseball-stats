@@ -222,6 +222,8 @@ const LS_LOG          = "diamond_context_bot_log";
 const _state = {
     settings: { ...DEFAULTS },
     sessionBets: new Set(),    // "ticker:side" strings we've already fired on
+    deadProps:  new Set(),     // tickers permanently skipped this session (our_p≈0, pitcher pulled, PA exhaustion)
+    loggedDecisions: new Set(),// ticker:side:reason already logged to Edges this session — dedup
     dailyLoss: { date: todayUtcDate(), cents: 0 },
     openPositions: [],         // last Kalshi.getPositions() snapshot
     scanTimer: null,
@@ -304,6 +306,26 @@ function clampInt(n, lo, hi) {
     return Math.max(lo, Math.min(hi, x));
 }
 function todayUtcDate() { return new Date().toISOString().slice(0, 10); }
+
+// Wrap BotScoring.logScoredDecision so repeated identical SKIPs
+// don't flood the Edges screen. Same ticker + side + reason gets
+// logged ONCE per session. Fires always pass through (no dedup).
+// Without this, the same dead-prop SKIP was being logged on every
+// 30s scan tick — six 'Luke Raley 1+ HR edge_below_threshold'
+// entries in three minutes, etc.
+function logScoredDecisionOnce(score, decision) {
+    if (!score || !root.BotScoring || !root.BotScoring.logScoredDecision) return;
+    const action = decision?.action || "unknown";
+    if (action === "skip") {
+        const ticker = score.meta?.ticker || "";
+        const side   = decision.side || "yes";
+        const reason = decision.reason || "unknown";
+        const key    = `${ticker}:${side}:${reason}`;
+        if (_state.loggedDecisions.has(key)) return;
+        _state.loggedDecisions.add(key);
+    }
+    root.BotScoring.logScoredDecision(score, decision);
+}
 
 
 // ── Activity log ──────────────────────────────────────────────────
@@ -570,6 +592,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // (player, threshold, stat).
         const parsed = parsePropTitle(m.title || "");
         if (!parsed) continue;
+        const propKey = m.raw_market_id || `${parsed.player}:${parsed.threshold}:${parsed.stat}`;
+
+        // DEAD-PROP CACHE — once we've marked this ticker terminal
+        // (pitcher pulled, batter PAs exhausted, our_p ≈ 0), skip
+        // it silently for the rest of the session. Without this
+        // the same useless prop ('Luke Raley 1+ HR' after his last
+        // PA) re-scores every 30s scan and floods the Edges screen.
+        if (_state.deadProps.has(propKey)) continue;
+
         const mlbam = nameToMlbam[normName(parsed.player)];
         if (!mlbam) continue;
 
@@ -577,20 +608,39 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // player is not the current pitcher on either side. The
         // 'George Kirby has been pulled' case: Kalshi keeps the
         // market open until it settles, but the bot has no business
-        // scoring it. Without this, scoring would silently drop the
-        // prop at the ladder check below and the user gets no
-        // visible signal that the bot recognized the pull.
+        // scoring it. Mark terminal so we never re-score it.
         if (parsed.stat === "strikeouts"
             && String(mlbam) !== String(homePitcher)
             && String(mlbam) !== String(awayPitcher)) {
-            log("skip", `Pitcher not active — ${parsed.player} ${parsed.threshold}+ K: not currently on the mound (pulled / never started)`);
+            _state.deadProps.add(propKey);
+            log("skip", `Pitcher not active — ${parsed.player} ${parsed.threshold}+ K: not currently on the mound — marked terminal for this session`);
             continue;
         }
 
         const ladder = modelData[mlbam]?.[parsed.stat];
-        if (!ladder) continue;
+        if (!ladder) {
+            // No projection available — likely a substitute or
+            // bench player Kalshi listed. Mark terminal: re-checking
+            // every 30s won't bring the ladder back.
+            _state.deadProps.add(propKey);
+            continue;
+        }
         const our_p_yes = ladder[parsed.threshold];
-        if (our_p_yes == null) continue;
+        if (our_p_yes == null) {
+            _state.deadProps.add(propKey);
+            continue;
+        }
+
+        // DEAD-MODEL guard — our_p ≤ 1% means the model has given
+        // up on this prop entirely (player out of PAs, threshold
+        // unreachable from current state). Market will settle to
+        // NO and the YES edge is a structural negative. Mark
+        // terminal — re-scoring every scan adds nothing.
+        if (our_p_yes <= 0.01) {
+            _state.deadProps.add(propKey);
+            log("skip", `Dead prop — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: our_p ${(our_p_yes*100).toFixed(2)}% — marked terminal for this session`);
+            continue;
+        }
 
         // ── GATE 0 — REALISTIC THRESHOLD ─────────────────────────────
         // Two-part check using the player's SEASON per-game rate:
@@ -638,6 +688,20 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const yes_edge_pp  = (yes_market_p != null) ? (our_p_yes - yes_market_p) * 100 : -Infinity;
         const no_our_p     = 1 - our_p_yes;
         const no_edge_pp   = (no_market_p  != null) ? (no_our_p   - no_market_p)  * 100 : -Infinity;
+
+        // SETTLED-PROP guard. When NO side has no ask in the book
+        // AND YES edge is negative AND our_p is low (<10%), the
+        // market is signaling 'this prop is over' — no one wants to
+        // sell NO at any price. Our model agrees there's basically
+        // no chance. Re-scoring it every scan adds nothing; mark
+        // terminal. This is the 'Luke Raley 1+ HR after his last
+        // PA' case — was logging an identical -5pp YES skip every
+        // 30s and flooding the Edges screen.
+        if (noAskCents == null && yes_edge_pp < 0 && our_p_yes < 0.10) {
+            _state.deadProps.add(propKey);
+            log("skip", `Settled prop — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: NO side empty, YES edge ${yes_edge_pp.toFixed(1)}pp, our_p ${(our_p_yes*100).toFixed(1)}% — marked terminal`);
+            continue;
+        }
 
         // ── MASSIVE-DISAGREEMENT GUARD ─────────────────────────────
         // If our_p and market_p disagree by more than 25pp in absolute
@@ -748,7 +812,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         //    with no upside left to pay for. Both cases, skip.
         const liveStat = liveStatForBet(modelProps, mlbam, parsed.stat);
         if (liveStat != null && liveStat >= parsed.threshold) {
-            log("skip", `Already crossed — ${parsed.player} has ${liveStat} ${parsed.stat} ≥ threshold ${parsed.threshold}; ${side.toUpperCase()} ${side === "no" ? "can't win" : "already won, no upside"}`);
+            _state.deadProps.add(propKey);
+            log("skip", `Already crossed — ${parsed.player} has ${liveStat} ${parsed.stat} ≥ threshold ${parsed.threshold} — marked terminal for this session`);
             continue;
         }
 
@@ -770,7 +835,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 const p80     = profile?.p80_pitches || 95;
                 const limit   = p80 + 10;
                 if (pitchesThrown >= limit) {
-                    log("skip", `Pitcher-pulled guard — ${parsed.player} at ${pitchesThrown} pitches (p80+10 = ${limit}); starter likely out, K model is stale`);
+                    _state.deadProps.add(propKey);
+                    log("skip", `Pitcher-pulled guard — ${parsed.player} at ${pitchesThrown} pitches (p80+10 = ${limit}) — marked terminal for this session`);
                     continue;
                 }
             }
@@ -778,13 +844,13 @@ async function scanPlayerProps(g, marketsData, modelProps) {
 
         // 6) PA-EXHAUSTION guard (hitter props). If there are <0.5
         //    turns remaining for the lineup, the batter is unlikely
-        //    to get another PA — the market knows this, prices
-        //    accordingly, and our model still allocates expected
-        //    contributions. Same family of failure.
+        //    to get another PA. Mark terminal — the market settles
+        //    quickly from here and re-checking adds nothing.
         if (parsed.stat !== "strikeouts") {
             const turnsLeft = modelProps?.game_state?.turns_remaining;
             if (typeof turnsLeft === "number" && turnsLeft < 0.5) {
-                log("skip", `PA-exhaustion guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()}: only ${turnsLeft.toFixed(2)} turns left, model can't move from here`);
+                _state.deadProps.add(propKey);
+                log("skip", `PA-exhaustion guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: only ${turnsLeft.toFixed(2)} turns left — marked terminal for this session`);
                 continue;
             }
         }
@@ -839,7 +905,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             ? propThreshold + 4
             : propThreshold;
         if (edgePP < effectivePropThreshold) {
-            if (score) root.BotScoring.logScoredDecision(score, {
+            if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "edge_below_threshold",
                 threshold_pp: effectivePropThreshold,
                 no_bias_penalty_applied: side === "no",
@@ -860,14 +926,14 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             const conf    = Number(score.confidence) || 0;
             const minConf = _state.settings.min_conviction;
             if (adjEdge < propThreshold) {
-                root.BotScoring.logScoredDecision(score, {
+                logScoredDecisionOnce(score, {
                     action: "skip", reason: "adjusted_edge_below_threshold",
                     threshold_pp: propThreshold, raw_edge_pp: edgePP, side,
                 });
                 continue;
             }
             if (conf < minConf) {
-                root.BotScoring.logScoredDecision(score, {
+                logScoredDecisionOnce(score, {
                     action: "skip", reason: "confidence_below_min_conviction",
                     min_conviction: minConf, side,
                 });
@@ -882,7 +948,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
 
         const contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
         if (contracts < 1) {
-            if (score) root.BotScoring.logScoredDecision(score, {
+            if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "unit_too_small_for_market",
                 ask_cents: askCents, unit_cents: _state.settings.unit_cents, side,
             });
@@ -907,7 +973,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             : computeOpenExposureByKindCents();
         const propsExposure = expSplit.player_prop + expSplit.unknown;
         if (propsExposure + tradeCostCents > propsCapCents) {
-            if (score) root.BotScoring.logScoredDecision(score, {
+            if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "props_cap_hit",
                 cap_cents:           propsCapCents,
                 cap_pct:             propsCapPct,
@@ -1038,7 +1104,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 placed_at:     new Date().toISOString(),
                 order_response: result,
             });
-            if (score) root.BotScoring.logScoredDecision(score, {
+            if (score) logScoredDecisionOnce(score, {
                 action: "fire", ticker, contracts, price_cents: askCents, side,
             });
             const dirLabel = side === "no" ? "UNDER" : "OVER";
@@ -1191,7 +1257,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     // HARD-gate mode (when the user explicitly enables
     // require_savant_agree): keep the original strict behavior.
     if (_state.settings.require_savant_agree && savantStance !== "agree") {
-        if (score) root.BotScoring.logScoredDecision(score, {
+        if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "savant_disagree_hard_gate",
         });
         return;
@@ -1209,7 +1275,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     // edge_threshold_pp, scoring framework handles Savant.
     const effectiveThreshold = _state.settings.edge_threshold_pp;
     if (edgePP < effectiveThreshold) {
-        if (score) root.BotScoring.logScoredDecision(score, {
+        if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "edge_below_threshold",
             threshold_pp: effectiveThreshold,
         });
@@ -1233,14 +1299,14 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         const conf      = Number(score.confidence) || 0;
         const minConf   = _state.settings.min_conviction;
         if (adjEdge < effectiveThreshold) {
-            root.BotScoring.logScoredDecision(score, {
+            logScoredDecisionOnce(score, {
                 action: "skip", reason: "adjusted_edge_below_threshold",
                 threshold_pp: effectiveThreshold, raw_edge_pp: edgePP,
             });
             return;
         }
         if (conf < minConf) {
-            root.BotScoring.logScoredDecision(score, {
+            logScoredDecisionOnce(score, {
                 action: "skip", reason: "confidence_below_min_conviction",
                 min_conviction: minConf,
             });
@@ -1256,7 +1322,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     // edge, +2 at 8pp — capped at unit_cents (=$1.00 hard ceiling).
     const contracts = sizeContractsByConviction(yesAskCents, score, _state.settings.unit_cents);
     if (contracts < 1) {
-        if (score) root.BotScoring.logScoredDecision(score, {
+        if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "unit_too_small_for_market",
             ask_cents: yesAskCents, unit_cents: _state.settings.unit_cents,
         });
@@ -1279,7 +1345,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         : computeOpenExposureByKindCents();
     const mlExposure = mlSplit.moneyline + mlSplit.unknown;
     if (mlExposure + tradeCostCents > mlCapCents) {
-        if (score) root.BotScoring.logScoredDecision(score, {
+        if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "moneyline_cap_hit",
             cap_cents:        mlCapCents,
             cap_pct:          mlCapPct,
@@ -1376,7 +1442,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             placed_at:   new Date().toISOString(),
             order_response: result,
         });
-        if (score) root.BotScoring.logScoredDecision(score, {
+        if (score) logScoredDecisionOnce(score, {
             action:      "fire",
             ticker,
             contracts,
