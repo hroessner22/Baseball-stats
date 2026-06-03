@@ -158,6 +158,12 @@ const DEFAULTS = {
     // caps still apply — practice mode shows the REAL behavior, just
     // with no money behind it.
     practice_mode:         false,
+    // Virtual bankroll for practice mode. Bot deducts the trade cost
+    // from this on every practice fire and refuses to fire when the
+    // remaining bankroll can't cover the order. Live mark-to-market
+    // adds the current value of open positions back when computing
+    // total practice 'wealth'. Reset button in the Practice tab.
+    practice_starting_bankroll_cents: 10000,   // $100 default
     // NO-SIDE PLAYER PROPS — disabled by default 2026-06-02 after
     // the user observed that EVERY single attempted bet was NO.
     // Even with the +4pp NO penalty, the bot kept finding 11pp+ NO
@@ -259,6 +265,7 @@ function clampSettings(s) {
         bet_player_props:           s.bet_player_props !== false,
         bet_no_side_player_props:   s.bet_no_side_player_props === true,   // default OFF
         practice_mode:              s.practice_mode === true,               // default OFF (real-money)
+        practice_starting_bankroll_cents: clampInt(s.practice_starting_bankroll_cents, 100, 1_000_00),
     };
 }
 function clampFloat(n, lo, hi) {
@@ -806,6 +813,12 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             // tools (P/L computation, history, edges-tab match) work
             // identically against the practice log.
             if (_state.settings.practice_mode) {
+                // Bankroll check — refuse if virtual cash can't cover.
+                const bankroll = computePracticeBankroll();
+                if (bankroll.available_cents < tradeCostCents) {
+                    log("skip", `[PRACTICE] bankroll exhausted: $${(bankroll.available_cents/100).toFixed(2)} available, ${tradeCostCents}¢ cost`);
+                    continue;
+                }
                 recordPracticeFire({
                     kind:          "player_prop",
                     ticker, side, contracts,
@@ -1123,6 +1136,11 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     try {
         // PRACTICE MODE — log + skip the Kalshi call.
         if (_state.settings.practice_mode) {
+            const bankroll = computePracticeBankroll();
+            if (bankroll.available_cents < tradeCostCents) {
+                log("skip", `[PRACTICE] bankroll exhausted: $${(bankroll.available_cents/100).toFixed(2)} available, ${tradeCostCents}¢ cost`);
+                return;
+            }
             recordPracticeFire({
                 kind:          "moneyline",
                 ticker,
@@ -1273,6 +1291,28 @@ function getPracticeFires() {
 }
 function clearPracticeFires() {
     try { localStorage.removeItem(LS_PRACTICE_FIRES); } catch {}
+}
+
+// Bankroll math for practice mode.
+//   starting        — user-set initial virtual bank
+//   total_cost      — sum of (contracts × price) across every practice fire
+//   available       — starting − total_cost (what's left to spend)
+//   We DON'T add back live mark-to-market for the available number
+//   because in real money you don't get spent dollars back until the
+//   position resolves. The Practice tab UI shows BOTH numbers:
+//   available + total wealth (including open MTM).
+function computePracticeBankroll() {
+    const starting = _state.settings.practice_starting_bankroll_cents;
+    const fires = getPracticeFires();
+    let totalCost = 0;
+    for (const f of fires) {
+        totalCost += (f.contracts || 0) * (f.price_cents || 0);
+    }
+    return {
+        starting_cents: starting,
+        total_cost_cents: totalCost,
+        available_cents:  Math.max(0, starting - totalCost),
+    };
 }
 
 
@@ -2206,16 +2246,39 @@ async function renderPracticePane() {
     const modeBadge = settings.practice_mode
         ? `<span class="bot-practice-mode-on">PRACTICE MODE ON</span>`
         : `<span class="bot-practice-mode-off">Practice mode is OFF — flip toggle below to test without spending</span>`;
+    const bankroll = computePracticeBankroll();
+    const availPct = bankroll.starting_cents > 0
+        ? (bankroll.available_cents / bankroll.starting_cents) * 100
+        : 0;
+    const bankrollBlock = `
+      <div class="bot-practice-bankroll">
+        <div class="bot-practice-bankroll-row">
+          <span class="bot-practice-bankroll-label">Available virtual cash</span>
+          <strong class="bot-practice-bankroll-amt">$${(bankroll.available_cents/100).toFixed(2)}</strong>
+          <span class="bot-practice-bankroll-of">of $${(bankroll.starting_cents/100).toFixed(2)} starting</span>
+        </div>
+        <div class="bot-practice-bankroll-bar">
+          <div class="bot-practice-bankroll-fill" style="width:${availPct.toFixed(1)}%"></div>
+        </div>
+        <div class="bot-practice-bankroll-actions">
+          <label class="bot-practice-bankroll-input">
+            Starting bankroll ($):
+            <input type="number" min="1" max="1000" step="1"
+                   value="${(bankroll.starting_cents/100).toFixed(0)}"
+                   data-practice-starting>
+          </label>
+          <button class="bot-practice-reset" data-practice-reset>Reset practice log</button>
+        </div>
+      </div>
+    `;
     const toggle = `
       <div class="bot-practice-head">
         ${modeBadge}
         <button class="bot-practice-toggle ${settings.practice_mode ? "is-on" : "is-off"}" data-practice-toggle>
           ${settings.practice_mode ? "Turn practice OFF (return to real money)" : "Turn practice ON"}
         </button>
-        ${fires.length
-          ? `<button class="bot-practice-reset" data-practice-reset>Reset practice log</button>`
-          : ""}
       </div>
+      ${bankrollBlock}
     `;
     if (!fires.length) {
         return `
@@ -2452,9 +2515,19 @@ function bindPracticePaneHandlers(overlay) {
         refreshDrawerContent();
     });
     overlay.querySelector("[data-practice-reset]")?.addEventListener("click", () => {
-        if (!confirm("Clear the practice log and start over?")) return;
+        if (!confirm("Clear the practice log and reset the virtual bankroll?")) return;
         clearPracticeFires();
-        toast("Practice log cleared", "ok");
+        toast("Practice log + bankroll reset", "ok");
+        refreshDrawerContent();
+    });
+    overlay.querySelector("[data-practice-starting]")?.addEventListener("change", (e) => {
+        const dollars = parseFloat(e.target.value) || 0;
+        const cents   = Math.round(dollars * 100);
+        _state.settings = clampSettings({
+            ..._state.settings,
+            practice_starting_bankroll_cents: cents,
+        });
+        persistSettings();
         refreshDrawerContent();
     });
 }
