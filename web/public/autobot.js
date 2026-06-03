@@ -116,11 +116,13 @@ const DEFAULTS = {
     // is a real edge worth taking. NO bets still pay the +4pp
     // penalty → 9pp NO bar (still well above noise).
     player_prop_edge_threshold_pp: 5,
-    // Don't fire moneylines before this inning. Early-game WE
-    // moves on tiny events (one HR in the 1st can swing 8pp)
-    // and our model has the same volatility — most of our 'edge'
-    // before the 3rd is regression to mean, not real signal.
-    min_inning_for_moneyline: 3,
+    // 2026-06-03: lowered 3 → 1 per user 'WIN EXPECTANCY IS OUR
+    // FUCKING EDGE'. Early-inning WE swings ARE noisier (one HR
+    // in the 1st moves WE 8pp), but blocking inning 1-2 entirely
+    // means missing first-pitch through 2-out-of-2nd opportunities
+    // — and the 3pp edge threshold + multi-factor gate already
+    // filter out the noise. Scan everything; let the gates decide.
+    min_inning_for_moneyline: 1,
     // Savant agreement is a SOFT confidence amplifier on
     // moneylines, not a hard gate. Three states:
     //   - Savant agrees direction → fire at base edge_threshold_pp
@@ -499,15 +501,23 @@ async function scanOneGame(g) {
     const savantHome = d.savant_we_home;
 
     // 1) Moneyline edges (our WE table vs Kalshi, with Savant as a
-    //    confidence amplifier). Gated on inning ≥ min_inning_for_
-    //    moneyline — early-game WE moves on tiny events, our edge
-    //    there is mostly variance.
-    if (ourHome != null) {
+    //    confidence amplifier). Win expectancy is our strongest
+    //    edge — 132 seasons of Retrosheet validation.
+    if (ourHome == null) {
+        log("skip", `No WE for ${g.away}@${g.home} (game state too early or missing) — moneyline scan blocked`);
+    } else {
         const gInning = parseInt(g.inning, 10) || 0;
-        if (gInning >= _state.settings.min_inning_for_moneyline) {
+        if (gInning < _state.settings.min_inning_for_moneyline) {
+            log("skip", `Moneyline scan blocked — ${g.away}@${g.home} inning ${gInning} < min ${_state.settings.min_inning_for_moneyline}`);
+        } else {
             const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
-            for (const m of moneylines) {
-                await checkAndMaybeFire(g, m, ourHome, savantHome);
+            if (moneylines.length === 0) {
+                log("skip", `No Kalshi moneyline market for ${g.away}@${g.home}`);
+            } else {
+                log("bot", `Scanning ${moneylines.length} moneyline${moneylines.length === 1 ? "" : "s"} for ${g.away}@${g.home} (our WE: ${(ourHome*100).toFixed(1)}% home)`);
+                for (const m of moneylines) {
+                    await checkAndMaybeFire(g, m, ourHome, savantHome);
+                }
             }
         }
     }
@@ -1069,7 +1079,10 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     const tail = ticker.split("-").slice(-1)[0]?.toUpperCase() || "";
     const isHomeSide = tail === g.home || tail === g.home?.toUpperCase();
     const isAwaySide = tail === g.away || tail === g.away?.toUpperCase();
-    if (!isHomeSide && !isAwaySide) return;   // unknown side — skip
+    if (!isHomeSide && !isAwaySide) {
+        log("skip", `Moneyline ${ticker}: ticker tail '${tail}' doesn't match ${g.away}/${g.home}`);
+        return;
+    }
 
     // Probabilities for THIS side. our_p, savant_p, market_p.
     const our_p    = isHomeSide ? ourHome : (1 - ourHome);
@@ -1082,7 +1095,10 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     // from which we derive the best YES ask.
     const ob = await root.Kalshi.getOrderbook(ticker);
     const yesAskCents = orderbookYesAskCents(ob);
-    if (yesAskCents == null) return;          // no offers
+    if (yesAskCents == null) {
+        log("skip", `Moneyline ${tail} ${g.away}@${g.home}: no YES ask in orderbook (market thin/empty)`);
+        return;
+    }
 
     const market_p = yesAskCents / 100;
     const edgePP = (our_p - market_p) * 100;
@@ -4316,7 +4332,7 @@ function renderBotPane() {
           <button class="bot-reset-recos" data-bot-reset-recos>Apply recommended defaults</button>
           <small>Snaps every setting on this panel to the tuned values:
             <strong>$0.10 unit (hard cap)</strong> · <strong>3pp moneyline / 5pp prop YES</strong> /
-            9pp prop NO · min inning 3 · 50/50 reserve · <strong>0.30 conviction</strong> · 20¢ take ·
+            9pp prop NO · <strong>min inning 1</strong> · 50/50 reserve · <strong>0.30 conviction</strong> · 20¢ take ·
             55% EV-capture · <strong>$2 daily loss · $2 exposure ($1 props / $1 ML)</strong> · soft
             Savant +3pp · props on. Volume + persistent edge wins.</small>
         </div>
