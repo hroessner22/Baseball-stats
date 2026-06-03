@@ -134,15 +134,29 @@ export async function onRequest(context) {
         // is the binomial tail at the requested threshold.
         const pHR  = p.HR  || 0;
         const pHit = (p["1B"] || 0) + (p["2B"] || 0) + (p["3B"] || 0) + pHR;
+        // ALREADY-REALIZED stats this game — subtract from the threshold
+        // before computing the tail. Was a bug: tailMap(pHit, paRemaining,
+        // [1,2,3,4]) computed P(at least N hits in REMAINING PAs), but the
+        // prop threshold means TOTAL hits this game. So 'Julio Rodríguez
+        // 2+ H' when he already has 1 hit should ask 'P(≥1 more hit in
+        // remaining PAs)', not 'P(≥2 hits in remaining PAs)'. Old math
+        // produced wildly low probabilities like 8% on bets the market
+        // priced at 94%, generating massive phantom edges.
+        const currentHits = batter.hits || 0;
+        const currentHRs  = batter.home_runs || 0;
+        const currentTB   = (batter.hits || 0)
+                          + (batter.doubles || 0)
+                          + 2 * (batter.triples || 0)
+                          + 3 * (batter.home_runs || 0);
         // TB has a different domain (discrete sum, not Bernoulli). Compute
         // its distribution by walking the multinomial PA-by-PA over (1B,
         // 2B, 3B, HR, other) for the small PA counts we deal with here
         // (≤ 5 remaining), where exhaustive enumeration stays cheap.
         const tbDist = totalBasesDist(p, paRemaining);
         modelProps[batter.mlbam] = {
-            home_runs:   tailMap(pHR,  paRemaining, THRESHOLDS.home_runs),
-            hits:        tailMap(pHit, paRemaining, THRESHOLDS.hits),
-            total_bases: distTailMap(tbDist, THRESHOLDS.total_bases),
+            home_runs:   tailMapTotal(pHR,  paRemaining, THRESHOLDS.home_runs,   currentHRs),
+            hits:        tailMapTotal(pHit, paRemaining, THRESHOLDS.hits,        currentHits),
+            total_bases: distTailMapTotal(tbDist,        THRESHOLDS.total_bases, currentTB),
             // Used by the renderer for sanity/debug; not displayed directly.
             _meta: {
                 per_pa: {
@@ -461,6 +475,37 @@ function binomTail(p, n, k) {
 function tailMap(p, n, thresholds) {
     const out = {};
     for (const k of thresholds) out[k] = round4(binomTail(p, n, k));
+    return out;
+}
+
+// Same as tailMap but subtracts already-realized count from each
+// threshold. If the threshold has already been met (current >= k),
+// probability is 1.0. Otherwise compute the binomial tail for the
+// remaining needed in the remaining PAs.
+function tailMapTotal(p, n, thresholds, current) {
+    const out = {};
+    for (const k of thresholds) {
+        const need = k - (current || 0);
+        if (need <= 0)              out[k] = 1.0;
+        else if (need > n)          out[k] = 0.0;   // can't reach even with all PAs
+        else                        out[k] = round4(binomTail(p, n, need));
+    }
+    return out;
+}
+
+// Total-bases version. Subtracts realized TB from each threshold
+// then reads the dist tail at the reduced index.
+function distTailMapTotal(dist, thresholds, current) {
+    const out = {};
+    for (const k of thresholds) {
+        const need = k - (current || 0);
+        if (need <= 0) { out[k] = 1.0; continue; }
+        let acc = 0;
+        for (const [v, prob] of dist) {
+            if (v >= need) acc += prob;
+        }
+        out[k] = round4(acc);
+    }
     return out;
 }
 
