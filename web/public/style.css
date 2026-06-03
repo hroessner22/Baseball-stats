@@ -3353,9 +3353,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 
 .field {
     width: 100%;
-    /* No max-width cap — the field grows to fill its column so the
-       stadium silhouette gets the visual weight it deserves instead
-       of leaving 250px of dark space on each side of a 500px square. */
+    /* User feedback 2026-06-02: 'make the field proportionately
+       smaller so you can see what's below it without scrolling.'
+       Cap the field at 540px so the stadium silhouette doesn't eat
+       the entire viewport, and 'RECENT 30' / 'Top Nth · X out ·
+       bases · count' below the field become visible without
+       scrolling. Centered via the parent flex column. */
+    max-width: 540px;
+    margin: 0 auto;
     aspect-ratio: 1;
     display: block;
     filter: drop-shadow(0 4px 16px rgba(0, 0, 0, 0.5));
