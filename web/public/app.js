@@ -24,55 +24,70 @@ const gameView = document.getElementById("game-view");
 // events we generate ourselves.
 function safeSetHTML(el, html) {
     if (!el) return;
-    const savedY      = window.scrollY || document.documentElement.scrollTop || 0;
-    const elHeight    = el.offsetHeight;
-    const bodyHeight  = document.body.offsetHeight;
-    // Lock heights so neither the element NOR the document can shrink
-    // during the swap. Document-height stability is the key insight:
-    // without this, scrollY > maxScrollY → browser clamps to maxScrollY.
+    // ROOT CAUSE found: the right-side panel (.card-pane) has its OWN
+    // overflow-y: auto (set in style.css around line 3274). It scrolls
+    // independently from the window. When the user scrolls the right
+    // column, it's cardPane.scrollTop that changes — window.scrollY
+    // never moves at all. My v1-v5 restored window.scrollY (always 0)
+    // instead of cardPane.scrollTop. That's why nothing held.
+    //
+    // Fix: snapshot scrollTop on every scrollable child BEFORE the
+    // swap, and restore each one by selector AFTER. Plus window
+    // scroll, for safety on other layouts.
+    const savedY = window.scrollY || document.documentElement.scrollTop || 0;
+    const scrollableSelectors = [".card-pane"];
+    const savedScrolls = new Map();
+    for (const sel of scrollableSelectors) {
+        const node = el.querySelector(sel);
+        if (node) savedScrolls.set(sel, node.scrollTop);
+    }
+    const elHeight   = el.offsetHeight;
+    const bodyHeight = document.body.offsetHeight;
     if (elHeight   > 0) el.style.minHeight           = `${elHeight}px`;
     if (bodyHeight > 0) document.body.style.minHeight = `${bodyHeight}px`;
 
     el.innerHTML = html;
 
-    // Four-way restore — covers Chrome, Safari, Firefox quirks.
-    const forceScroll = () => {
+    const restoreAll = () => {
         window.scrollTo(0, savedY);
         if (document.scrollingElement)   document.scrollingElement.scrollTop = savedY;
         if (document.documentElement)    document.documentElement.scrollTop  = savedY;
         if (document.body)               document.body.scrollTop             = savedY;
+        // Internal scrollable children (the right card-pane is the
+        // one the user actually scrolls).
+        for (const [sel, top] of savedScrolls) {
+            const node = el.querySelector(sel);
+            if (node) node.scrollTop = top;
+        }
     };
-    forceScroll();
+    restoreAll();
 
-    // Real-user-scroll detector. Has to compare against savedY since
-    // our own forceScroll() ALSO generates scroll events — naive
-    // "any scroll = user scrolled" would abort immediately.
     let userScrolled = false;
-    const onUserScroll = (e) => {
-        // Wheel + touchmove + keydown are real user inputs.
-        // Programmatic scrollTo does NOT fire these events.
-        userScrolled = true;
-    };
+    const onUserScroll = () => { userScrolled = true; };
     window.addEventListener("wheel",     onUserScroll, { passive: true });
     window.addEventListener("touchmove", onUserScroll, { passive: true });
     window.addEventListener("keydown",   onUserScroll, { passive: true });
+    // Card-pane has its own scroll context — wheel events over it
+    // pump cardPane.scrollTop, not window.scrollY. Watch there too.
+    const cardPane = el.querySelector(".card-pane");
+    const onCardScroll = () => { userScrolled = true; };
+    if (cardPane) cardPane.addEventListener("wheel", onCardScroll, { passive: true });
 
     let attempts = 0;
     const MAX_ATTEMPTS = 30;
     const tick = () => {
         attempts += 1;
         if (userScrolled || attempts > MAX_ATTEMPTS) {
-            // Drop the locks so future natural content growth works
             el.style.minHeight = "";
             document.body.style.minHeight = "";
             window.removeEventListener("wheel",     onUserScroll);
             window.removeEventListener("touchmove", onUserScroll);
             window.removeEventListener("keydown",   onUserScroll);
+            const cp2 = el.querySelector(".card-pane");
+            if (cp2) cp2.removeEventListener("wheel", onCardScroll);
             return;
         }
-        forceScroll();
-        // Alternate RAF and setTimeout so we cover both "next paint"
-        // (RAF) and "next browser idle" (timeout) reflow points.
+        restoreAll();
         if (attempts % 2 === 0) {
             requestAnimationFrame(tick);
         } else {
