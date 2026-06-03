@@ -3590,6 +3590,18 @@ function renderCandidate(c) {
 
 async function refreshGame(id) {
     if (id !== activeGameId) return;
+    // HARD RULE per user direction: 'Never push me to the top of the
+    // screen.' If they're scrolled away from the top (>50px down),
+    // SKIP the polling refresh entirely. The browser cannot move them
+    // to top if we don't re-render. Updates resume the moment they're
+    // back at top. This is the simplest possible guarantee that no
+    // automatic update will ever scroll the page.
+    //
+    // Live-data freshness tradeoff is intentional: the user explicitly
+    // prefers staying put over getting auto-refreshed numbers.
+    if ((window.scrollY || document.documentElement.scrollTop || 0) > 50) {
+        return;
+    }
     try {
         // Game detail + the day's schedule (for the ticker), in parallel.
         // Both endpoints are edge-cached, so the schedule refetch is cheap.
@@ -3738,6 +3750,8 @@ document.addEventListener("click", (e) => {
 
 async function refreshGamecast(gameId) {
     if (gameViewMode !== "gamecast") return;
+    // Skip when user is scrolled — same guarantee as refreshGame.
+    if ((window.scrollY || document.documentElement.scrollTop || 0) > 50) return;
     try {
         const res = await fetch(`/api/game/${gameId}/plays`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -4984,6 +4998,7 @@ function renderPitchingTable(side, d) {
 // starts it; switching games clears+restarts it.
 
 async function hydrateMarkets(gameId) {
+    if ((window.scrollY || document.documentElement.scrollTop || 0) > 50) return;
     try {
         // Markets + our model projection fan out together. The model
         // endpoint is independent (live MLB feed + matchup engine) so
@@ -6623,6 +6638,8 @@ const OUTCOME_LABEL = {
 };
 
 async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor, balls, strikes) {
+    // Skip when user is scrolled — guarantee of 'never push to top'.
+    if ((window.scrollY || document.documentElement.scrollTop || 0) > 50) return;
     try {
         // Build the request key including count so the cache key knows
         // about pitch-level state. Without this, the matchup card
