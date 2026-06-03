@@ -67,6 +67,13 @@ export async function onRequest(context) {
     const BUYS_KILLED    = false;
     const NO_SIDE_KILLED = true;   // user: 'stop only buying NOs'
     const UNIT_CAP_CENTS = 10;     // user: '10 cents a bet and no more'
+    // HARD 50/50 — moneyline (WE) is our strongest signal; reserve
+    // half the bankroll exclusively for it, half exclusively for
+    // player props. Enforced server-side because stale tabs ignore
+    // client-side caps. The proxy fetches current positions before
+    // each BUY and rejects if this order would push the bet's kind
+    // past its cap.
+    const KIND_CAP_CENTS = 50;     // 50¢ per kind, 100¢ total
 
     if (String(method).toUpperCase() === "POST"
         && String(path).includes("/portfolio/orders")) {
@@ -75,6 +82,7 @@ export async function onRequest(context) {
         catch { parsedBody = null; }
         const action = String(parsedBody?.action || "").toLowerCase();
         const side   = String(parsedBody?.side   || "").toLowerCase();
+        const ticker = String(parsedBody?.ticker || "");
         const count  = Number(parsedBody?.count) || 0;
         const yesP   = Number(parsedBody?.yes_price) || 0;
         const noP    = Number(parsedBody?.no_price)  || 0;
@@ -99,6 +107,62 @@ export async function onRequest(context) {
                     error: "Order cost exceeds server-side unit cap",
                     hint:  `Cost ${cost}¢ > cap ${UNIT_CAP_CENTS}¢ (${count}×${price}¢). Lower count or price.`,
                 }, 503);
+            }
+
+            // ── 50/50 KIND CAP ───────────────────────────────────────
+            // Classify the bet by ticker shape:
+            //   KXMLBGAME-...    → moneyline
+            //   KXMLB{HR|HIT|KS|TB}-... → player_prop
+            const isProp = /^KXMLB(HR|HIT|KS|TB)/i.test(ticker);
+            const isML   = /^KXMLBGAME/i.test(ticker);
+            if (isProp || isML) {
+                // Auth headers required to query positions — without
+                // them we can't enforce the cap, so reject.
+                if (presentAuth.length !== authKeys.length) {
+                    return jsonResponse({
+                        error: "Auth required to BUY (50/50 cap needs position lookup)",
+                    }, 401);
+                }
+                let posData = null;
+                try {
+                    const posRes = await fetch(
+                        `${KALSHI_HOST}/trade-api/v2/portfolio/positions?limit=100`,
+                        { method: "GET", headers: {
+                            "Content-Type": "application/json",
+                            "User-Agent":   "DIAMOND-CONTEXT/0.1 (+https://diamond-context.pages.dev)",
+                            ...authHeaders,
+                        }}
+                    );
+                    if (posRes.ok) posData = await posRes.json();
+                } catch { posData = null; }
+                // Fail closed — if we can't see positions, we can't
+                // safely guarantee the cap, so refuse the BUY.
+                if (!posData) {
+                    return jsonResponse({
+                        error: "Could not fetch positions to verify 50/50 cap",
+                    }, 503);
+                }
+                let kindOpenCents = 0;
+                for (const p of (posData.market_positions || [])) {
+                    const qty = Math.abs(p.position || 0);
+                    if (qty === 0) continue;
+                    const t  = String(p.ticker || "");
+                    const pIsProp = /^KXMLB(HR|HIT|KS|TB)/i.test(t);
+                    const pIsML   = /^KXMLBGAME/i.test(t);
+                    if ((isProp && pIsProp) || (isML && pIsML)) {
+                        const entry = p.average_yes_price
+                                   ?? p.average_no_price
+                                   ?? p.average_cost_cents
+                                   ?? 0;
+                        kindOpenCents += qty * entry;
+                    }
+                }
+                if (kindOpenCents + cost > KIND_CAP_CENTS) {
+                    return jsonResponse({
+                        error: "50/50 kind cap exceeded server-side",
+                        hint:  `${isProp ? "player_prop" : "moneyline"} open ${kindOpenCents}¢ + ${cost}¢ = ${kindOpenCents+cost}¢ > cap ${KIND_CAP_CENTS}¢. WE bets get the other half.`,
+                    }, 503);
+                }
             }
         }
     }
