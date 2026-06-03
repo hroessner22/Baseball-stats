@@ -906,9 +906,12 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             });
             continue;
         }
-        // Same hard balance guard as moneyline path — refuse to even
-        // submit the order if Kalshi balance can't cover it.
-        if (!(await canAfford(tradeCostCents))) {
+        // Hard balance guard — refuse to even submit if Kalshi
+        // balance can't cover it. PRACTICE MODE bypasses this; the
+        // virtual bankroll check happens further down. Without
+        // the bypass, a user testing in practice with $0 real
+        // Kalshi balance got every prop fire silently skipped here.
+        if (!_state.settings.practice_mode && !(await canAfford(tradeCostCents))) {
             log("skip", `Skip player_prop ${parsed.player} ${parsed.threshold}+ ${parsed.stat} [${side}]: balance below ${tradeCostCents}¢`);
             continue;
         }
@@ -1275,10 +1278,11 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         return;
     }
     // Hard balance check — if Kalshi reports less cash than this
-    // specific order would cost, skip silently. Without this we
-    // generate a Kalshi "insufficient_funds" error per fire which
-    // pollutes the log and burns rate limit.
-    if (!(await canAfford(tradeCostCents))) {
+    // specific order would cost, skip silently. PRACTICE MODE
+    // bypasses this; virtual bankroll check is below. Without the
+    // bypass, every ML fire was getting blocked here when the user
+    // was testing in practice with $0 real Kalshi balance.
+    if (!_state.settings.practice_mode && !(await canAfford(tradeCostCents))) {
         log("skip", `Skip ${ticker}: balance below ${tradeCostCents}¢ trade cost`);
         return;
     }
@@ -1435,6 +1439,9 @@ function recordPracticeFire(payload) {
     arr.unshift({ ...payload, practice: true });
     if (arr.length > PRACTICE_FIRES_MAX) arr.length = PRACTICE_FIRES_MAX;
     try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(arr)); } catch {}
+    // Live-refresh the drawer so the Practice tab updates the second
+    // a fire lands instead of waiting for the next render cycle.
+    refreshDrawerIfOpen();
 }
 function getPracticeFires() {
     try { return JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
