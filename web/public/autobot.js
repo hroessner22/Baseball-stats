@@ -600,6 +600,24 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const no_our_p     = 1 - our_p_yes;
         const no_edge_pp   = (no_market_p  != null) ? (no_our_p   - no_market_p)  * 100 : -Infinity;
 
+        // ── MASSIVE-DISAGREEMENT GUARD ─────────────────────────────
+        // If our_p and market_p disagree by more than 25pp in absolute
+        // value on EITHER side, it's much more likely our model is
+        // wrong than the market is mispriced. Pattern observed: 'Luis
+        // Torrens 2+ H' showed model 9% vs market 99% — clearly an
+        // already-realized event our threshold-crossed gate failed to
+        // identify (probably MLBAM mismatch or pinch-hit subbed
+        // batter not in lineup map).
+        //
+        // Trust the market. Skip these BEFORE scoring so they don't
+        // clutter the Decisions log either.
+        const yesAbs = yes_market_p != null ? Math.abs((our_p_yes - yes_market_p) * 100) : 0;
+        const noAbs  = no_market_p  != null ? Math.abs((no_our_p   - no_market_p ) * 100) : 0;
+        if (yesAbs > 25 || noAbs > 25) {
+            log("skip", `Massive-disagreement guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: |our ${(our_p_yes*100).toFixed(1)}% − market ${((yes_market_p ?? 0)*100).toFixed(1)}%| = ${Math.max(yesAbs, noAbs).toFixed(1)}pp; likely model error not edge`);
+            continue;
+        }
+
         // Pick the side with the bigger edge. Threshold check is
         // applied AFTER the pick so the scoring/logging path knows
         // which side we were considering.
