@@ -3534,12 +3534,34 @@ async function refreshGame(id) {
         // less disruptive than showing nothing.
         //
         // SCROLL PRESERVATION — the user complained the right-side
-        // panels jump back to the top on every pitch. innerHTML reset
-        // nukes the DOM; the browser resets scroll. Capture position
-        // before, restore after on next frame so the layout settles.
+        // panels jump back to the top on every pitch. Single RAF
+        // didn't cut it because the layout keeps reflowing as
+        // avatars / SVGs / web fonts hydrate. Force-restore across
+        // multiple frames so the scroll holds AFTER the dust settles.
         const _savedScrollY = window.scrollY;
         gameView.innerHTML = renderGame(g);
-        requestAnimationFrame(() => window.scrollTo(0, _savedScrollY));
+        // Immediate restore + 5 follow-up frames (covers ~80ms of
+        // layout shift). If the user starts scrolling during that
+        // window, abort so we don't fight them.
+        let _scrollAttempt = 0;
+        const _userScrollHandler = () => {
+            _scrollAttempt = 99;   // bail
+            window.removeEventListener("wheel",     _userScrollHandler, { passive: true });
+            window.removeEventListener("touchmove", _userScrollHandler, { passive: true });
+        };
+        window.addEventListener("wheel",     _userScrollHandler, { passive: true, once: true });
+        window.addEventListener("touchmove", _userScrollHandler, { passive: true, once: true });
+        const _tryRestore = () => {
+            if (_scrollAttempt >= 6) {
+                window.removeEventListener("wheel",     _userScrollHandler);
+                window.removeEventListener("touchmove", _userScrollHandler);
+                return;
+            }
+            window.scrollTo({ top: _savedScrollY, behavior: "instant" });
+            _scrollAttempt += 1;
+            requestAnimationFrame(_tryRestore);
+        };
+        _tryRestore();
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -4418,16 +4440,19 @@ function trimLeadingBatterName(desc, fullName) {
 }
 
 // "This inning" play-by-play strip — every completed PA in the
-// current half-inning, oldest first. Shows the user how the frame
-// has unfolded so far without making them flip to Gamecast for
-// the same info.
+// current half-inning. CURRENT batter (in progress) shown at the
+// top, then completed PAs newest-first below. Per user direction:
+// 'put the batter who's hitting now at the top.'
 function renderThisInning(g) {
     if (g.status !== "Live" || !g.this_inning || g.this_inning.length === 0) {
         return "";
     }
     const arrow = g.half === "top" ? "▲" : "▼";
     const innLabel = `${arrow} ${ordinalSuffix(g.inning)} so far`;
-    const rows = g.this_inning.map((p) => {
+    // Reverse so newest completed PA shows first (right under the
+    // 'NOW BATTING' row).
+    const reversed = g.this_inning.slice().reverse();
+    const rows = reversed.map((p) => {
         // Compact result chip per PA. Color = the outcome category we
         // already use elsewhere (green for hits, red for outs/K, blue
         // for walks, etc.).
@@ -4462,8 +4487,8 @@ function renderThisInning(g) {
     return `
       <div class="this-inning">
         <div class="ti-head">${innLabel}</div>
-        ${rows}
         ${currentRow}
+        ${rows}
       </div>
     `;
 }
