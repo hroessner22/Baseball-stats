@@ -6,6 +6,55 @@
 
 const board = document.getElementById("board");
 const gameView = document.getElementById("game-view");
+
+// ── safeSetHTML ───────────────────────────────────────────────────
+// Single chokepoint for innerHTML swaps that need to preserve user
+// scroll position. The previous fix only covered refreshGame; the
+// user noted updates were resetting scroll on every event — that's
+// because hydrateMatchup, refreshGamecast, refreshBoxscore, and the
+// markets pane ALSO swap innerHTML on game-view children.
+//
+// Approach: lock the swapping element's minHeight to its current
+// offsetHeight BEFORE the swap so the document can't shrink (which
+// is what triggers browser scroll clamping), restore scroll with
+// BOTH the positional form (window.scrollTo(x, y) — always instant)
+// AND the documentElement.scrollTop fallback for cross-browser
+// safety, then re-peg for 10 frames in case avatars / fonts shift
+// layout afterward. Drop the height lock at the end.
+//
+// Bail on any user scroll input (wheel / touch / keydown) so we
+// don't fight the user.
+function safeSetHTML(el, html) {
+    if (!el) return;
+    const savedY     = window.scrollY || document.documentElement.scrollTop || 0;
+    const lockHeight = el.offsetHeight;
+    if (lockHeight > 0) el.style.minHeight = `${lockHeight}px`;
+    el.innerHTML = html;
+    // Both forms — some browsers honor positional, some object.
+    window.scrollTo(0, savedY);
+    if (document.documentElement) document.documentElement.scrollTop = savedY;
+    if (document.body)            document.body.scrollTop = savedY;
+    let userScrolled = false;
+    const onUserScroll = () => { userScrolled = true; };
+    window.addEventListener("wheel",     onUserScroll, { passive: true, once: true });
+    window.addEventListener("touchmove", onUserScroll, { passive: true, once: true });
+    window.addEventListener("keydown",   onUserScroll, { passive: true, once: true });
+    let attempts = 0;
+    const tick = () => {
+        attempts += 1;
+        if (userScrolled || attempts > 10) {
+            el.style.minHeight = "";
+            window.removeEventListener("wheel",     onUserScroll);
+            window.removeEventListener("touchmove", onUserScroll);
+            window.removeEventListener("keydown",   onUserScroll);
+            return;
+        }
+        window.scrollTo(0, savedY);
+        if (document.documentElement) document.documentElement.scrollTop = savedY;
+        requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+}
 const standingsView = document.getElementById("standings-view");
 const leadersView = document.getElementById("leaders-view");
 const mvpView = document.getElementById("mvp-view");
@@ -2390,7 +2439,7 @@ async function hydratePlayerProps(gamePk, playerName, mlbam) {
 
         const allProps = (data?.markets?.player_prop || []);
         const matches = filterMarketsByPlayerName(allProps, playerName);
-        slot.innerHTML = renderPlayerPropChips(matches, playerName);
+        safeSetHTML(slot, renderPlayerPropChips(matches, playerName));
     } catch { /* silent — no chips section if anything goes wrong */ }
 }
 
@@ -3533,50 +3582,9 @@ async function refreshGame(id) {
         // fresh data lands. Briefly showing the previous PA's names is
         // less disruptive than showing nothing.
         //
-        // SCROLL PRESERVATION (3rd attempt). The previous restore was
-        // being clamped because innerHTML reset shrinks the document
-        // for one frame — the browser sees savedScrollY > maxScrollY
-        // and snaps to maxScrollY (which is small). Subsequent frames
-        // restored the saved value, but the visible jump already
-        // happened.
-        //
-        // Fix: lock gameView.minHeight to its CURRENT offsetHeight
-        // BEFORE the innerHTML reset, so the document never shrinks.
-        // The browser can't clamp scrollY because the page is still
-        // as tall as it was. Restore scroll synchronously, then drop
-        // the lock after the new content has settled.
-        const _savedScrollY = window.scrollY;
-        const _lockHeight   = gameView.offsetHeight;
-        if (_lockHeight > 0) {
-            gameView.style.minHeight = `${_lockHeight}px`;
-        }
-        gameView.innerHTML = renderGame(g);
-        // Synchronous restore — runs BEFORE any paint, prevents the
-        // visible jump entirely.
-        window.scrollTo({ top: _savedScrollY, behavior: "instant" });
-        // Follow-up restores for 8 frames in case avatars / SVGs
-        // shift layout and the saved position needs re-pegging.
-        let _scrollAttempts = 0;
-        let _userScrolled   = false;
-        const _onUserScroll = () => { _userScrolled = true; };
-        window.addEventListener("wheel",     _onUserScroll, { passive: true, once: true });
-        window.addEventListener("touchmove", _onUserScroll, { passive: true, once: true });
-        window.addEventListener("keydown",   _onUserScroll, { passive: true, once: true });
-        const _tryRestore = () => {
-            _scrollAttempts += 1;
-            if (_userScrolled || _scrollAttempts > 12) {
-                // Drop the height lock so future natural-content
-                // changes can grow the page normally.
-                gameView.style.minHeight = "";
-                window.removeEventListener("wheel",     _onUserScroll);
-                window.removeEventListener("touchmove", _onUserScroll);
-                window.removeEventListener("keydown",   _onUserScroll);
-                return;
-            }
-            window.scrollTo({ top: _savedScrollY, behavior: "instant" });
-            requestAnimationFrame(_tryRestore);
-        };
-        requestAnimationFrame(_tryRestore);
+        // Use the global safeSetHTML helper so every game-view swap
+        // goes through the same scroll-preservation logic.
+        safeSetHTML(gameView, renderGame(g));
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -3731,11 +3739,11 @@ async function refreshGamecast(gameId) {
         const html = renderGamecast(recent, predictionMap, data.teams);
         cachedGamecastHTML = html;
         const pane = document.getElementById("gamecast-pane");
-        if (pane) pane.innerHTML = html;
+        if (pane) safeSetHTML(pane, html);
     } catch (e) {
         const pane = document.getElementById("gamecast-pane");
         if (pane && !cachedGamecastHTML) {
-            pane.innerHTML = `<div class="empty">Couldn't load play-by-play: ${e.message || e}</div>`;
+            safeSetHTML(pane, `<div class="empty">Couldn't load play-by-play: ${e.message || e}</div>`);
         }
         // If we already had a cached gamecast, keep showing it — silent fail.
     }
@@ -4728,7 +4736,7 @@ async function hydrateBoxscore(gameId, status) {
         const pane = document.getElementById("boxscore-pane");
         if (!pane) return;
         const html = renderBoxscore(data);
-        pane.innerHTML = html;
+        safeSetHTML(pane, html);
         cachedBoxscoreHTML = html;
         cachedBoxscorePk = gameId;
         cachedBoxscoreStatus = data.status;
@@ -4777,7 +4785,7 @@ document.addEventListener("click", (e) => {
         const pane = document.getElementById("boxscore-pane");
         if (pane) {
             const html = renderBoxscore(cachedBoxscoreData);
-            pane.innerHTML = html;
+            safeSetHTML(pane, html);
             cachedBoxscoreHTML = html;
         }
     }
@@ -4971,11 +4979,11 @@ async function hydrateMarkets(gameId) {
         cachedMarketConsensusSlot = renderMarketConsensusPill(data);
         cachedMarketConsensusPk = gameId;
         const pillSlot = document.getElementById("market-consensus-slot");
-        if (pillSlot) pillSlot.innerHTML = cachedMarketConsensusSlot;
+        if (pillSlot) safeSetHTML(pillSlot, cachedMarketConsensusSlot);
         const pane = document.getElementById("markets-pane");
         if (!pane) return;
         const html = renderMarkets(data);
-        pane.innerHTML = html;
+        safeSetHTML(pane, html);
         cachedMarketsHTML = html;
         cachedMarketsPk = gameId;
         // Kalshi's /markets endpoint returns null bids/asks on most
@@ -4987,7 +4995,7 @@ async function hydrateMarkets(gameId) {
     } catch (e) {
         const pane = document.getElementById("markets-pane");
         if (pane && !cachedMarketsHTML) {
-            pane.innerHTML = `<div class="empty">Couldn't load markets: ${e.message || e}</div>`;
+            safeSetHTML(pane, `<div class="empty">Couldn't load markets: ${e.message || e}</div>`);
         }
         // Otherwise keep showing what we have — a single failed poll
         // shouldn't blank the pane.
@@ -5008,7 +5016,7 @@ async function hydrateMarketConsensusPill(gameId) {
         cachedMarketConsensusSlot = renderMarketConsensusPill(data);
         cachedMarketConsensusPk = gameId;
         const slot = document.getElementById("market-consensus-slot");
-        if (slot) slot.innerHTML = cachedMarketConsensusSlot;
+        if (slot) safeSetHTML(slot, cachedMarketConsensusSlot);
     } catch { /* keep cached pill; silent fail */ }
 }
 
@@ -6612,7 +6620,7 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor, balls, st
         const slot = document.getElementById("matchup-slot");
         if (!slot || !m.available) return;
         const html = renderMatchupCard(m);
-        slot.innerHTML = html;
+        safeSetHTML(slot, html);
         cachedMatchupSlot = html;
         cachedMatchupKey = key;
         // After paint, look up player-prop markets for both sides and
