@@ -71,13 +71,19 @@ const BOT_KILLED = false;
 // ── Hard safety caps (UI cannot exceed these) ─────────────────────
 
 const HARD_CAPS = {
-    // 2026-06-02: hard ceiling lowered from $2.00 → $0.10 after the
-    // user lost most of their bankroll to NO-side prop bets that
-    // were stale-model edges (event already happened, NO at 1¢).
-    // User direction: 'lower the amount to 10 cents a bet and no
-    // more.' Floor lowered to 1¢ so the cap can actually take effect.
+    // 2026-06-02: ceiling lowered to $0.10 after the NO-side prop
+    // bug burned the bankroll. 2026-06-03: ceiling raised to $1.00
+    // because $0.10 silently blocked ALL moneyline fires — Kalshi
+    // ML contracts trade at 30-70¢ each, and floor(10/40)=0 contracts
+    // meant 'contracts < 1' returned with no log entry on every
+    // single ML opportunity. 2026-06-03 (later): ceiling raised to
+    // $5.00 per user direction 'not real money, bump it up' —
+    // practice bankroll is $100 by default so $5/fire = 20 fires
+    // worth of room. NO-side props still disabled + sanity gates
+    // still on. Per-fire spend is conviction-scaled — see
+    // sizeContractsByConviction().
     unit_cents_min:        1,      // $0.01 minimum
-    unit_cents_max:        10,     // $0.10 maximum — HARD locked
+    unit_cents_max:        500,    // $5.00 max spend per fire
     // The Pythag-baseline backtest cliff (49% at 1-2pp, 63% at
     // 2-3pp) was vs a dumb baseline. Kalshi isn't dumb. Live
     // experience (down 50% today at the 2pp default) shows the
@@ -100,7 +106,7 @@ const HARD_CAPS = {
 
 const DEFAULTS = {
     enabled:               false,
-    unit_cents:            10,     // $0.10 per fire (user's spec)
+    unit_cents:            200,    // $2.00 max per fire — comfortable size for practice mode ($100 bankroll)
     // 2026-06-03 user direction: 'edge doesn't need to be massive
     // because as long as we have one and keep betting, we will win.'
     // Moneyline (WE) is our strongest signal — Retrosheet 132-season
@@ -124,12 +130,11 @@ const DEFAULTS = {
     // filter out the noise. Scan everything; let the gates decide.
     min_inning_for_moneyline: 1,
     // Savant agreement is a SOFT confidence amplifier on
-    // moneylines, not a hard gate. Three states:
-    //   - Savant agrees direction → fire at base edge_threshold_pp
-    //   - Savant disagrees        → require base + savant_disagree_penalty_pp
-    //   - Savant has no data      → fire at base
+    // moneylines, not a hard gate. Disagreement is handled by the
+    // multi-factor scoring framework's savant_alignment factor
+    // (-1.5pp on adjusted edge). require_savant_agree forces a
+    // strict hard gate for users who want it.
     require_savant_agree:       false,
-    savant_disagree_penalty_pp: 3,
     // Cash-out at 20¢ absolute is the safety-net trigger — locks
     // any 20¢+ winner regardless of edge math. NOT the primary
     // exit mechanism; the smarter game-state triggers below
@@ -228,7 +233,17 @@ const _state = {
 function loadState() {
     try {
         const s = JSON.parse(localStorage.getItem(LS_SETTINGS) || "{}");
+        // MIGRATION 2026-06-03: bump any persisted unit_cents below
+        // $1 up to the new $2 default. The old $0.10 ceiling silently
+        // blocked every ML fire (Kalshi ML contracts trade at 30-70¢
+        // each). Anyone with old settings persisted would still be
+        // stuck at the old value even after the code fix without
+        // this nudge.
+        if (typeof s.unit_cents === "number" && s.unit_cents < 100) {
+            s.unit_cents = DEFAULTS.unit_cents;
+        }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
+        persistSettings();
     } catch { _state.settings = { ...DEFAULTS }; }
     try {
         const arr = JSON.parse(localStorage.getItem(LS_SESSION_BETS) || "[]");
@@ -264,7 +279,6 @@ function clampSettings(s) {
         player_prop_edge_threshold_pp: clampInt(s.player_prop_edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
         min_inning_for_moneyline:   clampInt(s.min_inning_for_moneyline, 1, 8),
         require_savant_agree:       !!s.require_savant_agree,
-        savant_disagree_penalty_pp: clampInt(s.savant_disagree_penalty_pp, 0, 10),
         profit_take_cents:          clampInt(s.profit_take_cents, 5, 60),
         live_ev_take_pct:           clampFloat(s.live_ev_take_pct, 0.2, 0.95),
         daily_loss_limit_cents:     clampInt(s.daily_loss_limit_cents, 100, HARD_CAPS.daily_loss_cents_max),
@@ -856,8 +870,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const key = `${ticker}:${side}`;
         if (_state.sessionBets.has(key)) continue;
 
-        const contracts = Math.floor(_state.settings.unit_cents / askCents);
-        if (contracts < 1) continue;
+        const contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
+        if (contracts < 1) {
+            if (score) root.BotScoring.logScoredDecision(score, {
+                action: "skip", reason: "unit_too_small_for_market",
+                ask_cents: askCents, unit_cents: _state.settings.unit_cents, side,
+            });
+            log("skip", `Prop ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()}: ask ${askCents}¢ > unit cap ${_state.settings.unit_cents}¢`);
+            continue;
+        }
         const tradeCostCents = contracts * askCents;
         // HARD 50/50 SPLIT — applies in BOTH real mode and practice
         // mode. In real mode: cap = settings.open_exposure_max, split
@@ -1071,6 +1092,33 @@ function normName(s) {
     return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+// Conviction-scaled sizing. Base 2 contracts (always willing to
+// spend at least the ask × 2). Higher adjusted edge → more
+// contracts to chase EV. Capped by unit_cents (≤$5 hard ceiling).
+//
+// Ladder:
+//   <3pp adjusted edge → wouldn't fire anyway (filtered upstream)
+//    3-5pp           → 2 contracts
+//    5-8pp           → 4 contracts
+//    8-12pp          → 6 contracts
+//   12pp+            → 10 contracts (the 'huge edge' band)
+//
+// Returns 0 when even 1 contract exceeds the cap. Caller logs
+// the skip — silent 'contracts < 1' returns were the bug that
+// hid the old $0.10 unit blocking every ML fire.
+function sizeContractsByConviction(askCents, score, unitCents) {
+    if (!Number.isFinite(askCents) || askCents <= 0) return 0;
+    if (askCents > unitCents) return 0;
+    const adjEdge = Math.abs(Number(score && score.edge_pp) || 0);
+    let contracts;
+    if      (adjEdge >= 12) contracts = 10;
+    else if (adjEdge >=  8) contracts =  6;
+    else if (adjEdge >=  5) contracts =  4;
+    else                     contracts =  2;
+    while (contracts > 1 && contracts * askCents > unitCents) contracts--;
+    return contracts;
+}
+
 async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     // Identify which TEAM this Kalshi market is YES'ing on. The
     // ticker tail is the tricode (KXMLBGAME-...-DET, ...-TB, etc.).
@@ -1136,11 +1184,17 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         return;
     }
 
-    // SOFT-gate mode (default): Savant raises the bar when it
-    // disagrees. Our model needs MORE conviction to override.
-    const effectiveThreshold = _state.settings.edge_threshold_pp + (
-        savantStance === "disagree" ? _state.settings.savant_disagree_penalty_pp : 0
-    );
+    // SOFT-gate mode (default): Savant disagreement is handled by
+    // the multi-factor scoring framework's savant_alignment factor
+    // (-1.5pp on the adjusted edge). The old code ALSO raised the
+    // raw-edge bar by savant_disagree_penalty_pp here, which double-
+    // counted Savant — a Savant-disagree raw 6pp edge became 4.5pp
+    // adjusted, failing the same 6pp gate. Net effect: Savant
+    // disagreement cost ~4.5pp instead of 1.5pp, locking out the
+    // WE-driven moneyline fires that ARE our strongest signal.
+    // 2026-06-03 fix: single chokepoint — raw edge clears base
+    // edge_threshold_pp, scoring framework handles Savant.
+    const effectiveThreshold = _state.settings.edge_threshold_pp;
     if (edgePP < effectiveThreshold) {
         if (score) root.BotScoring.logScoredDecision(score, {
             action: "skip", reason: "edge_below_threshold",
@@ -1185,12 +1239,16 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     const key = `${ticker}:yes`;
     if (_state.sessionBets.has(key)) return;
 
-    // Compute contract count. With $0.50 unit and ask at e.g. 25¢,
-    // we'd buy 2 contracts. floor() means small leftover stays
-    // unused; we never go over the unit even if the price is odd.
-    const contracts = Math.floor(_state.settings.unit_cents / yesAskCents);
+    // Conviction-scaled sizing. Base 1 contract, +1 at 5pp adjusted
+    // edge, +2 at 8pp — capped at unit_cents (=$1.00 hard ceiling).
+    const contracts = sizeContractsByConviction(yesAskCents, score, _state.settings.unit_cents);
     if (contracts < 1) {
-        return;   // unit too small to buy even 1 contract at this price
+        if (score) root.BotScoring.logScoredDecision(score, {
+            action: "skip", reason: "unit_too_small_for_market",
+            ask_cents: yesAskCents, unit_cents: _state.settings.unit_cents,
+        });
+        log("skip", `Moneyline ${tail} ${g.away}@${g.home}: YES ask ${yesAskCents}¢ > unit cap ${_state.settings.unit_cents}¢`);
+        return;
     }
 
     // HARD 50/50 SPLIT (moneyline side). Symmetric to props side
@@ -4228,10 +4286,10 @@ function renderBotPane() {
         <summary>Settings (hard caps cannot be exceeded)</summary>
         <div class="bot-settings-grid">
           <label>
-            <span>Unit per fire (¢)</span>
+            <span>Max spend per fire (¢)</span>
             <input type="number" min="${HARD_CAPS.unit_cents_min}" max="${HARD_CAPS.unit_cents_max}"
                    step="5" value="${s.unit_cents}" data-bot-setting="unit_cents">
-            <small>$0.${String(s.unit_cents).padStart(2,"0")} per signal · cap $${(HARD_CAPS.unit_cents_max/100).toFixed(2)}</small>
+            <small>$${(s.unit_cents/100).toFixed(2)} ceiling · 2 contracts base, 4 at 5pp adjusted edge, 6 at 8pp, 10 at 12pp+ · hard cap $${(HARD_CAPS.unit_cents_max/100).toFixed(2)}</small>
           </label>
           <label>
             <span>Moneyline edge threshold (pp)</span>
@@ -4305,17 +4363,10 @@ function renderBotPane() {
                    data-bot-setting-float="min_conviction">
             <small>Multi-factor confirmation required (0.40 ≈ model edge + one corroborating factor) · raise = fewer/better fires</small>
           </label>
-          <label>
-            <span>Savant disagrees → +N pp penalty</span>
-            <input type="number" min="0" max="10" step="1"
-                   value="${s.savant_disagree_penalty_pp}"
-                   data-bot-setting="savant_disagree_penalty_pp">
-            <small>When Savant disagrees direction, raise the required edge by N pp. Drop to 0 once we've outperformed Savant.</small>
-          </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.require_savant_agree ? "checked" : ""}
                    data-bot-setting-bool="require_savant_agree">
-            <span>Strict mode: REQUIRE Savant to agree (hard gate)</span>
+            <span>Strict mode: REQUIRE Savant to agree (hard gate) — off by default; Savant disagreement is handled by the scoring framework</span>
           </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.bet_player_props ? "checked" : ""}
