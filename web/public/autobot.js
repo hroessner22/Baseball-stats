@@ -550,16 +550,28 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         if (our_p_yes == null) continue;
 
         // ── GATE 0 — REALISTIC THRESHOLD ─────────────────────────────
-        // Use the player's SEASON per-game rate to compute baseline
-        // probability of the threshold. If under 1%, the bet is on
-        // something the player essentially never does — don't even
-        // score it. Stops the 'Brett Baty 2+ HR' / 'bum hits 3 HR'
-        // pattern from cluttering the Decisions log.
+        // Two-part check using the player's SEASON per-game rate:
         //
-        // Returns null when we don't have enough season sample
-        // (fewer than 10 games for hitters, 3 starts for pitchers) —
-        // in that case we allow through and let the in-game model
-        // decide.
+        // (a) HARD CEILING: threshold must not exceed 2× season rate.
+        //     E.g. Randy Arozarena averages 0.9 hits/game, so 'realistic
+        //     ceiling' = ceil(0.9 × 2) = 2. '3+ H' or '4+ H' for him
+        //     gets skipped without even computing probability.
+        //
+        // (b) BASELINE FLOOR: if (a) passes, baseline P(threshold ≥ k)
+        //     under Poisson must be ≥ 1%. Catches edge cases where the
+        //     ceiling rule allows a marginal threshold (e.g. a player
+        //     with 0.6 rate, threshold 2: ceiling allows it, but
+        //     P(2+) ≈ 12% so it's fine; vs another at 0.5 rate where
+        //     P(2+) ≈ 9% — also fine; rule mostly catches the
+        //     ceiling cases).
+        //
+        // Both return null with small samples (<10 hitter games, <3
+        // pitcher starts); when null, allow through.
+        const realisticMax = realisticThresholdCeiling(modelProps, mlbam, parsed.stat);
+        if (realisticMax != null && parsed.threshold > realisticMax) {
+            log("skip", `Realistic-threshold guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: max realistic threshold is ${realisticMax} (he doesn't do this many)`);
+            continue;
+        }
         const baselineP = baselineProbForBet(modelProps, mlbam, parsed.stat, parsed.threshold);
         if (baselineP != null && baselineP < 0.01) {
             log("skip", `Realistic-threshold guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: season baseline ${(baselineP*100).toFixed(2)}% (he basically never does this)`);
@@ -1949,6 +1961,53 @@ function baselineProbForBet(modelProps, playerMlbam, stat, threshold) {
             return null;
         }
         return poissonAtLeast(threshold, lambda);
+    }
+    return null;
+}
+
+// "Realistic ceiling" for a prop: max threshold worth even
+// CONSIDERING for this player. Defined as 2× the player's season
+// per-game rate, rounded up. Anything beyond that is the 'Randy
+// Arozarena 4+ H / Brett Baty 3+ H' pattern — the user said not to
+// even bother considering these.
+//
+// Returns null when we can't compute (early season, missing data) —
+// caller treats null as "can't decide, allow."
+function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
+    if (!modelProps?.lineups || !playerMlbam) return null;
+    const want = String(playerMlbam);
+    if (stat === "strikeouts") {
+        for (const sk of ["home", "away"]) {
+            const lp = modelProps.lineups[sk];
+            if (!lp) continue;
+            if (String(lp.pitcher_id) !== want) continue;
+            const gs = lp.pitcher_season_gs || 0;
+            const so = lp.pitcher_season_so || 0;
+            if (gs < 3) return null;
+            return Math.max(1, Math.ceil((so / gs) * 2));
+        }
+        return null;
+    }
+    for (const sk of ["home", "away"]) {
+        const lp = modelProps.lineups[sk];
+        if (!lp?.batters) continue;
+        const b = lp.batters.find((x) => String(x.mlbam) === want);
+        if (!b) continue;
+        const g = b.season_games || 0;
+        if (g < 10) return null;
+        let lambda = 0;
+        if (stat === "hits")        lambda = (b.season_hits || 0) / g;
+        else if (stat === "home_runs")   lambda = (b.season_home_runs || 0) / g;
+        else if (stat === "total_bases") {
+            const tb = (b.season_hits || 0)
+                     + (b.season_doubles || 0)
+                     + 2 * (b.season_triples || 0)
+                     + 3 * (b.season_home_runs || 0);
+            lambda = tb / g;
+        } else {
+            return null;
+        }
+        return Math.max(1, Math.ceil(lambda * 2));
     }
     return null;
 }
