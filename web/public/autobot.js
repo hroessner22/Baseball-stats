@@ -658,6 +658,22 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
 
+        // 1b) PAYOUT-SIZE GUARD — refuse player-prop BUYs above 60¢.
+        // User direction: 'for these bets like Raley, just make sure
+        // the payout is large enough.' Above 60¢ ask the payout per
+        // contract drops below 40¢ — even a 20pp edge yields small
+        // expected profit and the loss side eats it on one bad call.
+        // Better to pass on a marginally-positive bet at 70¢ ask and
+        // wait for a wider-payout setup.
+        //
+        // Moneylines are NOT affected by this gate (lives in props
+        // path only) — WE-driven moneyline bets are our strongest
+        // signal, fire even on tight asks.
+        if (askCents != null && askCents > 60) {
+            log("skip", `Payout-size guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()} at ${askCents}¢: payout only ${100-askCents}¢ per contract, edge needs to be huge to justify`);
+            continue;
+        }
+
         // 2) Orderbook coherence — YES ask + NO ask should sum to
         //    around 100¢ on a real two-sided market. If the sum is
         //    well below 100, the book is broken/thin/stale and our
@@ -2037,6 +2053,7 @@ function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
 function liveStatForBet(modelProps, playerMlbam, stat) {
     if (!modelProps?.lineups || !playerMlbam) return null;
     const want = String(playerMlbam);
+
     // Pitcher prop — strikeouts always belong to the bet's player
     // (the pitcher himself). Check both sides for safety.
     if (stat === "strikeouts") {
@@ -2047,12 +2064,17 @@ function liveStatForBet(modelProps, playerMlbam, stat) {
                 return lp.pitcher_strikeouts ?? 0;
             }
         }
+        // Fall back to all_player_stats — covers relievers whose
+        // K stats live there.
+        const all = modelProps.all_player_stats?.[want];
+        if (all) return all.strikeouts ?? 0;
         return null;
     }
-    // Hitter prop — find the batter in either lineup, then read
-    // the field. Total bases is computed from singles + 2×2B +
-    // 3×3B + 4×HR using the standard identity
-    //   TB = hits + 2B + 2*3B + 3*HR
+
+    // Hitter prop — first try the starting-lineup map, then fall
+    // back to the all-players index. The fallback covers pinch
+    // hitters / late subs not in the starting nine — the Luis
+    // Torrens case where gate 4 missed because he wasn't a starter.
     for (const sk of ["home", "away"]) {
         const lp = modelProps.lineups[sk];
         if (!lp?.batters) continue;
@@ -2067,6 +2089,19 @@ function liveStatForBet(modelProps, playerMlbam, stat) {
                  + 3 * (b.home_runs || 0);
         }
         return null;
+    }
+    // Fallback — all_player_stats covers every player who has
+    // appeared, including subs.
+    const all = modelProps.all_player_stats?.[want];
+    if (all) {
+        if (stat === "hits")        return all.hits        ?? 0;
+        if (stat === "home_runs")   return all.home_runs   ?? 0;
+        if (stat === "total_bases") {
+            return (all.hits || 0)
+                 + (all.doubles || 0)
+                 + 2 * (all.triples || 0)
+                 + 3 * (all.home_runs || 0);
+        }
     }
     return null;
 }

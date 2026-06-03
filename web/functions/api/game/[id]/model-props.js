@@ -59,6 +59,7 @@ export async function onRequest(context) {
     }
 
     const teams = extractLineups(feedRaw);
+    const allPlayers = buildAllPlayersIndex(feedRaw);
     if (!teams) {
         return jsonResponse({
             game_pk: parseInt(gameId, 10),
@@ -285,7 +286,12 @@ export async function onRequest(context) {
         // Convenience lookup the frontend uses to map Kalshi market titles
         // ("Vinnie Pasquantino: 1+ home runs?") back to MLBAM ids without
         // a second roundtrip. Lowercase keys; trims punctuation/suffixes.
-        name_to_mlbam: buildNameLookup(teams),
+        name_to_mlbam: { ...allPlayers.name_index, ...buildNameLookup(teams) },
+        // Live in-game stats for EVERY player who has appeared,
+        // including pinch hitters / subs. The bot reads this as a
+        // fallback when the starting-lineup map doesn't have the
+        // player (the Luis Torrens case).
+        all_player_stats: allPlayers.stats_by_id,
     }, 60);
 }
 
@@ -323,6 +329,48 @@ function extractLineups(feedRaw) {
     if (!out.home.pitcher_id && !out.away.pitcher_id) return null;
     if (out.home.batters.length === 0 && out.away.batters.length === 0) return null;
     return out;
+}
+
+// Build a name→mlbam + per-mlbam live-stats map covering EVERY
+// player who has appeared in the game, not just the starting lineup.
+// Used by the bot's threshold-crossed gate so pinch hitters / late
+// subs don't slip past the check just because they aren't in the
+// starting nine. Returns { name_index, stats_by_id }.
+//
+// Example fix: 'Luis Torrens 2+ H' showed model 9% vs market 99%
+// — Torrens was a pinch hitter or sub not in the starting lineup,
+// so the gate-4 lookup returned null and the bot considered a bet
+// on something that had already happened.
+function buildAllPlayersIndex(feedRaw) {
+    const box = feedRaw?.liveData?.boxscore || {};
+    const teamsRaw = box.teams || {};
+    const nameIndex = {};
+    const statsById = {};
+    for (const side of ["home", "away"]) {
+        const players = teamsRaw[side]?.players || {};
+        for (const key of Object.keys(players)) {
+            const p = players[key];
+            const id = p?.person?.id;
+            const name = p?.person?.fullName;
+            if (!id) continue;
+            if (name) {
+                nameIndex[normName(name)] = id;
+                const surname = name.split(/\s+/).slice(-1)[0];
+                if (surname) nameIndex[normName(surname)] = id;
+            }
+            const b = p.stats?.batting || {};
+            const pitch = p.stats?.pitching || {};
+            statsById[id] = {
+                hits:        b.hits        || 0,
+                doubles:     b.doubles     || 0,
+                triples:     b.triples     || 0,
+                home_runs:   b.homeRuns    || 0,
+                strikeouts: pitch.strikeOuts || b.strikeOuts || 0,
+                plate_appearances: b.plateAppearances || 0,
+            };
+        }
+    }
+    return { name_index: nameIndex, stats_by_id: statsById };
 }
 
 function shapeSide(side, probable) {
