@@ -83,7 +83,13 @@ const HARD_CAPS = {
     // experience (down 50% today at the 2pp default) shows the
     // 2pp signal does NOT survive an efficient market. Hard floor
     // raised to 4pp — keeps the bot above 'noise vs Kalshi.'
-    edge_pp_min:           4,
+    // 2026-06-03: lowered floor 4 → 2pp per user direction 'edge
+    // doesn't need to be massive because as long as we have one and
+    // keep betting, we will win.' Volume + persistent edge > waiting
+    // for blowout signals. Moneyline (WE) bets specifically are our
+    // strongest signal (132-season Retrosheet validation); we should
+    // fire on small but real edges.
+    edge_pp_min:           2,
     edge_pp_max:           20,
     // Bankroll is now $2.25. Daily loss limit dropped to $1 so the
     // bot can't drain the rest of the account in one bad afternoon.
@@ -94,15 +100,12 @@ const HARD_CAPS = {
 const DEFAULTS = {
     enabled:               false,
     unit_cents:            10,     // $0.10 per fire (user's spec)
-    // 2pp default was vs a dumb Pythag baseline. Against Kalshi
-    // (efficient market) 2pp lands in the noise zone, and the
-    // user is down 50% today firing on those. Raised the default
-    // to 5pp — meaningfully fewer fires, but each one carries
-    // real conviction. The aggressive cash-out triggers below
-    // (live-EV, pitch-count, hitter-prop) lock in wins quickly,
-    // so we don't need a steady stream of small edges to be
-    // profitable.
-    edge_threshold_pp:     5,
+    // 2026-06-03 user direction: 'edge doesn't need to be massive
+    // because as long as we have one and keep betting, we will win.'
+    // Moneyline (WE) is our strongest signal — Retrosheet 132-season
+    // validation. Volume of small-edge bets > waiting for blowout
+    // signals. Lowered 5 → 3pp.
+    edge_threshold_pp:     3,
     // SEPARATE threshold for player props — they don't have a
     // Savant cross-check and depend on per-PA modeling that
     // needs in-game data to settle. Higher bar (7pp) until we
@@ -144,12 +147,13 @@ const DEFAULTS = {
     daily_loss_limit_cents: 100,   // $1 — bankroll is $2.25, can't afford $5
     open_exposure_max:     100,    // $1 total open — same reason
     bet_player_props:      true,   // scan Kalshi player_prop markets too
-    // TRUE-ADVANTAGE GATE — required confidence from the multi-factor
-    // scoring framework. score.confidence is normalized 0..1 (2 factors
-    // of full weight = max). 0.40 ≈ model_edge + one more confirming
-    // factor, which is what 'we have a real edge here' looks like in
-    // practice. Set lower for more shots, higher for fewer/better.
-    min_conviction:        0.40,
+    // TRUE-ADVANTAGE GATE — required factor agreement. New math (post
+    // 2026-06-03) is fraction of factor weight that agrees with the
+    // bet direction. 0.30 = at least 30% of factor weight pulls FOR
+    // the bet. Lowered 0.40 → 0.30 per 'volume + persistent edge
+    // wins' direction. Keeps the multi-factor sanity (factors must
+    // mostly not disagree) without demanding unanimous confirmation.
+    min_conviction:        0.30,
     // PRACTICE MODE — when true, every BUY decision the bot makes is
     // logged to a SEPARATE practice-fires localStorage bucket and
     // the actual Kalshi placeOrder call is SKIPPED. Lets the user
@@ -4251,11 +4255,12 @@ function renderBotPane() {
         </div>
         <div class="bot-settings-recos">
           <button class="bot-reset-recos" data-bot-reset-recos>Apply recommended defaults</button>
-          <small>Snaps every setting on this panel to the tuned values for the $2.25 bankroll:
-            <strong>$0.10 unit (hard cap)</strong> · 5pp moneyline / 7pp prop YES / 11pp prop NO ·
-            min inning 3 · 50/50 reserve · huge-edge 12pp → 60% cap · 0.40 conviction · 20¢ take ·
+          <small>Snaps every setting on this panel to the tuned values:
+            <strong>$0.10 unit (hard cap)</strong> · <strong>3pp moneyline</strong> / 7pp prop YES /
+            11pp prop NO · min inning 3 · 50/50 reserve · <strong>0.30 conviction</strong> · 20¢ take ·
             55% EV-capture · <strong>$1 daily loss · $1 exposure</strong> · soft Savant +3pp · props
-            on. Bot ON/OFF state is preserved.</small>
+            on. Volume + persistent edge wins — WE is our strongest signal, fire on small edges
+            and let the math compound.</small>
         </div>
         <p class="bot-settings-note">
           Moneyline uses Savant as a confidence amplifier (soft gate by default). Player props
