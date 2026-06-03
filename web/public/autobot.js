@@ -150,6 +150,13 @@ const DEFAULTS = {
     // factor, which is what 'we have a real edge here' looks like in
     // practice. Set lower for more shots, higher for fewer/better.
     min_conviction:        0.40,
+    // NO-SIDE PLAYER PROPS — disabled by default 2026-06-02 after
+    // the user observed that EVERY single attempted bet was NO.
+    // Even with the +4pp NO penalty, the bot kept finding 11pp+ NO
+    // edges (model bias toward NO probability across rare-event
+    // prop markets). Turn back on only when we have track-record
+    // data showing NO bets pay vs the bias.
+    bet_no_side_player_props: false,
     // MONEYLINE BUDGET RESERVE — FRACTION of open_exposure_max
     // held back EXCLUSIVELY for moneyline (win-expectancy) fires.
     // Player-prop exposure caps at (1 - reserve) × open_exposure_max
@@ -242,6 +249,7 @@ function clampSettings(s) {
         huge_edge_pp:               clampInt(s.huge_edge_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
         huge_edge_cap_pct:          clampFloat(s.huge_edge_cap_pct, 0.20, 0.95),
         bet_player_props:           s.bet_player_props !== false,
+        bet_no_side_player_props:   s.bet_no_side_player_props === true,   // default OFF
     };
 }
 function clampFloat(n, lo, hi) {
@@ -547,6 +555,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // applied AFTER the pick so the scoring/logging path knows
         // which side we were considering.
         const chooseNo = no_edge_pp > yes_edge_pp;
+        // NO-SIDE KILL — when bet_no_side_player_props is off (the
+        // default), refuse NO trades regardless of edge. Only fires
+        // YES even when NO would have been the higher-edge side. If
+        // YES has no edge either, the bet just doesn't happen.
+        // Solves the 'every single attempted bet is NO' pattern.
+        if (chooseNo && !_state.settings.bet_no_side_player_props) {
+            log("skip", `NO disabled — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: NO edge ${no_edge_pp.toFixed(1)}pp ignored (bet_no_side_player_props=false)`);
+            continue;
+        }
         const side          = chooseNo ? "no"          : "yes";
         const askCents      = chooseNo ? noAskCents    : yesAskCents;
         const market_p      = chooseNo ? no_market_p   : yes_market_p;
@@ -3274,6 +3291,11 @@ function renderBotPane() {
             <input type="checkbox" ${s.bet_player_props ? "checked" : ""}
                    data-bot-setting-bool="bet_player_props">
             <span>Also bet player props (HR / Hits / Ks / TB) — no Savant signal applies</span>
+          </label>
+          <label class="bot-checkbox-label">
+            <input type="checkbox" ${s.bet_no_side_player_props ? "checked" : ""}
+                   data-bot-setting-bool="bet_no_side_player_props">
+            <span>Allow NO-side player props (default OFF) — only re-enable after positive track record</span>
           </label>
         </div>
         <div class="bot-settings-recos">
