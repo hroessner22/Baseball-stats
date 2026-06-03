@@ -3807,10 +3807,15 @@ function renderBotPane() {
     const logEntries = getLog();
     return `
       <div class="bot-section">
-        <div class="bot-onoff">
-          <button class="bot-onoff-btn ${s.enabled ? "is-on" : "is-off"}" data-bot-toggle-btn>
-            ${s.enabled ? "BOT ON · click to stop" : "BOT OFF · click to start"}
-          </button>
+        <div class="bot-toggle-row">
+          <label class="bot-toggle">
+            <input type="checkbox" ${s.enabled ? "checked" : ""} data-bot-toggle>
+            <span class="bot-toggle-slider"></span>
+            <span class="bot-toggle-label">${s.enabled ? "Bot is ON" : "Bot is OFF"}</span>
+          </label>
+          ${s.enabled
+            ? `<button class="bot-kill" data-bot-kill>STOP NOW</button>`
+            : ""}
         </div>
         <p class="bot-status-line">
           ${s.enabled
