@@ -107,11 +107,15 @@ const DEFAULTS = {
     // validation. Volume of small-edge bets > waiting for blowout
     // signals. Lowered 5 → 3pp.
     edge_threshold_pp:     3,
-    // SEPARATE threshold for player props — they don't have a
-    // Savant cross-check and depend on per-PA modeling that
-    // needs in-game data to settle. Higher bar (7pp) until we
-    // build a track record on them.
-    player_prop_edge_threshold_pp: 7,
+    // 2026-06-03: lowered 7 → 5pp. Earlier the prop threshold was
+    // padded high because the model was noisy (the Wenceel /
+    // Gleyber pattern). Since then we've added: realistic-ceiling
+    // gate, realistic-baseline gate, massive-disagreement guard,
+    // payout-size guard, threshold-total fix, NO-side disabled.
+    // A prop bet that survives ALL those gates AND has +5pp+ edge
+    // is a real edge worth taking. NO bets still pay the +4pp
+    // penalty → 9pp NO bar (still well above noise).
+    player_prop_edge_threshold_pp: 5,
     // Don't fire moneylines before this inning. Early-game WE
     // moves on tiny events (one HR in the 1st can swing 8pp)
     // and our model has the same volatility — most of our 'edge'
@@ -4311,8 +4315,8 @@ function renderBotPane() {
         <div class="bot-settings-recos">
           <button class="bot-reset-recos" data-bot-reset-recos>Apply recommended defaults</button>
           <small>Snaps every setting on this panel to the tuned values:
-            <strong>$0.10 unit (hard cap)</strong> · <strong>3pp moneyline</strong> / 7pp prop YES /
-            11pp prop NO · min inning 3 · 50/50 reserve · <strong>0.30 conviction</strong> · 20¢ take ·
+            <strong>$0.10 unit (hard cap)</strong> · <strong>3pp moneyline / 5pp prop YES</strong> /
+            9pp prop NO · min inning 3 · 50/50 reserve · <strong>0.30 conviction</strong> · 20¢ take ·
             55% EV-capture · <strong>$2 daily loss · $2 exposure ($1 props / $1 ML)</strong> · soft
             Savant +3pp · props on. Volume + persistent edge wins.</small>
         </div>
