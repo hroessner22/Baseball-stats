@@ -401,73 +401,68 @@ async function runScan() {
             disable();
             return;
         }
-        // Open-exposure check. Was reading a stale _state.openPositions
-        // that only refreshed when the drawer's Bets tab rendered.
-        // If the drawer was closed (the common case while the bot
-        // runs in background), _state.openPositions stayed empty
-        // forever and the cap check returned 0. Now refresh
-        // SYNCHRONOUSLY from Kalshi every scan so the cap is real.
-        if (root.Kalshi && root.Kalshi.getPositions) {
-            try {
-                const posResp = await root.Kalshi.getPositions();
-                _state.openPositions =
-                    (posResp?.market_positions || [])
-                        .filter((p) => (p.position || 0) !== 0);
-            } catch { /* fall through with stale snapshot */ }
-        }
-        const exposureCents = computeOpenExposureCents();
-        if (exposureCents >= _state.settings.open_exposure_max) {
-            log("skip", `Open exposure $${(exposureCents/100).toFixed(2)} >= cap $${(_state.settings.open_exposure_max/100).toFixed(2)}; skipping this scan`);
-            _state.lastScanAt = Date.now();
-            return;
-        }
-        // Balance check — bail before even fetching games if Kalshi
-        // says we can't afford a single contract. Avoids hammering
-        // the rest of the stack with scans whose only outcome would
-        // be a stream of "Order failed: insufficient funds" errors.
-        // We compare to the smallest possible contract spend
-        // (1¢ minimum on Kalshi); the per-fire balance check inside
-        // checkAndMaybeFire enforces the actual ask + unit_cents.
-        if (root.Kalshi && root.Kalshi.getBalance) {
-            try {
-                const balanceCents = await root.Kalshi.getBalance();
-                if (balanceCents != null && balanceCents < 1) {
-                    log("halt", `Kalshi balance $${(balanceCents/100).toFixed(2)} — nothing to bet with; skipping scan`);
-                    // Track consecutive zero-balance scans — one is
-                    // a flicker (settlement in flight), three is the
-                    // user actually needs to deposit.
-                    root._botZeroBalScans = (root._botZeroBalScans || 0) + 1;
-                    if (root._botZeroBalScans >= 3) {
-                        notify({
-                            level:      "warn",
-                            title:      "Kalshi balance below $0.01",
-                            body:       "3 scans in a row hit a zero balance — nothing to bet with. " +
-                                        "Deposit on Kalshi or lower the unit size to keep trading.",
-                            dedupe_key: "balance-zero",
-                            action: { label: "Open Kalshi", href: "https://kalshi.com/account/deposit" },
-                        });
+        // Open-exposure + balance + auth checks. ALL of these run
+        // against REAL Kalshi state — useless in practice mode where
+        // the virtual bankroll is the source of truth. Previously
+        // the top-of-scan halted at 'Kalshi balance $0.00' on every
+        // tick when a user testing in practice had $0 real cash,
+        // so the scan never reached the per-game loop and nothing
+        // was ever evaluated. Bypass entirely in practice mode;
+        // the per-fire virtual bankroll check still gates spending.
+        if (!_state.settings.practice_mode) {
+            if (root.Kalshi && root.Kalshi.getPositions) {
+                try {
+                    const posResp = await root.Kalshi.getPositions();
+                    _state.openPositions =
+                        (posResp?.market_positions || [])
+                            .filter((p) => (p.position || 0) !== 0);
+                } catch { /* fall through with stale snapshot */ }
+            }
+            const exposureCents = computeOpenExposureCents();
+            if (exposureCents >= _state.settings.open_exposure_max) {
+                log("skip", `Open exposure $${(exposureCents/100).toFixed(2)} >= cap $${(_state.settings.open_exposure_max/100).toFixed(2)}; skipping this scan`);
+                _state.lastScanAt = Date.now();
+                return;
+            }
+            if (root.Kalshi && root.Kalshi.getBalance) {
+                try {
+                    const balanceCents = await root.Kalshi.getBalance();
+                    if (balanceCents != null && balanceCents < 1) {
+                        log("halt", `Kalshi balance $${(balanceCents/100).toFixed(2)} — nothing to bet with; skipping scan`);
+                        root._botZeroBalScans = (root._botZeroBalScans || 0) + 1;
+                        if (root._botZeroBalScans >= 3) {
+                            notify({
+                                level:      "warn",
+                                title:      "Kalshi balance below $0.01",
+                                body:       "3 scans in a row hit a zero balance — nothing to bet with. " +
+                                            "Deposit on Kalshi or lower the unit size to keep trading.",
+                                dedupe_key: "balance-zero",
+                                action: { label: "Open Kalshi", href: "https://kalshi.com/account/deposit" },
+                            });
+                        }
+                        _state.lastScanAt = Date.now();
+                        return;
                     }
-                    _state.lastScanAt = Date.now();
-                    return;
-                }
-                // Reset streak on any positive balance.
-                root._botZeroBalScans = 0;
-            } catch { /* If balance fetch fails, fall through to per-fire check */ }
+                    root._botZeroBalScans = 0;
+                } catch { /* fall through to per-fire check */ }
+            }
+            if (root.Kalshi && root.Kalshi.isConnected && !root.Kalshi.isConnected()) {
+                notify({
+                    level:      "error",
+                    title:      "Kalshi disconnected — reconnect to resume",
+                    body:       "Bot can't place or sell orders without an active Kalshi session. " +
+                                "Click the Kalshi pill (top-right) to reconnect.",
+                    dedupe_key: "kalshi-disconnected",
+                });
+                _state.lastScanAt = Date.now();
+                return;
+            }
         }
-        // Auth-loss check — if we were previously connected and now
-        // aren't (token expired mid-session), surface it. Otherwise
-        // the bot silently does nothing while every scan no-ops.
-        if (root.Kalshi && root.Kalshi.isConnected && !root.Kalshi.isConnected()) {
-            notify({
-                level:      "error",
-                title:      "Kalshi disconnected — reconnect to resume",
-                body:       "Bot can't place or sell orders without an active Kalshi session. " +
-                            "Click the Kalshi pill (top-right) to reconnect.",
-                dedupe_key: "kalshi-disconnected",
-            });
-            _state.lastScanAt = Date.now();
-            return;
-        }
+        // In practice mode the scan still needs Kalshi for orderbook
+        // lookups (the per-game scanner calls Kalshi.getOrderbook for
+        // each ticker). Auth itself isn't strictly required — markets
+        // are public — but if Kalshi is broken we'll hit per-orderbook
+        // failures downstream. Don't halt the scan over it.
 
         // 1) Live games
         const games = await fetchLiveGames();
