@@ -35,7 +35,7 @@ function safeSetHTML(el, html) {
     // swap, and restore each one by selector AFTER. Plus window
     // scroll, for safety on other layouts.
     const savedY = window.scrollY || document.documentElement.scrollTop || 0;
-    const scrollableSelectors = [".card-pane"];
+    const scrollableSelectors = [".card-pane", ".field-narrative"];
     const savedScrolls = new Map();
     for (const sel of scrollableSelectors) {
         const node = el.querySelector(sel);
@@ -67,11 +67,14 @@ function safeSetHTML(el, html) {
     window.addEventListener("wheel",     onUserScroll, { passive: true });
     window.addEventListener("touchmove", onUserScroll, { passive: true });
     window.addEventListener("keydown",   onUserScroll, { passive: true });
-    // Card-pane has its own scroll context — wheel events over it
-    // pump cardPane.scrollTop, not window.scrollY. Watch there too.
+    // Both side rails have their own scroll context — wheel events
+    // over them pump their own scrollTop, not window.scrollY. Watch
+    // both so user-scroll abort fires correctly on either side.
     const cardPane = el.querySelector(".card-pane");
-    const onCardScroll = () => { userScrolled = true; };
-    if (cardPane) cardPane.addEventListener("wheel", onCardScroll, { passive: true });
+    const narrPane = el.querySelector(".field-narrative");
+    const onPaneScroll = () => { userScrolled = true; };
+    if (cardPane) cardPane.addEventListener("wheel", onPaneScroll, { passive: true });
+    if (narrPane) narrPane.addEventListener("wheel", onPaneScroll, { passive: true });
 
     let attempts = 0;
     const MAX_ATTEMPTS = 30;
@@ -84,7 +87,9 @@ function safeSetHTML(el, html) {
             window.removeEventListener("touchmove", onUserScroll);
             window.removeEventListener("keydown",   onUserScroll);
             const cp2 = el.querySelector(".card-pane");
-            if (cp2) cp2.removeEventListener("wheel", onCardScroll);
+            const np2 = el.querySelector(".field-narrative");
+            if (cp2) cp2.removeEventListener("wheel", onPaneScroll);
+            if (np2) np2.removeEventListener("wheel", onPaneScroll);
             return;
         }
         restoreAll();

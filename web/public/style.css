@@ -3338,12 +3338,28 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
         gap: 20px;
     }
     .field-pane.has-narrative .field-narrative {
+        /* Independent scroll on the left rail — symmetric to the
+           right .card-pane treatment. User can scroll through the
+           inning's play-by-play (and any future left-rail content)
+           without moving the field or affecting the right column. */
         position: sticky;
         top: 60px;
         width: auto;
         grid-column: 1;
         order: unset;
+        max-height: calc(100vh - 140px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+        padding-right: 6px;
     }
+    .field-pane.has-narrative .field-narrative::-webkit-scrollbar { width: 8px; }
+    .field-pane.has-narrative .field-narrative::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.18);
+        border-radius: 4px;
+    }
+    .field-pane.has-narrative .field-narrative::-webkit-scrollbar-track { background: transparent; }
     .field-pane.has-narrative .field-canvas {
         width: 100%;
         grid-column: 2;
