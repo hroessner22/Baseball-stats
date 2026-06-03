@@ -3532,7 +3532,14 @@ async function refreshGame(id) {
         // new fetch was in flight. Let hydrateMatchup overwrite when
         // fresh data lands. Briefly showing the previous PA's names is
         // less disruptive than showing nothing.
+        //
+        // SCROLL PRESERVATION — the user complained the right-side
+        // panels jump back to the top on every pitch. innerHTML reset
+        // nukes the DOM; the browser resets scroll. Capture position
+        // before, restore after on next frame so the layout settles.
+        const _savedScrollY = window.scrollY;
         gameView.innerHTML = renderGame(g);
+        requestAnimationFrame(() => window.scrollTo(0, _savedScrollY));
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -6637,9 +6644,14 @@ function renderForecastWE(d, game) {
     // appeared in the median simulation.
     const used = (d.pitcher_sequence || []).filter((p) => p.pa_count > 0);
     const chain = used.map((p) => {
+        // New role tags from buildPitcherSequence:
+        //   current_starter, closer, setup_<inning>, long_<inning>,
+        //   inning_<inning>, middle_<inning>
         const roleHint = p.role === "closer"            ? "closer"
                        : p.role === "current_starter"   ? "current"
-                       : p.role?.startsWith("inning_")  ? `${p.role.replace("inning_","")}th inn`
+                       : p.role?.startsWith("setup_")   ? `setup · ${p.role.split("_")[1]}th`
+                       : p.role?.startsWith("long_")    ? `long relief · ${p.role.split("_")[1]}th`
+                       : p.role?.startsWith("inning_")  ? `${p.role.split("_")[1]}th inn`
                        : "";
         const roleTag = roleHint ? `<span class="fwe-role">${roleHint}</span>` : "";
         const we = p.we_at_exit !== null ? `${Math.round(p.we_at_exit * 100)}%` : "—";
