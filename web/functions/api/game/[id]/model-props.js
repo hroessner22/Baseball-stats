@@ -323,6 +323,8 @@ function shapeSide(side, probable) {
     let pitcherBf = 0;
     let pitcherPitches = 0;
     let pitcherSo = 0;
+    let pitcherSeasonGS = 0;
+    let pitcherSeasonSO = 0;
     let pitcherName = null;
     if (pitcherId) {
         const pRow = players[`ID${pitcherId}`];
@@ -336,6 +338,10 @@ function shapeSide(side, probable) {
         // K-prop bets where the threshold has already been met
         // (e.g. 'over 5 K' when he already has 6).
         pitcherSo = pRow?.stats?.pitching?.strikeOuts || 0;
+        // Season pitching for the realistic-threshold sanity check.
+        const psp = (pRow?.seasonStats || {}).pitching || {};
+        pitcherSeasonGS = Number(psp.gamesStarted) || 0;
+        pitcherSeasonSO = Number(psp.strikeOuts)   || 0;
         pitcherName = pRow?.person?.fullName || probable?.fullName || null;
     } else if (probable?.fullName) {
         pitcherName = probable.fullName;
@@ -355,21 +361,28 @@ function shapeSide(side, probable) {
         // entering). For pre-game where stats are zero we keep everyone
         // whose battingOrder is 100-900 (the starting nine).
         if (!order) continue;
+        // Season stats from p.seasonStats.batting — used by the bot
+        // for the 'realistic threshold' sanity check (refuses bets on
+        // thresholds the player almost never hits, like 'Baty 2+ HR').
+        const ss = (p.seasonStats || {}).batting || {};
         batters.push({
             mlbam:    p.person?.id,
             name:     p.person?.fullName,
             order,
             pa_taken: b.plateAppearances || 0,
-            // Live in-game accounting — the bot reads these to refuse
-            // bets on thresholds that have already been crossed
-            // (e.g. NO 1+ HR after he just hit one). Without these the
-            // model can lag by a scan tick and trade against an already-
-            // settled outcome.
             hits:        b.hits        || 0,
             doubles:     b.doubles     || 0,
             triples:     b.triples     || 0,
             home_runs:   b.homeRuns    || 0,
             strikeouts:  b.strikeOuts  || 0,
+            // Season per-game rates — let the bot compute baseline
+            // probability of N+ via Poisson approximation.
+            season_games:       Number(ss.gamesPlayed) || 0,
+            season_hits:        Number(ss.hits)        || 0,
+            season_home_runs:   Number(ss.homeRuns)    || 0,
+            season_doubles:     Number(ss.doubles)     || 0,
+            season_triples:     Number(ss.triples)     || 0,
+            season_strikeouts:  Number(ss.strikeOuts)  || 0,
         });
     }
     // Keep just one player per lineup spot — the starter. Pinch hitters
@@ -389,6 +402,8 @@ function shapeSide(side, probable) {
         pitcher_bf:     pitcherBf,
         pitcher_pitches: pitcherPitches,
         pitcher_strikeouts: pitcherSo,
+        pitcher_season_gs: pitcherSeasonGS,
+        pitcher_season_so: pitcherSeasonSO,
         batters:        Array.from(byOrder.values()).sort((a, b) => a.order - b.order),
     };
 }

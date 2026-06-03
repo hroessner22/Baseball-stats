@@ -170,7 +170,8 @@ async function scoreBet(opportunity) {
     // factor adds its adjust_pp; final estimate is clamped 0..1.
     const baseline_p = opportunity.market_p;
     let adjusted_p = baseline_p;
-    let confidence = 0;
+    let agreeingWeight = 0;     // weighted sum of factors w/ POSITIVE adjust_pp
+    let totalWeight = 0;        // weighted sum of all present factors
     const breakdown = [];
     for (const f of factors) {
         if (!f || !f.present) {
@@ -178,11 +179,20 @@ async function scoreBet(opportunity) {
             continue;
         }
         adjusted_p += (f.adjust_pp || 0) / 100;
-        confidence += f.weight || 0;
+        const w = f.weight || 0;
+        totalWeight += w;
+        if ((f.adjust_pp || 0) > 0) agreeingWeight += w;
         breakdown.push(f);
     }
     adjusted_p = Math.max(0, Math.min(1, adjusted_p));
-    confidence = Math.min(1, confidence / 2);  // 2 factors of full weight = max confidence
+    // CONFIDENCE = fraction of factor weight that AGREES with the bet
+    // direction. Old math summed weight unconditionally and capped at
+    // 1.0, so as long as ≥ 2 factors were present, confidence pegged
+    // at 100% — even when half the factors were pulling against the
+    // bet. The new metric is 'of the factors that fired, what
+    // fraction agree with the bot's call.' 0 = all factors disagree,
+    // 1 = every factor pulls the same direction as the bet.
+    const confidence = totalWeight > 0 ? agreeingWeight / totalWeight : 0;
 
     const edge_pp = (adjusted_p - baseline_p) * 100;
 

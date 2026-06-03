@@ -549,6 +549,23 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const our_p_yes = ladder[parsed.threshold];
         if (our_p_yes == null) continue;
 
+        // ── GATE 0 — REALISTIC THRESHOLD ─────────────────────────────
+        // Use the player's SEASON per-game rate to compute baseline
+        // probability of the threshold. If under 1%, the bet is on
+        // something the player essentially never does — don't even
+        // score it. Stops the 'Brett Baty 2+ HR' / 'bum hits 3 HR'
+        // pattern from cluttering the Decisions log.
+        //
+        // Returns null when we don't have enough season sample
+        // (fewer than 10 games for hitters, 3 starts for pitchers) —
+        // in that case we allow through and let the in-game model
+        // decide.
+        const baselineP = baselineProbForBet(modelProps, mlbam, parsed.stat, parsed.threshold);
+        if (baselineP != null && baselineP < 0.01) {
+            log("skip", `Realistic-threshold guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: season baseline ${(baselineP*100).toFixed(2)}% (he basically never does this)`);
+            continue;
+        }
+
         // Live YES + NO ask for THIS Kalshi ticker. We can bet
         // EITHER side — whichever has the bigger edge wins.
         const idMatch = String(m.outcomes?.[0]?.id || "").match(/^(.*):(yes|no)$/i);
@@ -1873,6 +1890,69 @@ async function getLiveGameState(gamePk) {
 // right field on the right entity (pitcher for strikeouts, batter
 // for hits/HR/TB). Returns null when the player isn't found in
 // either lineup (manual prop / pinch hitter / pregame).
+// Baseline probability of (stat ≥ threshold) for one game, using
+// the player's season per-game rate as Poisson lambda. Returns null
+// when we don't have season stats (early season, missing data, etc.) —
+// caller treats null as "can't sanity-check, allow."
+//
+// User direction: 'It shouldn't be something a player has never done,
+// or even something they haven't done in forever like hit 3 homers or
+// a bum hits 2.'
+function poissonAtLeast(threshold, lambda) {
+    if (!(lambda > 0)) return 0;
+    if (threshold <= 0) return 1;
+    // P(X ≥ k) = 1 - sum_{i=0..k-1} e^-λ × λ^i / i!
+    let cumP = 0;
+    let term = Math.exp(-lambda);   // i=0 term
+    cumP += term;
+    for (let i = 1; i < threshold; i++) {
+        term *= lambda / i;
+        cumP += term;
+    }
+    return Math.max(0, 1 - cumP);
+}
+
+function baselineProbForBet(modelProps, playerMlbam, stat, threshold) {
+    if (!modelProps?.lineups || !playerMlbam) return null;
+    const want = String(playerMlbam);
+    if (stat === "strikeouts") {
+        for (const sk of ["home", "away"]) {
+            const lp = modelProps.lineups[sk];
+            if (!lp) continue;
+            if (String(lp.pitcher_id) !== want) continue;
+            const gs = lp.pitcher_season_gs || 0;
+            const so = lp.pitcher_season_so || 0;
+            if (gs < 3) return null;   // not enough sample
+            const lambda = so / gs;     // K per start
+            return poissonAtLeast(threshold, lambda);
+        }
+        return null;
+    }
+    // Hitter prop — find the batter, compute season per-game rate.
+    for (const sk of ["home", "away"]) {
+        const lp = modelProps.lineups[sk];
+        if (!lp?.batters) continue;
+        const b = lp.batters.find((x) => String(x.mlbam) === want);
+        if (!b) continue;
+        const g = b.season_games || 0;
+        if (g < 10) return null;   // not enough sample
+        let lambda;
+        if (stat === "hits")        lambda = (b.season_hits || 0) / g;
+        else if (stat === "home_runs")   lambda = (b.season_home_runs || 0) / g;
+        else if (stat === "total_bases") {
+            const tb = (b.season_hits || 0)
+                     + (b.season_doubles || 0)
+                     + 2 * (b.season_triples || 0)
+                     + 3 * (b.season_home_runs || 0);
+            lambda = tb / g;
+        } else {
+            return null;
+        }
+        return poissonAtLeast(threshold, lambda);
+    }
+    return null;
+}
+
 function liveStatForBet(modelProps, playerMlbam, stat) {
     if (!modelProps?.lineups || !playerMlbam) return null;
     const want = String(playerMlbam);
