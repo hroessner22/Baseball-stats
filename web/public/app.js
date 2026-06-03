@@ -8,50 +8,76 @@ const board = document.getElementById("board");
 const gameView = document.getElementById("game-view");
 
 // ── safeSetHTML ───────────────────────────────────────────────────
-// Single chokepoint for innerHTML swaps that need to preserve user
-// scroll position. The previous fix only covered refreshGame; the
-// user noted updates were resetting scroll on every event — that's
-// because hydrateMatchup, refreshGamecast, refreshBoxscore, and the
-// markets pane ALSO swap innerHTML on game-view children.
+// Scroll-preserving innerHTML swap. Used wherever the game view's
+// children re-render so the user can stay where they are during the
+// 5-second GAME_REFRESH_MS polling cycle.
 //
-// Approach: lock the swapping element's minHeight to its current
-// offsetHeight BEFORE the swap so the document can't shrink (which
-// is what triggers browser scroll clamping), restore scroll with
-// BOTH the positional form (window.scrollTo(x, y) — always instant)
-// AND the documentElement.scrollTop fallback for cross-browser
-// safety, then re-peg for 10 frames in case avatars / fonts shift
-// layout afterward. Drop the height lock at the end.
+// v5 (more aggressive). Locks BOTH the swapping element AND the
+// document body's minHeight so total document height absolutely
+// cannot shrink during the swap. Restores scroll via FOUR methods
+// covering every browser quirk, on 30+ ticks spanning ~500ms
+// (~half a second of layout-shift cushion), mixing RAF + setTimeout
+// so we don't miss any reflow.
 //
-// Bail on any user scroll input (wheel / touch / keydown) so we
-// don't fight the user.
+// Aborts if the user scrolls (wheel / touch / keydown) — but only
+// if the user genuinely moved, not on the restore-induced scroll
+// events we generate ourselves.
 function safeSetHTML(el, html) {
     if (!el) return;
-    const savedY     = window.scrollY || document.documentElement.scrollTop || 0;
-    const lockHeight = el.offsetHeight;
-    if (lockHeight > 0) el.style.minHeight = `${lockHeight}px`;
+    const savedY      = window.scrollY || document.documentElement.scrollTop || 0;
+    const elHeight    = el.offsetHeight;
+    const bodyHeight  = document.body.offsetHeight;
+    // Lock heights so neither the element NOR the document can shrink
+    // during the swap. Document-height stability is the key insight:
+    // without this, scrollY > maxScrollY → browser clamps to maxScrollY.
+    if (elHeight   > 0) el.style.minHeight           = `${elHeight}px`;
+    if (bodyHeight > 0) document.body.style.minHeight = `${bodyHeight}px`;
+
     el.innerHTML = html;
-    // Both forms — some browsers honor positional, some object.
-    window.scrollTo(0, savedY);
-    if (document.documentElement) document.documentElement.scrollTop = savedY;
-    if (document.body)            document.body.scrollTop = savedY;
+
+    // Four-way restore — covers Chrome, Safari, Firefox quirks.
+    const forceScroll = () => {
+        window.scrollTo(0, savedY);
+        if (document.scrollingElement)   document.scrollingElement.scrollTop = savedY;
+        if (document.documentElement)    document.documentElement.scrollTop  = savedY;
+        if (document.body)               document.body.scrollTop             = savedY;
+    };
+    forceScroll();
+
+    // Real-user-scroll detector. Has to compare against savedY since
+    // our own forceScroll() ALSO generates scroll events — naive
+    // "any scroll = user scrolled" would abort immediately.
     let userScrolled = false;
-    const onUserScroll = () => { userScrolled = true; };
-    window.addEventListener("wheel",     onUserScroll, { passive: true, once: true });
-    window.addEventListener("touchmove", onUserScroll, { passive: true, once: true });
-    window.addEventListener("keydown",   onUserScroll, { passive: true, once: true });
+    const onUserScroll = (e) => {
+        // Wheel + touchmove + keydown are real user inputs.
+        // Programmatic scrollTo does NOT fire these events.
+        userScrolled = true;
+    };
+    window.addEventListener("wheel",     onUserScroll, { passive: true });
+    window.addEventListener("touchmove", onUserScroll, { passive: true });
+    window.addEventListener("keydown",   onUserScroll, { passive: true });
+
     let attempts = 0;
+    const MAX_ATTEMPTS = 30;
     const tick = () => {
         attempts += 1;
-        if (userScrolled || attempts > 10) {
+        if (userScrolled || attempts > MAX_ATTEMPTS) {
+            // Drop the locks so future natural content growth works
             el.style.minHeight = "";
+            document.body.style.minHeight = "";
             window.removeEventListener("wheel",     onUserScroll);
             window.removeEventListener("touchmove", onUserScroll);
             window.removeEventListener("keydown",   onUserScroll);
             return;
         }
-        window.scrollTo(0, savedY);
-        if (document.documentElement) document.documentElement.scrollTop = savedY;
-        requestAnimationFrame(tick);
+        forceScroll();
+        // Alternate RAF and setTimeout so we cover both "next paint"
+        // (RAF) and "next browser idle" (timeout) reflow points.
+        if (attempts % 2 === 0) {
+            requestAnimationFrame(tick);
+        } else {
+            setTimeout(tick, 8);
+        }
     };
     requestAnimationFrame(tick);
 }
