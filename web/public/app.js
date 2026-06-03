@@ -3533,35 +3533,50 @@ async function refreshGame(id) {
         // fresh data lands. Briefly showing the previous PA's names is
         // less disruptive than showing nothing.
         //
-        // SCROLL PRESERVATION — the user complained the right-side
-        // panels jump back to the top on every pitch. Single RAF
-        // didn't cut it because the layout keeps reflowing as
-        // avatars / SVGs / web fonts hydrate. Force-restore across
-        // multiple frames so the scroll holds AFTER the dust settles.
+        // SCROLL PRESERVATION (3rd attempt). The previous restore was
+        // being clamped because innerHTML reset shrinks the document
+        // for one frame — the browser sees savedScrollY > maxScrollY
+        // and snaps to maxScrollY (which is small). Subsequent frames
+        // restored the saved value, but the visible jump already
+        // happened.
+        //
+        // Fix: lock gameView.minHeight to its CURRENT offsetHeight
+        // BEFORE the innerHTML reset, so the document never shrinks.
+        // The browser can't clamp scrollY because the page is still
+        // as tall as it was. Restore scroll synchronously, then drop
+        // the lock after the new content has settled.
         const _savedScrollY = window.scrollY;
+        const _lockHeight   = gameView.offsetHeight;
+        if (_lockHeight > 0) {
+            gameView.style.minHeight = `${_lockHeight}px`;
+        }
         gameView.innerHTML = renderGame(g);
-        // Immediate restore + 5 follow-up frames (covers ~80ms of
-        // layout shift). If the user starts scrolling during that
-        // window, abort so we don't fight them.
-        let _scrollAttempt = 0;
-        const _userScrollHandler = () => {
-            _scrollAttempt = 99;   // bail
-            window.removeEventListener("wheel",     _userScrollHandler, { passive: true });
-            window.removeEventListener("touchmove", _userScrollHandler, { passive: true });
-        };
-        window.addEventListener("wheel",     _userScrollHandler, { passive: true, once: true });
-        window.addEventListener("touchmove", _userScrollHandler, { passive: true, once: true });
+        // Synchronous restore — runs BEFORE any paint, prevents the
+        // visible jump entirely.
+        window.scrollTo({ top: _savedScrollY, behavior: "instant" });
+        // Follow-up restores for 8 frames in case avatars / SVGs
+        // shift layout and the saved position needs re-pegging.
+        let _scrollAttempts = 0;
+        let _userScrolled   = false;
+        const _onUserScroll = () => { _userScrolled = true; };
+        window.addEventListener("wheel",     _onUserScroll, { passive: true, once: true });
+        window.addEventListener("touchmove", _onUserScroll, { passive: true, once: true });
+        window.addEventListener("keydown",   _onUserScroll, { passive: true, once: true });
         const _tryRestore = () => {
-            if (_scrollAttempt >= 6) {
-                window.removeEventListener("wheel",     _userScrollHandler);
-                window.removeEventListener("touchmove", _userScrollHandler);
+            _scrollAttempts += 1;
+            if (_userScrolled || _scrollAttempts > 12) {
+                // Drop the height lock so future natural-content
+                // changes can grow the page normally.
+                gameView.style.minHeight = "";
+                window.removeEventListener("wheel",     _onUserScroll);
+                window.removeEventListener("touchmove", _onUserScroll);
+                window.removeEventListener("keydown",   _onUserScroll);
                 return;
             }
             window.scrollTo({ top: _savedScrollY, behavior: "instant" });
-            _scrollAttempt += 1;
             requestAnimationFrame(_tryRestore);
         };
-        _tryRestore();
+        requestAnimationFrame(_tryRestore);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
