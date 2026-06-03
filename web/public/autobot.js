@@ -572,6 +572,21 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         if (!parsed) continue;
         const mlbam = nameToMlbam[normName(parsed.player)];
         if (!mlbam) continue;
+
+        // PITCHER-NOT-ACTIVE guard — explicit skip when a K-prop's
+        // player is not the current pitcher on either side. The
+        // 'George Kirby has been pulled' case: Kalshi keeps the
+        // market open until it settles, but the bot has no business
+        // scoring it. Without this, scoring would silently drop the
+        // prop at the ladder check below and the user gets no
+        // visible signal that the bot recognized the pull.
+        if (parsed.stat === "strikeouts"
+            && String(mlbam) !== String(homePitcher)
+            && String(mlbam) !== String(awayPitcher)) {
+            log("skip", `Pitcher not active — ${parsed.player} ${parsed.threshold}+ K: not currently on the mound (pulled / never started)`);
+            continue;
+        }
+
         const ladder = modelData[mlbam]?.[parsed.stat];
         if (!ladder) continue;
         const our_p_yes = ladder[parsed.threshold];

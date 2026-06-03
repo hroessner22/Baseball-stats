@@ -379,9 +379,14 @@ function shapeSide(side, probable) {
     const orderIds = side.batters || [];
     const pitcherIds = side.pitchers || [];
 
-    // Starting pitcher: prefer the currently-pitching one (front of
-    // `pitchers`), fall back to `probablePitcher` for pregame.
-    let pitcherId = pitcherIds[0] || probable?.id || null;
+    // CURRENT pitcher: MLB's `pitchers` array is chronological, with
+    // the most recent pitcher at the END. pitchers[0] is the starter
+    // even after they've been pulled — so before this fix, the bot
+    // kept evaluating K-props on pitchers who were already in the
+    // dugout (the 'George Kirby has been pulled' complaint). Take
+    // the last entry, which is whoever is currently on the mound.
+    // Falls back to probablePitcher for pregame.
+    let pitcherId = pitcherIds[pitcherIds.length - 1] || probable?.id || null;
     let pitcherBf = 0;
     let pitcherPitches = 0;
     let pitcherSo = 0;
