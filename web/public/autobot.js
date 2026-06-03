@@ -820,6 +820,47 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                     stat:          parsed.stat,
                     threshold:     parsed.threshold,
                     placed_at:     new Date().toISOString(),
+                    // FULL REASONING BUNDLE — captures every number the
+                    // bot used to decide this trade. The Practice tab's
+                    // expandable detail panel reads from here.
+                    reasoning: {
+                        // Raw edge math on both sides — so the user can
+                        // see why this side was picked over the other.
+                        yes_market_p:  Number(yes_market_p) || null,
+                        no_market_p:   Number(no_market_p)  || null,
+                        yes_edge_pp:   Number(yes_edge_pp)  || null,
+                        no_edge_pp:    Number(no_edge_pp)   || null,
+                        chosen_side:   side,
+                        // Multi-factor score (the gate the bot used to
+                        // confirm this was real edge, not noise).
+                        score: score ? {
+                            baseline_p:  score.baseline_p,
+                            adjusted_p:  score.adjusted_p,
+                            edge_pp:     score.edge_pp,
+                            confidence:  score.confidence,
+                            factors:     (score.factors || []).map((f) => ({
+                                name:      f.name,
+                                weight:    f.weight,
+                                present:   f.present,
+                                adjust_pp: f.adjust_pp,
+                                value:     f.value,
+                            })),
+                        } : null,
+                        // Player's live realized stat at fire time — proves
+                        // the threshold wasn't already crossed.
+                        live_stat: liveStat,
+                        // Game state from model-props (turns_remaining etc).
+                        game_state: modelProps.game_state || null,
+                        // Sanity-gate audit — list of gates explicitly
+                        // checked + passed in this scan.
+                        gates_passed: [
+                            "floor_ask",
+                            "orderbook_coherence",
+                            "tail_probability",
+                            "threshold_not_crossed",
+                            (parsed.stat === "strikeouts" ? "pitcher_not_pulled" : "pa_remaining"),
+                        ],
+                    },
                 });
                 _state.sessionBets.add(key);
                 persistSessionBets();
@@ -1095,6 +1136,29 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
                 matchup:       `${g.away}@${g.home}`,
                 bet_team:      tail,
                 placed_at:     new Date().toISOString(),
+                reasoning: {
+                    yes_market_p:  market_p,
+                    yes_edge_pp:   edgePP,
+                    chosen_side:   "yes",
+                    score: score ? {
+                        baseline_p:  score.baseline_p,
+                        adjusted_p:  score.adjusted_p,
+                        edge_pp:     score.edge_pp,
+                        confidence:  score.confidence,
+                        factors:     (score.factors || []).map((f) => ({
+                            name:      f.name,
+                            weight:    f.weight,
+                            present:   f.present,
+                            adjust_pp: f.adjust_pp,
+                            value:     f.value,
+                        })),
+                    } : null,
+                    savant_p,
+                    savant_stance,
+                    inning:        g.inning || null,
+                    game_state:    g,
+                    gates_passed:  ["edge_threshold", "min_inning"],
+                },
             });
             _state.sessionBets.add(key);
             persistSessionBets();
@@ -2182,7 +2246,7 @@ async function renderPracticePane() {
         }
     }
     let totalCost = 0, totalLive = 0, winCount = 0, lossCount = 0;
-    const rows = fires.slice(0, 200).map((f) => {
+    const rows = fires.slice(0, 200).map((f, idx) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const ob   = bidMap.get(f.ticker);
         const liveBid = ob
@@ -2203,15 +2267,20 @@ async function renderPracticePane() {
         const sideCls = f.side === "no" ? "bet-side-no" : "bet-side-yes";
         const when = formatNotifTime(f.placed_at);
         return `
-          <tr>
-            <td class="bot-practice-bet">${label}</td>
-            <td><span class="${sideCls}">${sideTag}</span></td>
-            <td>${f.contracts}× @ ${f.price_cents}¢</td>
-            <td>$${(cost/100).toFixed(2)}</td>
-            <td>${liveBid != null ? `${liveBid}¢` : "—"}</td>
-            <td class="${pnlClass}">${pnlText}</td>
-            <td class="bot-time-ago">${when}</td>
-          </tr>
+          <details class="bot-practice-card">
+            <summary class="bot-practice-summary-row">
+              <span class="bot-practice-bet">${label}</span>
+              <span class="${sideCls}">${sideTag}</span>
+              <span class="bot-practice-size">${f.contracts}× @ ${f.price_cents}¢</span>
+              <span class="bot-practice-cost">$${(cost/100).toFixed(2)}</span>
+              <span class="bot-practice-livebid">${liveBid != null ? `${liveBid}¢ live` : "—"}</span>
+              <span class="${pnlClass} bot-practice-pnl">${pnlText}</span>
+              <span class="bot-practice-time">${when}</span>
+            </summary>
+            <div class="bot-practice-detail">
+              ${renderPracticeReasoning(f)}
+            </div>
+          </details>
         `;
     }).join("");
     const totalPnl = totalLive - totalCost;
@@ -2238,11 +2307,136 @@ async function renderPracticePane() {
     return `
       ${toggle}
       ${summary}
-      <table class="bot-table bot-practice-table">
-        <thead><tr><th>Bet</th><th>Side</th><th>Size</th><th>Cost</th><th>Live bid</th><th>P/L</th><th>Time</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="bot-practice-list-head">
+        <span>Click any bet to expand the reasoning</span>
+      </div>
+      <div class="bot-practice-list">
+        ${rows}
+      </div>
     `;
+}
+
+// Render the full reasoning panel for one practice fire — every
+// number the bot used + the gates it passed. This is what answers
+// the question 'why did the bot pick this bet'.
+function renderPracticeReasoning(f) {
+    const r = f.reasoning || {};
+    const oursPct  = (f.our_p * 100).toFixed(1);
+    const marketPct = (f.market_p * 100).toFixed(1);
+    const rawEdge  = (f.edge_pp || 0).toFixed(1);
+    const sideTag  = f.side === "no" ? "NO" : "YES";
+
+    // EDGE MATH SECTION
+    let edgeSection = `
+      <div class="bot-reasoning-section">
+        <div class="bot-reasoning-h">Edge math (raw)</div>
+        <div class="bot-reasoning-rows">
+          <div><span>Our model says</span><strong>${oursPct}% chance ${sideTag}</strong></div>
+          <div><span>Market is paying</span><strong>${f.price_cents}¢ ${sideTag} (implies ${marketPct}%)</strong></div>
+          <div><span>Raw edge</span><strong class="bot-pl-pos">+${rawEdge}pp</strong></div>
+    `;
+    if (r.yes_edge_pp != null && r.no_edge_pp != null && f.kind === "player_prop") {
+        const chosen = r.chosen_side === "no" ? "NO" : "YES";
+        const otherSide = r.chosen_side === "no" ? "YES" : "NO";
+        const otherEdge = r.chosen_side === "no" ? r.yes_edge_pp : r.no_edge_pp;
+        edgeSection += `
+          <div><span>Other side (${otherSide})</span><strong>${otherEdge >= 0 ? "+" : ""}${otherEdge.toFixed(1)}pp</strong></div>
+          <div><span>Bot picked</span><strong>${chosen} (bigger edge)</strong></div>
+        `;
+    }
+    edgeSection += `
+        </div>
+      </div>
+    `;
+
+    // MULTI-FACTOR SCORE SECTION
+    let scoreSection = "";
+    if (r.score) {
+        const adjPct = (r.score.adjusted_p * 100).toFixed(1);
+        const adjEdge = (r.score.edge_pp || 0).toFixed(1);
+        const conf = (r.score.confidence || 0).toFixed(2);
+        const factorRows = (r.score.factors || []).map((fct) => {
+            if (!fct.present) {
+                return `<div class="bot-factor-row bot-factor-absent">
+                  <span class="bot-factor-name">${escapeText(fct.name)}</span>
+                  <span class="bot-factor-state">not present</span>
+                </div>`;
+            }
+            const sign = (fct.adjust_pp || 0) >= 0 ? "+" : "";
+            const cls  = (fct.adjust_pp || 0) >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+            const valStr = fct.value ? renderFactorValue(fct.name, fct.value) : "";
+            return `
+              <div class="bot-factor-row">
+                <span class="bot-factor-name">${escapeText(fct.name)}</span>
+                <span class="bot-factor-adjust ${cls}">${sign}${(fct.adjust_pp || 0).toFixed(1)}pp</span>
+                <span class="bot-factor-weight">w=${(fct.weight || 0).toFixed(1)}</span>
+                <span class="bot-factor-value">${valStr}</span>
+              </div>
+            `;
+        }).join("");
+        scoreSection = `
+          <div class="bot-reasoning-section">
+            <div class="bot-reasoning-h">Multi-factor score</div>
+            <div class="bot-reasoning-rows">
+              <div><span>Adjusted probability</span><strong>${adjPct}%</strong></div>
+              <div><span>Adjusted edge</span><strong class="bot-pl-pos">+${adjEdge}pp</strong></div>
+              <div><span>Confidence</span><strong>${conf} ${r.score.confidence >= 0.40 ? "✓ (≥ 0.40 min)" : "(below min)"}</strong></div>
+            </div>
+            <div class="bot-factor-list">
+              ${factorRows}
+            </div>
+          </div>
+        `;
+    }
+
+    // PLAYER / GAME STATE SECTION
+    let stateSection = "";
+    const bits = [];
+    if (r.live_stat != null) {
+        bits.push(`<div><span>Live ${f.stat} so far</span><strong>${r.live_stat} (threshold: ${f.threshold})</strong></div>`);
+    }
+    if (r.game_state) {
+        const gs = r.game_state;
+        if (gs.inning != null) bits.push(`<div><span>Inning</span><strong>${gs.inning}</strong></div>`);
+        if (gs.turns_remaining != null) bits.push(`<div><span>Turns remaining</span><strong>${gs.turns_remaining.toFixed(2)}</strong></div>`);
+    }
+    if (r.savant_p != null) {
+        bits.push(`<div><span>Savant says</span><strong>${(r.savant_p*100).toFixed(1)}% (${r.savant_stance || "no_data"})</strong></div>`);
+    }
+    if (bits.length) {
+        stateSection = `
+          <div class="bot-reasoning-section">
+            <div class="bot-reasoning-h">Game / player state at fire</div>
+            <div class="bot-reasoning-rows">${bits.join("")}</div>
+          </div>
+        `;
+    }
+
+    // GATES PASSED SECTION
+    const gates = r.gates_passed || [];
+    const gateSection = gates.length ? `
+        <div class="bot-reasoning-section">
+          <div class="bot-reasoning-h">Sanity gates passed</div>
+          <div class="bot-gate-list">
+            ${gates.map((g) => `<span class="bot-gate-chip">✓ ${escapeText(g.replace(/_/g, " "))}</span>`).join("")}
+          </div>
+        </div>
+      ` : "";
+
+    return edgeSection + scoreSection + stateSection + gateSection;
+}
+
+// Helper — render the factor value object as a compact hint.
+function renderFactorValue(name, v) {
+    if (!v) return "";
+    if (name === "model_edge")           return `${(v.our_p*100).toFixed(1)}% vs ${(v.market_p*100).toFixed(1)}%`;
+    if (name === "savant_alignment")     return v.aligned ? "agrees" : "disagrees";
+    if (name === "pitch_count")          return `${v.pitches_thrown} pitches (p80=${v.p80 ?? "?"})`;
+    if (name === "pa_remaining")         return `${(v.turns_remaining || 0).toFixed(2)} turns left`;
+    if (name === "pitcher_recent_form")  return `K/9 ${v.k9?.toFixed(1) ?? "?"} (last 5 starts)`;
+    if (name === "batter_recent_form")   return `BA ${v.ba?.toFixed(3) ?? "?"} (last 15g)`;
+    if (name === "h2h")                  return `${v.hits || 0}/${v.pa || 0} lifetime`;
+    return "";
 }
 
 function bindPracticePaneHandlers(overlay) {
