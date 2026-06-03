@@ -150,6 +150,14 @@ const DEFAULTS = {
     // factor, which is what 'we have a real edge here' looks like in
     // practice. Set lower for more shots, higher for fewer/better.
     min_conviction:        0.40,
+    // PRACTICE MODE — when true, every BUY decision the bot makes is
+    // logged to a SEPARATE practice-fires localStorage bucket and
+    // the actual Kalshi placeOrder call is SKIPPED. Lets the user
+    // see what the bot would do (and how those positions would have
+    // moved) without spending a cent. All sanity gates, scoring, and
+    // caps still apply — practice mode shows the REAL behavior, just
+    // with no money behind it.
+    practice_mode:         false,
     // NO-SIDE PLAYER PROPS — disabled by default 2026-06-02 after
     // the user observed that EVERY single attempted bet was NO.
     // Even with the +4pp NO penalty, the bot kept finding 11pp+ NO
@@ -250,6 +258,7 @@ function clampSettings(s) {
         huge_edge_cap_pct:          clampFloat(s.huge_edge_cap_pct, 0.20, 0.95),
         bet_player_props:           s.bet_player_props !== false,
         bet_no_side_player_props:   s.bet_no_side_player_props === true,   // default OFF
+        practice_mode:              s.practice_mode === true,               // default OFF (real-money)
     };
 }
 function clampFloat(n, lo, hi) {
@@ -792,6 +801,33 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         }
 
         try {
+            // PRACTICE MODE — log the would-have-been BUY and skip
+            // the Kalshi call entirely. Same shape so all downstream
+            // tools (P/L computation, history, edges-tab match) work
+            // identically against the practice log.
+            if (_state.settings.practice_mode) {
+                recordPracticeFire({
+                    kind:          "player_prop",
+                    ticker, side, contracts,
+                    price_cents:   askCents,
+                    our_p, our_p_yes,
+                    savant_p:      null,
+                    market_p,
+                    edge_pp:       edgePP,
+                    game_pk:       g.game_pk,
+                    matchup:       `${g.away}@${g.home}`,
+                    player:        parsed.player,
+                    stat:          parsed.stat,
+                    threshold:     parsed.threshold,
+                    placed_at:     new Date().toISOString(),
+                });
+                _state.sessionBets.add(key);
+                persistSessionBets();
+                log("buy-practice", `[PRACTICE] would buy ${contracts}× ${parsed.player} ${(side === "no" ? "UNDER" : "OVER")} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢`);
+                toast(`Practice: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${(side === "no" ? "UNDER" : "OVER")} @ ${askCents}¢`, "ok");
+                await sleep(50);
+                continue;
+            }
             const result = await root.Kalshi.placeOrder({
                 ticker, side, count: contracts, price: askCents, action: "buy",
             });
@@ -1044,6 +1080,28 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
 
     // FIRE.
     try {
+        // PRACTICE MODE — log + skip the Kalshi call.
+        if (_state.settings.practice_mode) {
+            recordPracticeFire({
+                kind:          "moneyline",
+                ticker,
+                side:          "yes",
+                contracts,
+                price_cents:   yesAskCents,
+                our_p, savant_p, market_p,
+                edge_pp:       edgePP,
+                savant_stance: savantStance,
+                game_pk:       g.game_pk,
+                matchup:       `${g.away}@${g.home}`,
+                bet_team:      tail,
+                placed_at:     new Date().toISOString(),
+            });
+            _state.sessionBets.add(key);
+            persistSessionBets();
+            log("buy-practice", `[PRACTICE] would buy ${contracts}× ${tail} YES @ ${yesAskCents}¢ (edge ${edgePP.toFixed(1)}pp)`);
+            toast(`Practice: ${tail} YES @ ${yesAskCents}¢`, "ok");
+            return;
+        }
         const result = await root.Kalshi.placeOrder({
             ticker,
             side: "yes",
@@ -1129,6 +1187,28 @@ function recordFiredBet(payload) {
 function getFires() {
     try { return JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
     catch { return []; }
+}
+
+// ── Practice fires (paper-trading log) ────────────────────────────
+// Same shape as fires, separate bucket. Practice mode writes here
+// instead of calling Kalshi. Lets the user see what the bot would
+// have done — and how those positions move — without spending money.
+const LS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
+const PRACTICE_FIRES_MAX = 500;
+function recordPracticeFire(payload) {
+    let arr;
+    try { arr = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
+    catch { arr = []; }
+    arr.unshift({ ...payload, practice: true });
+    if (arr.length > PRACTICE_FIRES_MAX) arr.length = PRACTICE_FIRES_MAX;
+    try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(arr)); } catch {}
+}
+function getPracticeFires() {
+    try { return JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
+    catch { return []; }
+}
+function clearPracticeFires() {
+    try { localStorage.removeItem(LS_PRACTICE_FIRES); } catch {}
 }
 
 
@@ -1779,6 +1859,9 @@ function drawerHtml(initialTab) {
           <button class="bot-tab ${initialTab === "questions" ? "active" : ""}" data-tab="questions" role="tab">
             Questions <span class="bot-tab-count bot-tab-unread" data-questions-count>0</span>
           </button>
+          <button class="bot-tab ${initialTab === "practice" ? "active" : ""}" data-tab="practice" role="tab">
+            Practice <span class="bot-tab-count" data-practice-count>0</span>
+          </button>
           <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
             Perf
           </button>
@@ -1794,6 +1877,7 @@ function drawerHtml(initialTab) {
         </nav>
         <div class="bot-tab-pane ${initialTab === "bets"        ? "active" : ""}" data-pane="bets"></div>
         <div class="bot-tab-pane ${initialTab === "questions"   ? "active" : ""}" data-pane="questions"></div>
+        <div class="bot-tab-pane ${initialTab === "practice"    ? "active" : ""}" data-pane="practice"></div>
         <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
         <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
         <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
@@ -1943,6 +2027,7 @@ async function refreshDrawerContent() {
     if (!overlay) return;
     overlay.querySelector("[data-pane='bets']").innerHTML        = await renderOpenBetsPane();
     overlay.querySelector("[data-pane='questions']").innerHTML   = renderQuestionsPane();
+    overlay.querySelector("[data-pane='practice']").innerHTML    = await renderPracticePane();
     overlay.querySelector("[data-pane='performance']").innerHTML = await renderPerformancePane();
     overlay.querySelector("[data-pane='history']").innerHTML     = await renderHistoryPane();
     overlay.querySelector("[data-pane='decisions']").innerHTML   = renderDecisionsPane();
@@ -1950,7 +2035,8 @@ async function refreshDrawerContent() {
     bindBotPaneHandlers(overlay);
     bindBetsPaneHandlers(overlay);
     bindQuestionsPaneHandlers(overlay);
-    // Update count chips on the Bets + Questions + History + Decisions tabs.
+    bindPracticePaneHandlers(overlay);
+    // Update count chips on the Bets + Questions + Practice + History + Decisions tabs.
     const betsCt = overlay.querySelector("[data-bets-count]");
     if (betsCt) betsCt.textContent = String(_state.openPositions.length);
     const qCt = overlay.querySelector("[data-questions-count]");
@@ -1959,6 +2045,8 @@ async function refreshDrawerContent() {
         qCt.textContent = String(unread);
         qCt.classList.toggle("has-unread", unread > 0);
     }
+    const practiceCt = overlay.querySelector("[data-practice-count]");
+    if (practiceCt) practiceCt.textContent = String(getPracticeFires().length);
     const histCt = overlay.querySelector("[data-history-count]");
     if (histCt) histCt.textContent = String(getFires().length);
     const decCt = overlay.querySelector("[data-decisions-count]");
@@ -2043,6 +2131,137 @@ function bindQuestionsPaneHandlers(overlay) {
             root.BotNotifications?.clear();
             refreshDrawerContent();
         }
+    });
+}
+
+// ── Practice pane (paper-trading mode) ────────────────────────────
+
+async function renderPracticePane() {
+    const fires = getPracticeFires();
+    const settings = _state.settings;
+    const modeBadge = settings.practice_mode
+        ? `<span class="bot-practice-mode-on">PRACTICE MODE ON</span>`
+        : `<span class="bot-practice-mode-off">Practice mode is OFF — flip toggle below to test without spending</span>`;
+    const toggle = `
+      <div class="bot-practice-head">
+        ${modeBadge}
+        <button class="bot-practice-toggle ${settings.practice_mode ? "is-on" : "is-off"}" data-practice-toggle>
+          ${settings.practice_mode ? "Turn practice OFF (return to real money)" : "Turn practice ON"}
+        </button>
+        ${fires.length
+          ? `<button class="bot-practice-reset" data-practice-reset>Reset practice log</button>`
+          : ""}
+      </div>
+    `;
+    if (!fires.length) {
+        return `
+          ${toggle}
+          <div class="bot-empty">
+            <p>No practice bets yet.</p>
+            <p class="bot-empty-sub">
+              Flip practice mode ON, turn the bot on, and every bet
+              the bot WOULD have fired lands here instead of Kalshi.
+              Live P/L computed from current market bid for each held
+              side. No money moves.
+            </p>
+          </div>
+        `;
+    }
+    // Pull live bid for each ticker in parallel to compute simulated P/L.
+    const tickers = [...new Set(fires.map((f) => f.ticker))];
+    const bidMap = new Map();
+    if (root.Kalshi && root.Kalshi.getOrderbook) {
+        const results = await Promise.allSettled(tickers.map(async (t) => {
+            const ob = await root.Kalshi.getOrderbook(t);
+            return { t, ob };
+        }));
+        for (const r of results) {
+            if (r.status === "fulfilled" && r.value.ob) {
+                bidMap.set(r.value.t, r.value.ob);
+            }
+        }
+    }
+    let totalCost = 0, totalLive = 0, winCount = 0, lossCount = 0;
+    const rows = fires.slice(0, 200).map((f) => {
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const ob   = bidMap.get(f.ticker);
+        const liveBid = ob
+            ? (f.side === "no" ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob))
+            : null;
+        let pnlCents = null, pnlClass = "", pnlText = "—";
+        if (liveBid != null) {
+            const liveVal = (f.contracts || 1) * liveBid;
+            pnlCents = liveVal - cost;
+            pnlClass = pnlCents >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+            pnlText  = `${pnlCents >= 0 ? "+" : ""}$${(pnlCents/100).toFixed(2)}`;
+            totalCost += cost;
+            totalLive += liveVal;
+            if (pnlCents >= 0) winCount++; else lossCount++;
+        }
+        const label = escapeText(betLabel(f));
+        const sideTag = f.side === "no" ? "NO" : "YES";
+        const sideCls = f.side === "no" ? "bet-side-no" : "bet-side-yes";
+        const when = formatNotifTime(f.placed_at);
+        return `
+          <tr>
+            <td class="bot-practice-bet">${label}</td>
+            <td><span class="${sideCls}">${sideTag}</span></td>
+            <td>${f.contracts}× @ ${f.price_cents}¢</td>
+            <td>$${(cost/100).toFixed(2)}</td>
+            <td>${liveBid != null ? `${liveBid}¢` : "—"}</td>
+            <td class="${pnlClass}">${pnlText}</td>
+            <td class="bot-time-ago">${when}</td>
+          </tr>
+        `;
+    }).join("");
+    const totalPnl = totalLive - totalCost;
+    const totalPnlCls = totalPnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+    const winRate = (winCount + lossCount) > 0
+        ? Math.round(winCount / (winCount + lossCount) * 100)
+        : 0;
+    const summary = `
+      <div class="bot-practice-summary">
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-num">${fires.length}</div>
+          <div class="bot-practice-stat-lbl">bets simulated</div>
+        </div>
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-num ${totalPnlCls}">${totalPnl >= 0 ? "+" : ""}$${(totalPnl/100).toFixed(2)}</div>
+          <div class="bot-practice-stat-lbl">live mark-to-market P/L</div>
+        </div>
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-num">${winCount}-${lossCount}</div>
+          <div class="bot-practice-stat-lbl">winning / losing now (${winRate}%)</div>
+        </div>
+      </div>
+    `;
+    return `
+      ${toggle}
+      ${summary}
+      <table class="bot-table bot-practice-table">
+        <thead><tr><th>Bet</th><th>Side</th><th>Size</th><th>Cost</th><th>Live bid</th><th>P/L</th><th>Time</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+}
+
+function bindPracticePaneHandlers(overlay) {
+    overlay.querySelector("[data-practice-toggle]")?.addEventListener("click", () => {
+        _state.settings = clampSettings({
+            ..._state.settings,
+            practice_mode: !_state.settings.practice_mode,
+        });
+        persistSettings();
+        toast(_state.settings.practice_mode
+            ? "Practice mode ON — no real money will be spent"
+            : "Practice mode OFF — bot is now back to real money", "ok");
+        refreshDrawerContent();
+    });
+    overlay.querySelector("[data-practice-reset]")?.addEventListener("click", () => {
+        if (!confirm("Clear the practice log and start over?")) return;
+        clearPracticeFires();
+        toast("Practice log cleared", "ok");
+        refreshDrawerContent();
     });
 }
 
