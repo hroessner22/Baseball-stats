@@ -822,7 +822,10 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                     log("skip", `[PRACTICE] bankroll exhausted: $${(bankroll.available_cents/100).toFixed(2)} available, ${tradeCostCents}¢ cost`);
                     continue;
                 }
-                recordPracticeFire({
+                // User approval mode: propose to the queue rather than
+                // auto-firing. The bet is recorded as a fire ONLY after
+                // the user clicks Approve in the Practice tab.
+                proposePracticeBet({
                     kind:          "player_prop",
                     ticker, side, contracts,
                     price_cents:   askCents,
@@ -880,8 +883,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 });
                 _state.sessionBets.add(key);
                 persistSessionBets();
-                log("buy-practice", `[PRACTICE] would buy ${contracts}× ${parsed.player} ${(side === "no" ? "UNDER" : "OVER")} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢`);
-                toast(`Practice: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${(side === "no" ? "UNDER" : "OVER")} @ ${askCents}¢`, "ok");
+                log("buy-practice", `[PRACTICE] proposed ${contracts}× ${parsed.player} ${(side === "no" ? "UNDER" : "OVER")} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢ — awaiting approval`);
+                toast(`Proposal: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${(side === "no" ? "UNDER" : "OVER")} @ ${askCents}¢`, "ok");
                 await sleep(50);
                 continue;
             }
@@ -1143,7 +1146,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
                 log("skip", `[PRACTICE] bankroll exhausted: $${(bankroll.available_cents/100).toFixed(2)} available, ${tradeCostCents}¢ cost`);
                 return;
             }
-            recordPracticeFire({
+            proposePracticeBet({
                 kind:          "moneyline",
                 ticker,
                 side:          "yes",
@@ -1182,8 +1185,8 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             });
             _state.sessionBets.add(key);
             persistSessionBets();
-            log("buy-practice", `[PRACTICE] would buy ${contracts}× ${tail} YES @ ${yesAskCents}¢ (edge ${edgePP.toFixed(1)}pp)`);
-            toast(`Practice: ${tail} YES @ ${yesAskCents}¢`, "ok");
+            log("buy-practice", `[PRACTICE] proposed ${contracts}× ${tail} YES @ ${yesAskCents}¢ (edge ${edgePP.toFixed(1)}pp) — awaiting approval`);
+            toast(`Proposal: ${tail} YES @ ${yesAskCents}¢`, "ok");
             return;
         }
         const result = await root.Kalshi.placeOrder({
@@ -1293,6 +1296,85 @@ function getPracticeFires() {
 }
 function clearPracticeFires() {
     try { localStorage.removeItem(LS_PRACTICE_FIRES); } catch {}
+}
+
+// ── Practice approval queue ───────────────────────────────────────
+// In practice mode the bot doesn't auto-fire. Instead each candidate
+// goes into a 'pending' queue. The user approves (→ becomes a
+// practice fire) or declines (→ logged with an optional note so we
+// can review later what they rejected and why).
+const LS_PRACTICE_PENDING  = "diamond_context_bot_practice_pending";
+const LS_PRACTICE_DECLINED = "diamond_context_bot_practice_declined";
+const PRACTICE_PENDING_MAX = 100;
+const PRACTICE_DECLINED_MAX = 500;
+
+function getPracticePending() {
+    try { return JSON.parse(localStorage.getItem(LS_PRACTICE_PENDING) || "[]"); }
+    catch { return []; }
+}
+function getPracticeDeclined() {
+    try { return JSON.parse(localStorage.getItem(LS_PRACTICE_DECLINED) || "[]"); }
+    catch { return []; }
+}
+function clearPracticePending() {
+    try { localStorage.removeItem(LS_PRACTICE_PENDING); } catch {}
+}
+function clearPracticeDeclined() {
+    try { localStorage.removeItem(LS_PRACTICE_DECLINED); } catch {}
+}
+
+// Add a candidate to the pending queue. Dedupe by ticker+side so
+// the same scan tick doesn't enqueue the same bet twice.
+function proposePracticeBet(payload) {
+    const arr = getPracticePending();
+    const key = `${payload.ticker}:${payload.side}`;
+    if (arr.some((p) => `${p.ticker}:${p.side}` === key)) return null;
+    const note = {
+        id: `pp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        proposed_at: new Date().toISOString(),
+        status: "pending",
+        ...payload,
+    };
+    arr.unshift(note);
+    if (arr.length > PRACTICE_PENDING_MAX) arr.length = PRACTICE_PENDING_MAX;
+    try { localStorage.setItem(LS_PRACTICE_PENDING, JSON.stringify(arr)); } catch {}
+    return note.id;
+}
+
+// Approve a pending bet: move from pending → practice fires.
+function approvePracticeBet(id) {
+    const pending = getPracticePending();
+    const idx = pending.findIndex((p) => p.id === id);
+    if (idx === -1) return false;
+    const bet = pending[idx];
+    // Reuse the existing practice fire path so all summary / Bets /
+    // strip surfaces show it identically to an auto-fired bet.
+    const { id: _drop, proposed_at, status, ...rest } = bet;
+    recordPracticeFire({ ...rest, approved_at: new Date().toISOString() });
+    pending.splice(idx, 1);
+    try { localStorage.setItem(LS_PRACTICE_PENDING, JSON.stringify(pending)); } catch {}
+    return true;
+}
+
+// Decline a pending bet with an optional user note ('tell the bot
+// why you're saying no').
+function declinePracticeBet(id, userNote) {
+    const pending = getPracticePending();
+    const idx = pending.findIndex((p) => p.id === id);
+    if (idx === -1) return false;
+    const bet = pending[idx];
+    pending.splice(idx, 1);
+    try { localStorage.setItem(LS_PRACTICE_PENDING, JSON.stringify(pending)); } catch {}
+    const declined = getPracticeDeclined();
+    declined.unshift({
+        ...bet,
+        status: "declined",
+        declined_at: new Date().toISOString(),
+        user_note: userNote || null,
+    });
+    if (declined.length > PRACTICE_DECLINED_MAX) declined.length = PRACTICE_DECLINED_MAX;
+    try { localStorage.setItem(LS_PRACTICE_DECLINED, JSON.stringify(declined)); } catch {}
+    return true;
 }
 
 // Bankroll math for practice mode.
@@ -2171,7 +2253,14 @@ async function refreshDrawerContent() {
         qCt.classList.toggle("has-unread", unread > 0);
     }
     const practiceCt = overlay.querySelector("[data-practice-count]");
-    if (practiceCt) practiceCt.textContent = String(getPracticeFires().length);
+    if (practiceCt) {
+        const pendingN = getPracticePending().length;
+        const firesN   = getPracticeFires().length;
+        practiceCt.textContent = pendingN > 0
+            ? `${pendingN}!`   // show pending count with an alert tick
+            : String(firesN);
+        practiceCt.classList.toggle("has-unread", pendingN > 0);
+    }
     const histCt = overlay.querySelector("[data-history-count]");
     if (histCt) histCt.textContent = String(getFires().length);
     const decCt = overlay.querySelector("[data-decisions-count]");
@@ -2301,19 +2390,37 @@ async function renderPracticePane() {
       </div>
       ${bankrollBlock}
     `;
-    if (!fires.length) {
+
+    // Pending approval queue — every bet the bot wants to take.
+    // Rendered first because this is what the user needs to act on.
+    const pending = getPracticePending();
+    const pendingBlock = pending.length ? `
+      <div class="bot-pending-section">
+        <div class="bot-pending-head">
+          <span>🔔 Pending approval — ${pending.length} bet${pending.length === 1 ? "" : "s"} waiting</span>
+          <button class="bot-pending-clear" data-pending-clear-all>Decline all</button>
+        </div>
+        ${pending.map(renderPendingCard).join("")}
+      </div>
+    ` : "";
+
+    if (!fires.length && !pending.length) {
         return `
           ${toggle}
           <div class="bot-empty">
             <p>No practice bets yet.</p>
             <p class="bot-empty-sub">
               Flip practice mode ON, turn the bot on, and every bet
-              the bot WOULD have fired lands here instead of Kalshi.
-              Live P/L computed from current market bid for each held
-              side. No money moves.
+              the bot wants to take will land here for you to approve
+              or decline (with an optional note so it can learn).
             </p>
           </div>
         `;
+    }
+    // If there are pending but no approved fires yet, return the
+    // pending block without the bets-table section.
+    if (!fires.length) {
+        return `${toggle}${pendingBlock}`;
     }
     // Pull live bid for each ticker in parallel to compute simulated P/L.
     const tickers = [...new Set(fires.map((f) => f.ticker))];
@@ -2390,12 +2497,47 @@ async function renderPracticePane() {
     `;
     return `
       ${toggle}
+      ${pendingBlock}
       ${summary}
       <div class="bot-practice-list-head">
-        <span>Click any bet to expand the reasoning</span>
+        <span>Approved bets — click any to expand the reasoning</span>
       </div>
       <div class="bot-practice-list">
         ${rows}
+      </div>
+    `;
+}
+
+// Render one pending-approval card — full reasoning + approve/decline.
+function renderPendingCard(p) {
+    const reasoningHTML = renderPracticeReasoning(p);
+    const label = escapeText(betLabel(p));
+    const sideTag = p.side === "no" ? "NO" : "YES";
+    const sideCls = p.side === "no" ? "bet-side-no" : "bet-side-yes";
+    const cost = (p.contracts || 1) * (p.price_cents || 0);
+    const when = formatNotifTime(p.proposed_at);
+    return `
+      <div class="bot-pending-card" data-pending-id="${escapeText(p.id)}">
+        <div class="bot-pending-head-row">
+          <span class="bot-pending-label">${label}</span>
+          <span class="${sideCls}">${sideTag}</span>
+          <span class="bot-pending-size">${p.contracts}× @ ${p.price_cents}¢</span>
+          <span class="bot-pending-cost">$${(cost/100).toFixed(2)}</span>
+          <span class="bot-pending-ts">${when}</span>
+        </div>
+        <div class="bot-pending-reasoning">
+          ${reasoningHTML}
+        </div>
+        <div class="bot-pending-actions">
+          <button class="bot-pending-approve" data-pending-approve="${escapeText(p.id)}">✓ Approve</button>
+          <button class="bot-pending-decline" data-pending-decline="${escapeText(p.id)}">✗ Decline</button>
+        </div>
+        <div class="bot-pending-note-row">
+          <label class="bot-pending-note-label">Tell the bot why you're saying no (optional):</label>
+          <input type="text" class="bot-pending-note-input"
+                 data-pending-note="${escapeText(p.id)}"
+                 placeholder="e.g. event already happened / model wrong on left-handed batters">
+        </div>
       </div>
     `;
 }
@@ -2549,6 +2691,38 @@ function bindPracticePaneHandlers(overlay) {
             practice_starting_bankroll_cents: cents,
         });
         persistSettings();
+        refreshDrawerContent();
+    });
+    // Approval-queue handlers.
+    overlay.querySelectorAll("[data-pending-approve]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const id = btn.dataset.pendingApprove;
+            if (approvePracticeBet(id)) {
+                toast("Bet approved — added to practice log", "ok");
+                refreshDrawerContent();
+            }
+        });
+    });
+    overlay.querySelectorAll("[data-pending-decline]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const id = btn.dataset.pendingDecline;
+            // Pull the note from the card's input box.
+            const card = btn.closest(".bot-pending-card");
+            const noteInp = card?.querySelector("[data-pending-note]");
+            const note = noteInp?.value?.trim() || null;
+            if (declinePracticeBet(id, note)) {
+                toast(note ? "Declined with note" : "Declined", "ok");
+                refreshDrawerContent();
+            }
+        });
+    });
+    overlay.querySelector("[data-pending-clear-all]")?.addEventListener("click", () => {
+        if (!confirm("Decline ALL pending proposals?")) return;
+        const pending = getPracticePending();
+        for (const p of pending) {
+            declinePracticeBet(p.id, "bulk decline");
+        }
+        toast("All pending bets declined", "ok");
         refreshDrawerContent();
     });
 }

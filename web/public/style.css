@@ -8820,6 +8820,122 @@ button.md-game-outcome:active { transform: translateY(1px); }
     letter-spacing: 0.05em;
     text-transform: uppercase;
 }
+/* Pending approval queue */
+.bot-pending-section {
+    margin-bottom: 20px;
+}
+.bot-pending-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #fbbf24;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: 6px;
+}
+.bot-pending-clear {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+}
+.bot-pending-clear:hover { color: var(--text); }
+.bot-pending-card {
+    background: rgba(15, 23, 42, 0.65);
+    border: 2px solid rgba(251, 191, 36, 0.35);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+}
+.bot-pending-head-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto auto;
+    gap: 10px;
+    align-items: center;
+    font-size: 13px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+.bot-pending-label {
+    color: var(--text);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bot-pending-size,
+.bot-pending-cost {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+}
+.bot-pending-ts {
+    color: var(--text-dim);
+    font-size: 11px;
+}
+.bot-pending-reasoning {
+    margin-bottom: 12px;
+}
+.bot-pending-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.bot-pending-approve,
+.bot-pending-decline {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 120ms;
+}
+.bot-pending-approve {
+    background: #22C55E;
+    color: #fff;
+    flex: 1;
+}
+.bot-pending-approve:hover { background: #16a34a; }
+.bot-pending-decline {
+    background: rgba(239, 68, 68, 0.18);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    flex: 1;
+}
+.bot-pending-decline:hover {
+    background: rgba(239, 68, 68, 0.3);
+    color: #fff;
+}
+.bot-pending-note-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.bot-pending-note-label {
+    font-size: 10px;
+    color: var(--text-dim);
+}
+.bot-pending-note-input {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
 /* Bankroll block */
 .bot-practice-bankroll {
     margin-bottom: 16px;
