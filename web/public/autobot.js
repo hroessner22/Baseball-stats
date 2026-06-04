@@ -617,6 +617,27 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
 
+        // ── STAT-CHECK FIRST. User direction (2026-06-04): 'you take
+        //    under 6 ks because you see an edge but you dont check
+        //    the stats first.' The 'Already crossed' guard used to
+        //    run AFTER edge computation, deep in the sanity-gate
+        //    block. By that point the bot had already 'seen' a
+        //    juicy edge it shouldn't have considered. Move it to
+        //    the very top — BEFORE orderbook fetch, BEFORE edge
+        //    math, BEFORE scoring.
+        //
+        //    If pitcher has 6 Ks and threshold is 6+ → already-won
+        //    YES (no upside), guaranteed-loss NO. If batter has 1 HR
+        //    and threshold is 1+ → same. Either way the prop is
+        //    settled from this player's perspective; the bot has
+        //    no business pricing edge against the market here.
+        const liveStatNow = liveStatForBet(modelProps, mlbam, parsed.stat);
+        if (liveStatNow != null && liveStatNow >= parsed.threshold) {
+            _state.deadProps.add(propKey);
+            log("skip", `Threshold already crossed — ${parsed.player} has ${liveStatNow} ${parsed.stat} ≥ threshold ${parsed.threshold} — marked terminal (stat-check ran BEFORE edge math)`);
+            continue;
+        }
+
         const ladder = modelData[mlbam]?.[parsed.stat];
         if (!ladder) {
             // No projection available — likely a substitute or
