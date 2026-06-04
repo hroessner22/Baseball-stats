@@ -10408,6 +10408,89 @@ button.md-game-outcome:active { transform: translateY(1px); }
     font-weight: 600;
     color: var(--text);
 }
+
+/* Practice/Live mode row — replaces the standalone Practice tab.
+   Lives below the bot ON/OFF switch in the Bot pane. Same toggle
+   shape as the bot switch but slightly smaller, with a color tint
+   that signals what mode you're in (green for practice, amber for
+   live real-money). */
+.bot-mode-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 10px 12px;
+    margin: 10px 0;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: rgba(15, 23, 42, 0.4);
+}
+.bot-mode-row.is-practice {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(34, 197, 94, 0.3);
+}
+.bot-mode-row.is-real {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+.bot-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+.bot-mode-toggle input { display: none; }
+.bot-mode-slider {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 999px;
+    transition: background 120ms;
+}
+.bot-mode-slider::before {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 16px; height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 120ms;
+}
+.bot-mode-toggle input:checked + .bot-mode-slider {
+    background: var(--accent-win);
+}
+.bot-mode-toggle input:checked + .bot-mode-slider::before {
+    transform: translateX(16px);
+}
+.bot-mode-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--text);
+}
+.bot-mode-bankroll {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.bot-mode-bankroll-label {
+    letter-spacing: 0.04em;
+}
+.bot-mode-bankroll input {
+    width: 80px;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
 .bot-kill {
     appearance: none;
     background: var(--accent-live);

@@ -2673,25 +2673,21 @@ function drawerHtml(initialTab) {
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
             Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
-          <button class="bot-tab ${initialTab === "practice" ? "active" : ""}" data-tab="practice" role="tab">
-            Practice <span class="bot-tab-count" data-practice-count>0</span>
-          </button>
-          <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
-            History <span class="bot-tab-count" data-history-count>0</span>
+          <button class="bot-tab ${initialTab === "bot" ? "active" : ""}" data-tab="bot" role="tab">
+            Bot
           </button>
           <button class="bot-tab ${initialTab === "decisions" ? "active" : ""}" data-tab="decisions" role="tab">
             Decisions <span class="bot-tab-count" data-decisions-count>0</span>
           </button>
-          <button class="bot-tab ${initialTab === "bot" ? "active" : ""}" data-tab="bot" role="tab">
-            Bot
+          <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
+            History <span class="bot-tab-count" data-history-count>0</span>
           </button>
         </nav>
         <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
         <div class="bot-tab-pane ${initialTab === "bets"        ? "active" : ""}" data-pane="bets"></div>
-        <div class="bot-tab-pane ${initialTab === "practice"    ? "active" : ""}" data-pane="practice"></div>
-        <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
-        <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
         <div class="bot-tab-pane ${initialTab === "bot"         ? "active" : ""}" data-pane="bot"></div>
+        <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
+        <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
       </div>
     `;
 }
@@ -2836,7 +2832,6 @@ async function refreshDrawerContent() {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
     overlay.querySelector("[data-pane='bets']").innerHTML        = await renderOpenBetsPane();
-    overlay.querySelector("[data-pane='practice']").innerHTML    = await renderPracticePane();
     overlay.querySelector("[data-pane='performance']").innerHTML = await renderPerformancePane();
     overlay.querySelector("[data-pane='history']").innerHTML     = await renderHistoryPane();
     overlay.querySelector("[data-pane='decisions']").innerHTML   = renderDecisionsPane();
@@ -4779,6 +4774,21 @@ function renderBotPane() {
           ${s.enabled
             ? `<button class="bot-kill" data-bot-kill>STOP NOW</button>`
             : ""}
+        </div>
+        <div class="bot-mode-row ${s.practice_mode ? "is-practice" : "is-real"}">
+          <label class="bot-mode-toggle">
+            <input type="checkbox" ${s.practice_mode ? "checked" : ""} data-practice-toggle>
+            <span class="bot-mode-slider"></span>
+            <span class="bot-mode-label">${s.practice_mode ? "PRACTICE — virtual bankroll, no real money" : "LIVE — real money on Kalshi"}</span>
+          </label>
+          ${s.practice_mode ? `
+            <div class="bot-mode-bankroll">
+              <label class="bot-mode-bankroll-label">Starting $</label>
+              <input type="number" min="1" max="1000" step="10"
+                     value="${(s.practice_starting_bankroll_cents/100).toFixed(0)}"
+                     data-practice-starting>
+            </div>
+          ` : ""}
         </div>
         <p class="bot-status-line">
           ${s.enabled
