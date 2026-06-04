@@ -1572,7 +1572,11 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
 // holds the last 500 fires; export-to-clipboard happens via the
 // drawer's "Export fires (JSON)" button.
 const LS_FIRES = "diamond_context_bot_fires";
-const FIRES_MAX = 500;
+// Raised 500 → 2000 (2026-06-04) so the History pane can show
+// older days. With heavy days like Jun 2 (72 fires alone), the
+// 500-fire cap was evicting the older days the user wanted to
+// review. 2000 fires ~= 30+ days at typical volume.
+const FIRES_MAX = 2000;
 function recordFiredBet(payload) {
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
@@ -4509,9 +4513,13 @@ async function renderHistoryPane() {
     });
 
     // Group resolved fires by local calendar day (YYYY-MM-DD). Order
-    // newest day first — within each day, newest bet first.
+    // newest day first — within each day, newest bet first. Was
+    // previously slicing at 500 fires which silently dropped older
+    // days when newer days were heavy (the Jun 2 case where 72 fires
+    // alone consumed most of the budget). Group ALL resolved fires,
+    // then paginate by DAY below.
     const byDay = new Map();
-    for (const f of resolvedFires.slice(0, 500)) {
+    for (const f of resolvedFires) {
         if (!f.placed_at) continue;
         const d = new Date(f.placed_at);
         const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -4524,6 +4532,17 @@ async function renderHistoryPane() {
     // Sort days descending and render each as its own section
     // with a day header showing the date + that day's W-L + net.
     const sortedDays = Array.from(byDay.keys()).sort().reverse();
+    // Pagination by day. Default: show the 7 most recent days.
+    // User can tap 'Show older days' to extend by 7 at a time,
+    // or 'Show all' to jump to the whole log. Choice persisted
+    // to localStorage so the navigation survives reloads.
+    const HISTORY_PAGE_KEY = "diamond_context_history_days_shown";
+    const STEP = 7;
+    let daysShown = parseInt(localStorage.getItem(HISTORY_PAGE_KEY) || `${STEP}`, 10);
+    if (!Number.isFinite(daysShown) || daysShown < STEP) daysShown = STEP;
+    const visibleDays = sortedDays.slice(0, daysShown);
+    const hasMoreDays = sortedDays.length > daysShown;
+    const olderHidden = sortedDays.length - daysShown;
     const todayKey = (() => {
         const t = new Date();
         return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
@@ -4534,7 +4553,7 @@ async function renderHistoryPane() {
         return `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;
     })();
 
-    const daySections = sortedDays.map((dayKey) => {
+    const daySections = visibleDays.map((dayKey) => {
         const dayFires = byDay.get(dayKey);
         // Day-scoped aggregates — P/L sign as truth, revenue is
         // the sum of settlement + cash-out fills.
@@ -4636,7 +4655,19 @@ async function renderHistoryPane() {
                ${liveCount > 0 ? `Your ${liveCount} live bet${liveCount === 1 ? "" : "s"} ${liveCount === 1 ? "is" : "are"} in <strong>Bets</strong>.` : ""}
              </p>
            </div>`
-        : daySections}
+        : daySections + (hasMoreDays ? `
+            <div class="bot-history-load-more">
+              <span class="bot-history-load-more-hint">Showing ${visibleDays.length} of ${sortedDays.length} days · ${olderHidden} older day${olderHidden === 1 ? "" : "s"} hidden</span>
+              <div class="bot-history-load-more-actions">
+                <button class="bot-history-load-btn" data-history-load-more>Show ${Math.min(STEP, olderHidden)} more day${Math.min(STEP, olderHidden) === 1 ? "" : "s"}</button>
+                <button class="bot-history-load-btn bot-history-load-btn-alt" data-history-load-all>Show all ${sortedDays.length} days</button>
+              </div>
+            </div>
+          ` : (daysShown > STEP ? `
+            <div class="bot-history-load-more">
+              <button class="bot-history-load-btn bot-history-load-btn-alt" data-history-load-reset>Collapse to most recent ${STEP} day${STEP === 1 ? "" : "s"}</button>
+            </div>
+          ` : ""))}
     `;
 }
 
@@ -4652,6 +4683,36 @@ function formatDayLabel(key, todayKey, yesterdayKey) {
 }
 
 function bindBetsPaneHandlers(overlay) {
+    // History pagination — bumps the visible-day count and re-renders
+    // just the history pane (no Kalshi refetch needed; data already
+    // pulled).
+    const HISTORY_PAGE_KEY = "diamond_context_history_days_shown";
+    const STEP = 7;
+    overlay.querySelector("[data-history-load-more]")?.addEventListener("click", async () => {
+        const cur = parseInt(localStorage.getItem(HISTORY_PAGE_KEY) || `${STEP}`, 10) || STEP;
+        try { localStorage.setItem(HISTORY_PAGE_KEY, String(cur + STEP)); } catch {}
+        const pane = overlay.querySelector("[data-pane='history']");
+        if (pane) {
+            pane.innerHTML = await renderHistoryPane();
+            bindBetsPaneHandlers(overlay);
+        }
+    });
+    overlay.querySelector("[data-history-load-all]")?.addEventListener("click", async () => {
+        try { localStorage.setItem(HISTORY_PAGE_KEY, "9999"); } catch {}
+        const pane = overlay.querySelector("[data-pane='history']");
+        if (pane) {
+            pane.innerHTML = await renderHistoryPane();
+            bindBetsPaneHandlers(overlay);
+        }
+    });
+    overlay.querySelector("[data-history-load-reset]")?.addEventListener("click", async () => {
+        try { localStorage.setItem(HISTORY_PAGE_KEY, String(STEP)); } catch {}
+        const pane = overlay.querySelector("[data-pane='history']");
+        if (pane) {
+            pane.innerHTML = await renderHistoryPane();
+            bindBetsPaneHandlers(overlay);
+        }
+    });
     overlay.querySelectorAll("[data-exit]").forEach((btn) => {
         btn.addEventListener("click", async () => {
             // Format ticker:side:qty:price (added side after we

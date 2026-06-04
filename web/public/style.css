@@ -10071,6 +10071,57 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: rgba(15, 23, 42, 0.6);
 }
 .bot-history-day .bot-table { margin: 0; }
+
+/* Day-by-day pagination controls at the bottom of the History pane.
+   'Show 7 more days' / 'Show all' lets the user navigate further
+   back in time without dumping 100+ day-sections at once. */
+.bot-history-load-more {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 12px 24px;
+    text-align: center;
+}
+.bot-history-load-more-hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+}
+.bot-history-load-more-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.bot-history-load-btn {
+    appearance: none;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: var(--accent-action, #38BDF8);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 8px 16px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms;
+}
+.bot-history-load-btn:hover {
+    background: rgba(56, 189, 248, 0.2);
+    border-color: rgba(56, 189, 248, 0.5);
+}
+.bot-history-load-btn-alt {
+    background: transparent;
+    color: var(--text-dim);
+    border-color: rgba(148, 163, 184, 0.25);
+}
+.bot-history-load-btn-alt:hover {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text);
+    border-color: rgba(148, 163, 184, 0.4);
+}
 .bot-history-day .bot-table th,
 .bot-history-day .bot-table td {
     padding-left: 14px;
