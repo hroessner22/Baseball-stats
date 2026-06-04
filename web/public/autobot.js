@@ -180,13 +180,18 @@ const DEFAULTS = {
     // adds the current value of open positions back when computing
     // total practice 'wealth'. Reset button in the Practice tab.
     practice_starting_bankroll_cents: 10000,   // $100 default
-    // NO-SIDE PLAYER PROPS — disabled by default 2026-06-02 after
-    // the user observed that EVERY single attempted bet was NO.
-    // Even with the +4pp NO penalty, the bot kept finding 11pp+ NO
-    // edges (model bias toward NO probability across rare-event
-    // prop markets). Turn back on only when we have track-record
-    // data showing NO bets pay vs the bias.
-    bet_no_side_player_props: false,
+    // NO-SIDE PLAYER PROPS — re-enabled 2026-06-04. Disabled 2026-06-02
+    // after the user lost the bankroll to NO bets that scored on
+    // already-realized events (the bot computed an 'edge' before
+    // checking the player's live stats). That structural bug is
+    // now fixed: stat-check runs at the TOP of scanPlayerProps,
+    // before orderbook fetch / edge math / scoring. Combined with
+    // the payout-size guard (refuses ask > 60¢, blocking rare-event
+    // NO traps at 90¢+), floor-ask guard (≤2¢), tail-probability
+    // guard (our_p > 95%), and the +4pp NO penalty (NO needs 9pp
+    // adjusted edge minimum), NO bets are now bounded to a rational
+    // band: ask 3-60¢, our_p mid-range, high-conviction disagreement.
+    bet_no_side_player_props: true,
     // MONEYLINE BUDGET RESERVE — FRACTION of open_exposure_max
     // held back EXCLUSIVELY for moneyline (win-expectancy) fires.
     // Player-prop exposure caps at (1 - reserve) × open_exposure_max
@@ -243,6 +248,13 @@ function loadState() {
         // this nudge.
         if (typeof s.unit_cents === "number" && s.unit_cents < 100) {
             s.unit_cents = DEFAULTS.unit_cents;
+        }
+        // MIGRATION 2026-06-04: re-enable NO-side props for anyone
+        // who had the 2026-06-02 disable persisted. The structural
+        // stat-check-first bug fix means the original disaster
+        // cause cannot repeat; user confirmed re-enable.
+        if (s.bet_no_side_player_props === false) {
+            s.bet_no_side_player_props = true;
         }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
