@@ -3295,6 +3295,16 @@ function bindPracticePaneHandlers(overlay) {
         persistSettings();
         refreshDrawerContent();
     });
+    // Active / History filter — flips the persisted choice and
+    // re-renders. No async work needed, the filter is read at
+    // render time.
+    overlay.querySelectorAll("[data-practice-filter]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const v = btn.getAttribute("data-practice-filter");
+            try { localStorage.setItem("diamond_context_practice_filter", v); } catch {}
+            refreshDrawerContent();
+        });
+    });
     // Approval-queue handlers.
     overlay.querySelectorAll("[data-pending-approve]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -3428,18 +3438,38 @@ async function renderPracticeBetsPane() {
     await settleFinishedPracticeFires();
     const fires = getPracticeFires();
     const bankroll = computePracticeBankroll();
-    const realizedTxt = bankroll.realized_pnl_cents === 0
-        ? ""
-        : ` · realized <strong class="${bankroll.realized_pnl_cents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${bankroll.realized_pnl_cents >= 0 ? "+" : ""}$${(bankroll.realized_pnl_cents/100).toFixed(2)}</strong>`;
-    const recordTxt = (bankroll.settled_won + bankroll.settled_lost) > 0
-        ? ` · ${bankroll.settled_won}–${bankroll.settled_lost}`
-        : "";
+    const realizedCls = bankroll.realized_pnl_cents >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+    const realizedTxt = `${bankroll.realized_pnl_cents >= 0 ? "+" : ""}$${(bankroll.realized_pnl_cents/100).toFixed(2)}`;
+    const recordTxt   = `${bankroll.settled_won}–${bankroll.settled_lost}`;
+    // Card-style banner: a tile per number. Easier to scan than a
+    // single comma-separated sentence (user feedback 2026-06-04:
+    // 'make these simpler to navigate'). The four cells are the
+    // four numbers that matter — Balance, Available, Record,
+    // Realized P/L. Started bankroll lives as a sublabel under
+    // Balance since it's reference, not state.
     const banner = `
-      <div class="bot-status-banner bot-practice-banner">
-        <span class="bot-status-row">
-          <span class="bot-practice-mode-on" style="margin-right:8px">PRACTICE</span>
-          Balance: <strong>$${(bankroll.balance_cents/100).toFixed(2)}</strong> (started $${(bankroll.starting_cents/100).toFixed(2)})${realizedTxt}${recordTxt} · available <strong>$${(bankroll.available_cents/100).toFixed(2)}</strong> · ${fires.length} bet${fires.length === 1 ? "" : "s"} placed
-        </span>
+      <div class="bot-practice-summary">
+        <div class="bot-practice-summary-tag">PRACTICE</div>
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-label">Balance</div>
+          <div class="bot-practice-stat-val">$${(bankroll.balance_cents/100).toFixed(2)}</div>
+          <div class="bot-practice-stat-sub">started $${(bankroll.starting_cents/100).toFixed(2)}</div>
+        </div>
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-label">Available</div>
+          <div class="bot-practice-stat-val">$${(bankroll.available_cents/100).toFixed(2)}</div>
+          <div class="bot-practice-stat-sub">${fires.length} bet${fires.length === 1 ? "" : "s"} placed</div>
+        </div>
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-label">Record</div>
+          <div class="bot-practice-stat-val">${recordTxt}</div>
+          <div class="bot-practice-stat-sub">${bankroll.settled_won + bankroll.settled_lost} settled</div>
+        </div>
+        <div class="bot-practice-stat">
+          <div class="bot-practice-stat-label">Realized P/L</div>
+          <div class="bot-practice-stat-val ${realizedCls}">${realizedTxt}</div>
+          <div class="bot-practice-stat-sub">on settled bets</div>
+        </div>
       </div>
     `;
     if (!fires.length) {
@@ -3463,11 +3493,28 @@ async function renderPracticeBetsPane() {
             if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
         }
     }
+    // Active / History filter. Active = open (unsettled) + recent.
+    // History = everything. Default is Active so the main view
+    // isn't dominated by yesterday's settled bets. Persisted to
+    // localStorage so the toggle survives reloads.
+    const filter = localStorage.getItem("diamond_context_practice_filter") || "active";
+    const activeFires = fires.filter((f) => !f.settled);
+    const settledFires = fires.filter((f) => f.settled);
+    const visibleFires = filter === "active" ? activeFires : fires;
+    // Filter toggle pills above the bets list.
+    const filterPills = `
+      <div class="bot-filter-pills">
+        <button class="bot-filter-pill ${filter === "active" ? "is-on" : ""}"
+                data-practice-filter="active">Active <span class="bot-filter-pill-count">${activeFires.length}</span></button>
+        <button class="bot-filter-pill ${filter === "history" ? "is-on" : ""}"
+                data-practice-filter="history">History <span class="bot-filter-pill-count">${fires.length}</span></button>
+      </div>
+    `;
     // Settlement is already persisted onto each fire by the
     // settleFinishedPracticeFires() call at the top — just read it.
     let totalCost = 0, totalLive = 0;
     let settledWon = 0, settledLost = 0, settledNet = 0;
-    const rows = fires.slice(0, 100).map((f) => {
+    const rows = visibleFires.slice(0, 100).map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const result = f.settled
             ? { settled: true, won: f.settled.won, profit_cents: f.settled.profit_cents }
@@ -3523,14 +3570,24 @@ async function renderPracticeBetsPane() {
     const settledLine = (settledWon + settledLost) > 0
         ? ` · settled ${settledWon}–${settledLost} <strong class="${settledCls}">${settledTxt}</strong>`
         : "";
+    const headLabel = filter === "active"
+        ? `Active bets · ${activeFires.length}`
+        : `All bets · ${fires.length}`;
+    const emptyState = visibleFires.length === 0 ? `
+      <div class="bot-empty" style="border-top:1px solid var(--border-soft); padding:24px 16px">
+        <p>${filter === "active" ? "No active bets right now." : "No bets logged yet."}</p>
+        ${filter === "active" && settledFires.length > 0 ? `<p class="bot-empty-sub">Tap <strong>History</strong> to see ${settledFires.length} settled bet${settledFires.length === 1 ? "" : "s"}.</p>` : ""}
+      </div>
+    ` : "";
     return `
       ${banner}
+      ${filterPills}
       <div class="bot-recent-section">
         <div class="bot-recent-head">
-          Practice bets · ${fires.length} placed
+          ${headLabel}
           <span class="bot-recent-hint">open mark-to-market <strong class="${openCls}">${openTxt}</strong>${settledLine}</span>
         </div>
-        <div class="bot-recent-list">${rows}</div>
+        ${emptyState || `<div class="bot-recent-list">${rows}</div>`}
       </div>
     `;
 }
