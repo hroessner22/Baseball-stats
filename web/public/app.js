@@ -3754,11 +3754,25 @@ function renderGameBetsSection(gamePk) {
     const source = practiceMode ? practice : real;
     const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
     if (!onGame.length) return "";
+    // Match the bot's betLabel convention: always 'over N stat'
+    // for prop markets; the YES/NO chip carries the bet direction.
+    // Pluralize stat name based on threshold so it reads 'over 1
+    // hit' not 'over 1 hits.' User direction 2026-06-04.
+    const statPluralName = (stat, threshold) => {
+        const plural = threshold !== 1;
+        switch (stat) {
+            case "home_runs":   return plural ? "home runs"   : "home run";
+            case "hits":        return plural ? "hits"        : "hit";
+            case "total_bases": return plural ? "total bases" : "total base";
+            case "strikeouts":  return plural ? "strikeouts"  : "strikeout";
+            default:            return String(stat || "").replace(/_/g, " ");
+        }
+    };
     const sideLabel = (f) => {
         if (f.kind === "moneyline") return `${f.bet_team || ""} ML YES`;
-        const dir = (f.side || "yes") === "no" ? "under" : "over";
-        const stat = String(f.stat || "").replace(/_/g, " ");
-        return `${f.player || ""} ${dir} ${f.threshold || ""} ${stat}`;
+        const stat = statPluralName(f.stat, f.threshold || 0);
+        const side = (f.side || "yes") === "no" ? "NO" : "YES";
+        return `${f.player || ""} over ${f.threshold || ""} ${stat} (${side})`;
     };
     const totalCost = onGame.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
     const settled  = onGame.filter((f) => f.settled);
