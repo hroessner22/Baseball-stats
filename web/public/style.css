@@ -9477,21 +9477,22 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .active-bets-strip {
     position: fixed;
     left: 16px;
-    /* Tightened right edge: launcher is ~170px so 184px clearance is
-       enough, recovering 16px of chip area. */
-    right: 184px;
     bottom: 84px;
     z-index: 5000;
     display: none;
     align-items: center;
     gap: 8px;
-    padding: 6px 8px 6px 10px;
-    background: rgba(11, 18, 32, 0.96);
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    border-radius: 12px;
-    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    /* No wrapper box around the pill + chips. User direction
+       (2026-06-04): 'I dont want this box there. Just leave the
+       practice button.' The toggle pill has its own border/bg;
+       any chips that render keep their own pill styling too. */
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
 }
 .active-bets-strip.is-visible { display: flex; }
 
@@ -9550,8 +9551,8 @@ button.md-game-outcome:active { transform: translateY(1px); }
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    padding: 6px 10px;
-    background: rgba(11, 18, 32, 0.92);
+    padding: 0;
+    background: transparent;
 }
 
 .abs-chips {
