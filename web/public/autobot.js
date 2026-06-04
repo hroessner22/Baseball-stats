@@ -2621,7 +2621,7 @@ let _drawerRefreshTimer = null;
 // bot's 30s scan, so users see fresh data even mid-cycle.
 const DRAWER_AUTO_REFRESH_MS = 12_000;
 
-function openDrawer(initialTab = "bets") {
+function openDrawer(initialTab = "performance") {
     if (_drawerOpen) return;
     _drawerOpen = true;
     const overlay = document.createElement("div");
@@ -2656,6 +2656,9 @@ function drawerHtml(initialTab) {
           <button class="bot-drawer-close" aria-label="Close">×</button>
         </header>
         <nav class="bot-drawer-tabs" role="tablist">
+          <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
+            Results
+          </button>
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
             Bets <span class="bot-tab-count" data-bets-count>0</span>
           </button>
@@ -2664,9 +2667,6 @@ function drawerHtml(initialTab) {
           </button>
           <button class="bot-tab ${initialTab === "practice" ? "active" : ""}" data-tab="practice" role="tab">
             Practice <span class="bot-tab-count" data-practice-count>0</span>
-          </button>
-          <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
-            Perf
           </button>
           <button class="bot-tab ${initialTab === "history" ? "active" : ""}" data-tab="history" role="tab">
             History <span class="bot-tab-count" data-history-count>0</span>
@@ -2678,10 +2678,10 @@ function drawerHtml(initialTab) {
             Bot
           </button>
         </nav>
+        <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
         <div class="bot-tab-pane ${initialTab === "bets"        ? "active" : ""}" data-pane="bets"></div>
         <div class="bot-tab-pane ${initialTab === "questions"   ? "active" : ""}" data-pane="questions"></div>
         <div class="bot-tab-pane ${initialTab === "practice"    ? "active" : ""}" data-pane="practice"></div>
-        <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
         <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
         <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
         <div class="bot-tab-pane ${initialTab === "bot"         ? "active" : ""}" data-pane="bot"></div>
