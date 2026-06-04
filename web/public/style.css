@@ -9533,19 +9533,46 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-recent-row {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 5px 0;
+    flex-direction: column;
     font-size: 12px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
 }
 .bot-recent-row:last-child { border-bottom: none; }
+.bot-recent-row.is-open {
+    background: rgba(56, 189, 248, 0.04);
+}
+.bot-recent-row-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    text-align: left;
+    padding: 8px 4px;
+    cursor: pointer;
+    gap: 8px;
+    transition: background 100ms;
+}
+.bot-recent-row-head:hover {
+    background: rgba(148, 163, 184, 0.06);
+}
+.bot-recent-chevron {
+    color: var(--text-dim);
+    font-size: 10px;
+    width: 12px;
+    flex-shrink: 0;
+}
 .bot-recent-label {
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 60%;
+    flex: 1;
+    min-width: 0;
 }
 .bot-recent-meta {
     display: flex;
@@ -9553,6 +9580,20 @@ button.md-game-outcome:active { transform: translateY(1px); }
     align-items: center;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+.bot-recent-detail {
+    padding: 10px 16px 14px 28px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.15);
+    background: rgba(15, 23, 42, 0.4);
+}
+.bot-recent-detail[hidden] { display: none; }
+.bot-recent-detail a {
+    color: var(--accent-action, #38BDF8);
+    text-decoration: none;
+}
+.bot-recent-detail a:hover {
+    text-decoration: underline;
 }
 .bot-recent-meta .bet-side-yes { color: #22C55E; font-weight: 600; }
 .bot-recent-meta .bet-side-no  { color: #f59e0b; font-weight: 600; }

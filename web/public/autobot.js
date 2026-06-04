@@ -3390,6 +3390,35 @@ function bindPracticePaneHandlers(overlay) {
             refreshDrawerContent();
         });
     });
+    // Per-row expand/collapse — click a bet to reveal the full
+    // rationale (factors, edge math, score) AND live tracking
+    // (current bid/ask, mark-to-market, Kalshi link). State is
+    // persisted to localStorage so reopening the drawer keeps the
+    // same rows open.
+    overlay.querySelectorAll("[data-fire-toggle]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const id = btn.getAttribute("data-fire-toggle");
+            let set;
+            try { set = new Set(JSON.parse(localStorage.getItem("diamond_context_practice_expanded") || "[]")); }
+            catch { set = new Set(); }
+            if (set.has(id)) set.delete(id);
+            else set.add(id);
+            try { localStorage.setItem("diamond_context_practice_expanded", JSON.stringify(Array.from(set))); } catch {}
+            // Toggle inline without a full refetch — avoid the
+            // /api/games/today + orderbook round-trips on every click.
+            const row = btn.closest(".bot-recent-row");
+            const detail = row?.querySelector(".bot-recent-detail");
+            const chevron = btn.querySelector(".bot-recent-chevron");
+            const isOpen = !!detail && !detail.hasAttribute("hidden");
+            if (detail) {
+                if (isOpen) detail.setAttribute("hidden", "");
+                else        detail.removeAttribute("hidden");
+            }
+            if (row) row.classList.toggle("is-open", !isOpen);
+            if (chevron) chevron.textContent = isOpen ? "▸" : "▾";
+            btn.setAttribute("aria-expanded", String(!isOpen));
+        });
+    });
     // Approval-queue handlers.
     overlay.querySelectorAll("[data-pending-approve]").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -3599,10 +3628,30 @@ async function renderPracticeBetsPane() {
     // settleFinishedPracticeFires() call at the top — just read it.
     let totalCost = 0, totalLive = 0;
     let settledWon = 0, settledLost = 0, settledNet = 0;
+    // Expanded-row state, persisted so a reload keeps the same
+    // rows open. Stored as a Set of fire IDs (we synthesize an ID
+    // from ticker + placed_at since the existing payload doesn't
+    // carry one).
+    const expanded = (() => {
+        try { return new Set(JSON.parse(localStorage.getItem("diamond_context_practice_expanded") || "[]")); }
+        catch { return new Set(); }
+    })();
+    const fireId = (f) => `${f.ticker || ""}|${f.placed_at || ""}`;
+
     const rows = visibleFires.slice(0, 100).map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const result = f.settled
             ? { settled: true, won: f.settled.won, profit_cents: f.settled.profit_cents }
+            : null;
+
+        // Pull live orderbook info for the row meta AND the
+        // expanded detail panel (live tracking).
+        const ob = obMap.get(f.ticker);
+        const liveBid = ob
+            ? (f.side === "no" ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob))
+            : null;
+        const liveAsk = ob
+            ? (f.side === "no" ? orderbookNoAskCents(ob) : orderbookYesAskCents(ob))
             : null;
 
         let resultText = "—", resultCls = "", resultBadge = "";
@@ -3615,35 +3664,71 @@ async function renderPracticeBetsPane() {
                 : `<span class="bot-result-badge bot-result-lost">LOST</span>`;
             settledNet += result.profit_cents;
             if (result.won) settledWon++; else settledLost++;
-        } else {
-            // Still open — fall back to live mark-to-market.
-            const ob = obMap.get(f.ticker);
-            const liveBid = ob
-                ? (f.side === "no" ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob))
-                : null;
-            if (liveBid != null) {
-                const liveVal = (f.contracts || 1) * liveBid;
-                const pnl = liveVal - cost;
-                resultCls  = pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
-                resultText = `${pnl >= 0 ? "+" : ""}$${(pnl/100).toFixed(2)}`;
-                totalCost += cost;
-                totalLive += liveVal;
-            }
+        } else if (liveBid != null) {
+            const liveVal = (f.contracts || 1) * liveBid;
+            const pnl = liveVal - cost;
+            resultCls  = pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+            resultText = `${pnl >= 0 ? "+" : ""}$${(pnl/100).toFixed(2)}`;
+            totalCost += cost;
+            totalLive += liveVal;
         }
         const label = escapeText(betLabel(f));
         const sideTag = f.side === "no" ? "NO" : "YES";
         const sideCls = f.side === "no" ? "bet-side-no" : "bet-side-yes";
         const when    = formatNotifTime(f.placed_at);
+        const id      = fireId(f);
+        const isOpen  = expanded.has(id);
+
+        // Live tracking section inside the detail panel — fresh
+        // orderbook + current P/L snapshot, separate from the
+        // historical reasoning.
+        const liveSection = (() => {
+            if (result?.settled) {
+                return `
+                  <div class="bot-reasoning-section">
+                    <div class="bot-reasoning-h">Final result</div>
+                    <div class="bot-reasoning-rows">
+                      <div><span>Outcome</span><strong>${result.won ? "WON" : "LOST"}</strong></div>
+                      <div><span>Profit / loss</span><strong class="${result.won ? "bot-pl-pos" : "bot-pl-neg"}">${result.won ? "+" : ""}$${(result.profit_cents/100).toFixed(2)}</strong></div>
+                      ${f.settled?.settled_at ? `<div><span>Settled</span><strong>${formatNotifTime(f.settled.settled_at)}</strong></div>` : ""}
+                    </div>
+                  </div>
+                `;
+            }
+            const livePnl = liveBid != null ? ((f.contracts || 1) * liveBid - cost) : null;
+            return `
+              <div class="bot-reasoning-section">
+                <div class="bot-reasoning-h">Live tracking</div>
+                <div class="bot-reasoning-rows">
+                  <div><span>Status</span><strong>OPEN</strong></div>
+                  <div><span>Side</span><strong>${sideTag}</strong></div>
+                  <div><span>Entry price</span><strong>${f.price_cents}¢ × ${f.contracts || 1} = $${(cost/100).toFixed(2)}</strong></div>
+                  <div><span>Live ${sideTag} bid</span><strong>${liveBid != null ? liveBid + "¢" : "—"}</strong></div>
+                  <div><span>Live ${sideTag} ask</span><strong>${liveAsk != null ? liveAsk + "¢" : "—"}</strong></div>
+                  <div><span>Mark-to-market</span><strong class="${livePnl != null && livePnl >= 0 ? "bot-pl-pos" : livePnl != null ? "bot-pl-neg" : ""}">${livePnl != null ? (livePnl >= 0 ? "+" : "") + "$" + (livePnl/100).toFixed(2) : "—"}</strong></div>
+                  ${f.ticker ? `<div><span>Kalshi ticker</span><strong><a href="https://kalshi.com/markets/${encodeURIComponent(f.ticker)}" target="_blank" rel="noopener">${escapeText(f.ticker)} →</a></strong></div>` : ""}
+                </div>
+              </div>
+            `;
+        })();
+
         return `
-          <div class="bot-recent-row">
-            <span class="bot-recent-label">${label}</span>
-            <span class="bot-recent-meta">
-              <span class="${sideCls}">${sideTag}</span>
-              $${(cost/100).toFixed(2)}
-              ${resultBadge}
-              <span class="${resultCls}">${resultText}</span>
-              <span class="bot-recent-ts">${when}</span>
-            </span>
+          <div class="bot-recent-row ${isOpen ? "is-open" : ""}">
+            <button class="bot-recent-row-head" data-fire-toggle="${escapeText(id)}" aria-expanded="${isOpen}">
+              <span class="bot-recent-chevron">${isOpen ? "▾" : "▸"}</span>
+              <span class="bot-recent-label">${label}</span>
+              <span class="bot-recent-meta">
+                <span class="${sideCls}">${sideTag}</span>
+                $${(cost/100).toFixed(2)}
+                ${resultBadge}
+                <span class="${resultCls}">${resultText}</span>
+                <span class="bot-recent-ts">${when}</span>
+              </span>
+            </button>
+            <div class="bot-recent-detail" ${isOpen ? "" : "hidden"}>
+              ${liveSection}
+              ${renderPracticeReasoning(f)}
+            </div>
           </div>
         `;
     }).join("");
