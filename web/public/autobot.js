@@ -240,6 +240,7 @@ const LS_LOG          = "diamond_context_bot_log";
 const _state = {
     settings: { ...DEFAULTS },
     sessionBets: new Set(),    // "ticker:side" strings we've already fired on
+    propSessionFires: new Set(),// "game_pk:mlbam:stat:threshold:side" — explicit prop-level dedup independent of ticker shape
     deadProps:  new Set(),     // tickers permanently skipped this session (our_p≈0, pitcher pulled, PA exhaustion)
     loggedDecisions: new Set(),// ticker:side:reason already logged to Edges this session — dedup
     playerStatLadder: new Map(),// "game_pk:player_id:stat" → { count, maxEdgePP } highest fire so far (correlated-ladder gate)
@@ -278,6 +279,10 @@ function loadState() {
         _state.sessionBets = new Set(arr);
     } catch { _state.sessionBets = new Set(); }
     try {
+        const arr = JSON.parse(localStorage.getItem("diamond_context_bot_prop_fires") || "[]");
+        _state.propSessionFires = new Set(arr);
+    } catch { _state.propSessionFires = new Set(); }
+    try {
         const d = JSON.parse(localStorage.getItem(LS_DAILY_LOSS) || "{}");
         if (d.date === todayUtcDate()) _state.dailyLoss = d;
         else _state.dailyLoss = { date: todayUtcDate(), cents: 0 };
@@ -290,6 +295,9 @@ function persistSettings() {
 function persistSessionBets() {
     try {
         localStorage.setItem(LS_SESSION_BETS, JSON.stringify(Array.from(_state.sessionBets)));
+    } catch {}
+    try {
+        localStorage.setItem("diamond_context_bot_prop_fires", JSON.stringify(Array.from(_state.propSessionFires)));
     } catch {}
 }
 function persistDailyLoss() {
@@ -994,6 +1002,25 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const key = `${ticker}:${side}`;
         if (_state.sessionBets.has(key)) continue;
 
+        // EXPLICIT PROP-LEVEL DEDUP — independent of Kalshi ticker.
+        // The ticker key alone missed the 'Byron Buxton under 1
+        // hit fired twice' case (2026-06-04), likely because Kalshi
+        // exposed the same underlying prop with two slightly
+        // different ticker shapes within one markets payload. This
+        // gate keys on the SEMANTIC identity of the bet (game +
+        // player + stat + threshold + side), so the same bet can
+        // never fire twice this session regardless of ticker shape.
+        const propFireKey = `${g.game_pk}:${mlbam}:${parsed.stat}:${parsed.threshold}:${side}`;
+        if (_state.propSessionFires.has(propFireKey)) {
+            if (score) logScoredDecisionOnce(score, {
+                action: "skip", reason: "already_fired_this_prop",
+                player: parsed.player, stat: parsed.stat,
+                threshold: parsed.threshold, side,
+            });
+            log("skip", `Already fired — ${parsed.player} ${(side === "no" ? "under" : "over")} ${parsed.threshold} ${parsed.stat}: this exact bet already placed this session`);
+            continue;
+        }
+
         // CORRELATED-LADDER GATE — Cole over 6/7/8/9/10 K is one
         // outcome priced 5 ways. Allow stacked fires ONLY when each
         // new threshold's adjusted edge clears the prior fire's by
@@ -1140,6 +1167,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                     },
                 });
                 _state.sessionBets.add(key);
+                _state.propSessionFires.add(propFireKey);
                 _state.playerStatLadder.set(groupKey, {
                     count: (groupState?.count || 0) + 1,
                     maxEdgePP: Math.max(groupState?.maxEdgePP || -Infinity, candidateEdge),
@@ -1163,6 +1191,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             // Any successful order resets the insufficient-funds streak.
             root._botInsufStreak = 0;
             _state.sessionBets.add(key);
+            _state.propSessionFires.add(propFireKey);
             _state.playerStatLadder.set(groupKey, {
                 count: (groupState?.count || 0) + 1,
                 maxEdgePP: Math.max(groupState?.maxEdgePP || -Infinity, candidateEdge),
