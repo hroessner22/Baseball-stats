@@ -8923,6 +8923,62 @@ button.md-game-outcome:active { transform: translateY(1px); }
     }
 }
 
+/* 50/50 ML / props split-bar — lives below the summary banner.
+   Two thin progress bars showing open exposure against each
+   kind's cap. Reminds the user that ML budget is reserved even
+   if it's not currently being spent. */
+.bot-split-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    margin: -4px 0 12px;
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.bot-split-bar-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 130px;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+}
+.bot-split-bar-label {
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.04em;
+}
+.bot-split-bar-track {
+    position: relative;
+    height: 8px;
+    background: rgba(148, 163, 184, 0.15);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.bot-split-bar-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    border-radius: 999px;
+    transition: width 240ms;
+}
+.bot-split-bar-fill-ml {
+    background: linear-gradient(90deg, #38BDF8, #22C55E);
+}
+.bot-split-bar-fill-prop {
+    background: linear-gradient(90deg, #A78BFA, #F472B6);
+}
+.bot-split-bar-numbers {
+    text-align: right;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+@media (max-width: 540px) {
+    .bot-split-bar-row {
+        grid-template-columns: 90px 1fr 100px;
+    }
+}
+
 /* Active / History toggle on the Practice pane. Pill group
    centered above the bets list. */
 .bot-filter-pills {

@@ -3390,6 +3390,15 @@ function bindPracticePaneHandlers(overlay) {
             refreshDrawerContent();
         });
     });
+    // Kind filter — All / Moneylines / Props. Surfaces ML fires
+    // that would otherwise blur into the higher-frequency prop log.
+    overlay.querySelectorAll("[data-practice-kind]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const v = btn.getAttribute("data-practice-kind");
+            try { localStorage.setItem("diamond_context_practice_kind", v); } catch {}
+            refreshDrawerContent();
+        });
+    });
     // Per-row expand/collapse — click a bet to reveal the full
     // rationale (factors, edge math, score) AND live tracking
     // (current bid/ask, mark-to-market, Kalshi link). State is
@@ -3555,6 +3564,22 @@ async function renderPracticeBetsPane() {
     const realizedCls = bankroll.realized_pnl_cents >= 0 ? "bot-pl-pos" : "bot-pl-neg";
     const realizedTxt = `${bankroll.realized_pnl_cents >= 0 ? "+" : ""}$${(bankroll.realized_pnl_cents/100).toFixed(2)}`;
     const recordTxt   = `${bankroll.settled_won}–${bankroll.settled_lost}`;
+    // 50/50 split usage — open exposure broken into ML vs Props
+    // against each kind's cap. User direction (2026-06-04): 'Dont
+    // forget the 50/50 moneylines.' Surfacing this so the user
+    // can SEE the reserve actually exists and how full each side
+    // is. Reads from the live open-exposure helper that already
+    // backs the per-fire cap check.
+    const expSplit = computePracticeExposureByKind();
+    const splitBase  = bankroll.starting_cents;
+    const mlCapPct   = _state.settings.moneyline_reserve_pct;
+    const propsCapPct = 1 - mlCapPct;
+    const mlCap      = Math.round(splitBase * mlCapPct);
+    const propsCap   = Math.round(splitBase * propsCapPct);
+    const mlOpen     = expSplit.moneyline + expSplit.unknown;
+    const propsOpen  = expSplit.player_prop;
+    const mlPctUsed   = mlCap    ? Math.min(100, (mlOpen    / mlCap)    * 100) : 0;
+    const propsPctUsed = propsCap ? Math.min(100, (propsOpen / propsCap) * 100) : 0;
     // Card-style banner: a tile per number. Easier to scan than a
     // single comma-separated sentence (user feedback 2026-06-04:
     // 'make these simpler to navigate'). The four cells are the
@@ -3585,6 +3610,22 @@ async function renderPracticeBetsPane() {
           <div class="bot-practice-stat-sub">on settled bets</div>
         </div>
       </div>
+      <div class="bot-split-bar" title="50/50 split between moneylines and player props — open exposure against each kind's cap.">
+        <div class="bot-split-bar-row">
+          <span class="bot-split-bar-label">Moneylines</span>
+          <span class="bot-split-bar-track">
+            <span class="bot-split-bar-fill bot-split-bar-fill-ml" style="width:${mlPctUsed.toFixed(0)}%"></span>
+          </span>
+          <span class="bot-split-bar-numbers">$${(mlOpen/100).toFixed(2)} / $${(mlCap/100).toFixed(2)}</span>
+        </div>
+        <div class="bot-split-bar-row">
+          <span class="bot-split-bar-label">Player props</span>
+          <span class="bot-split-bar-track">
+            <span class="bot-split-bar-fill bot-split-bar-fill-prop" style="width:${propsPctUsed.toFixed(0)}%"></span>
+          </span>
+          <span class="bot-split-bar-numbers">$${(propsOpen/100).toFixed(2)} / $${(propsCap/100).toFixed(2)}</span>
+        </div>
+      </div>
     `;
     if (!fires.length) {
         return `
@@ -3607,21 +3648,42 @@ async function renderPracticeBetsPane() {
             if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
         }
     }
-    // Active / History filter. Active = open (unsettled) + recent.
-    // History = everything. Default is Active so the main view
-    // isn't dominated by yesterday's settled bets. Persisted to
-    // localStorage so the toggle survives reloads.
+    // Active / History filter. Active = open (unsettled). History
+    // = everything. Persisted to localStorage so the toggle survives
+    // reloads.
     const filter = localStorage.getItem("diamond_context_practice_filter") || "active";
-    const activeFires = fires.filter((f) => !f.settled);
-    const settledFires = fires.filter((f) => f.settled);
-    const visibleFires = filter === "active" ? activeFires : fires;
-    // Filter toggle pills above the bets list.
+    // Kind filter — All / Moneylines / Props. User direction
+    // (2026-06-04): 'dont forget the 50/50 moneylines.' Lets the
+    // user surface ML fires that would otherwise be drowned by
+    // the higher-frequency prop fires.
+    const kindFilter = localStorage.getItem("diamond_context_practice_kind") || "all";
+    const matchKind = (f) => kindFilter === "all"
+        ? true
+        : kindFilter === "moneyline"
+            ? f.kind === "moneyline"
+            : f.kind === "player_prop";
+    const activeFires  = fires.filter((f) => !f.settled);
+    const settledFires = fires.filter((f) =>  f.settled);
+    const mlFires      = fires.filter((f) => f.kind === "moneyline");
+    const propFires    = fires.filter((f) => f.kind === "player_prop");
+    const baseSet      = filter === "active" ? activeFires : fires;
+    const visibleFires = baseSet.filter(matchKind);
+    // Filter toggle pills above the bets list. Two rows: state
+    // (Active/History) and kind (All/Moneylines/Props).
     const filterPills = `
       <div class="bot-filter-pills">
         <button class="bot-filter-pill ${filter === "active" ? "is-on" : ""}"
                 data-practice-filter="active">Active <span class="bot-filter-pill-count">${activeFires.length}</span></button>
         <button class="bot-filter-pill ${filter === "history" ? "is-on" : ""}"
                 data-practice-filter="history">History <span class="bot-filter-pill-count">${fires.length}</span></button>
+      </div>
+      <div class="bot-filter-pills">
+        <button class="bot-filter-pill ${kindFilter === "all" ? "is-on" : ""}"
+                data-practice-kind="all">All <span class="bot-filter-pill-count">${baseSet.length}</span></button>
+        <button class="bot-filter-pill ${kindFilter === "moneyline" ? "is-on" : ""}"
+                data-practice-kind="moneyline">Moneylines <span class="bot-filter-pill-count">${baseSet.filter((f) => f.kind === "moneyline").length}</span></button>
+        <button class="bot-filter-pill ${kindFilter === "player_prop" ? "is-on" : ""}"
+                data-practice-kind="player_prop">Props <span class="bot-filter-pill-count">${baseSet.filter((f) => f.kind === "player_prop").length}</span></button>
       </div>
     `;
     // Settlement is already persisted onto each fire by the
