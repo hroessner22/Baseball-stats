@@ -3304,6 +3304,26 @@ function renderFactorValue(name, v) {
 }
 
 function bindPracticePaneHandlers(overlay) {
+    // Segmented PRACTICE / LIVE mode picker. Both states always
+    // visible; clicking either button sets the mode directly
+    // instead of toggling — removes the 'is the switch on or off
+    // and what does on mean' ambiguity of the old single toggle.
+    overlay.querySelectorAll("[data-mode-select]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const target = btn.getAttribute("data-mode-select");
+            const wantPractice = target === "practice";
+            if (_state.settings.practice_mode === wantPractice) return;
+            _state.settings = clampSettings({
+                ..._state.settings,
+                practice_mode: wantPractice,
+            });
+            persistSettings();
+            toast(wantPractice
+                ? "Practice mode ON — no real money will be spent"
+                : "LIVE mode ON — the bot is now placing real Kalshi orders", "ok");
+            refreshDrawerContent();
+        });
+    });
     overlay.querySelector("[data-practice-toggle]")?.addEventListener("click", () => {
         _state.settings = clampSettings({
             ..._state.settings,
@@ -4776,11 +4796,23 @@ function renderBotPane() {
             : ""}
         </div>
         <div class="bot-mode-row ${s.practice_mode ? "is-practice" : "is-real"}">
-          <label class="bot-mode-toggle">
-            <input type="checkbox" ${s.practice_mode ? "checked" : ""} data-practice-toggle>
-            <span class="bot-mode-slider"></span>
-            <span class="bot-mode-label">${s.practice_mode ? "PRACTICE — virtual bankroll, no real money" : "LIVE — real money on Kalshi"}</span>
-          </label>
+          <div class="bot-mode-label-row">
+            <span class="bot-mode-prefix">Mode</span>
+            <div class="bot-mode-segmented" role="group" aria-label="Mode">
+              <button class="bot-mode-seg ${s.practice_mode ? "is-active" : ""}"
+                      data-mode-select="practice"
+                      type="button">
+                <span class="bot-mode-seg-title">PRACTICE</span>
+                <span class="bot-mode-seg-sub">virtual bankroll</span>
+              </button>
+              <button class="bot-mode-seg ${s.practice_mode ? "" : "is-active"}"
+                      data-mode-select="real"
+                      type="button">
+                <span class="bot-mode-seg-title">LIVE</span>
+                <span class="bot-mode-seg-sub">real money on Kalshi</span>
+              </button>
+            </div>
+          </div>
           ${s.practice_mode ? `
             <div class="bot-mode-bankroll">
               <label class="bot-mode-bankroll-label">Starting $</label>
