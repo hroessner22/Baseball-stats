@@ -3712,6 +3712,7 @@ function renderGame(g) {
     return `
       <a class="back-link" href="#">← BOARD</a>
       ${renderTicker(g.game_pk, scheduleCache?.games || [])}
+      ${renderGameBetsSection(g.game_pk)}
       <div class="game-mode-toggle">
         <button class="${mode === 'live'     ? 'active' : ''}" data-mode="live">Live View</button>
         <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
@@ -3729,6 +3730,78 @@ function renderGame(g) {
              ${cardPane(g)}
            </div>`}
     `;
+}
+
+// "Your bets on this game" — pulls bot + practice fires from
+// localStorage, filters by game_pk, and renders a compact summary
+// strip above the game view. Hidden when no bets exist on this
+// game. User direction (2026-06-04): 'when youre on a game, show
+// all of the bets that are placed on that game.'
+const LS_GAME_BETS_FIRES          = "diamond_context_bot_fires";
+const LS_GAME_BETS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
+const LS_GAME_BETS_SETTINGS       = "diamond_context_bot_settings";
+function renderGameBetsSection(gamePk) {
+    if (!gamePk) return "";
+    let real = [], practice = [], practiceMode = false;
+    try { real     = JSON.parse(localStorage.getItem(LS_GAME_BETS_FIRES) || "[]"); } catch {}
+    try { practice = JSON.parse(localStorage.getItem(LS_GAME_BETS_PRACTICE_FIRES) || "[]"); } catch {}
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    // Show the bucket the user is currently watching: practice
+    // fires when practice_mode is on, real fires otherwise.
+    const source = practiceMode ? practice : real;
+    const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
+    if (!onGame.length) return "";
+    const sideLabel = (f) => {
+        if (f.kind === "moneyline") return `${f.bet_team || ""} ML YES`;
+        const dir = (f.side || "yes") === "no" ? "under" : "over";
+        const stat = String(f.stat || "").replace(/_/g, " ");
+        return `${f.player || ""} ${dir} ${f.threshold || ""} ${stat}`;
+    };
+    const totalCost = onGame.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
+    const settled  = onGame.filter((f) => f.settled);
+    const won      = settled.filter((f) => f.settled.won).length;
+    const lost     = settled.filter((f) => !f.settled.won).length;
+    const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
+    const realizedCls = realized >= 0 ? "game-bets-pos" : "game-bets-neg";
+    const realizedTxt = (won + lost) > 0
+        ? ` · settled ${won}–${lost} <strong class="${realizedCls}">${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</strong>`
+        : "";
+    const rows = onGame.slice(0, 12).map((f) => {
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const settled = f.settled;
+        const badge = settled
+            ? `<span class="game-bets-badge ${settled.won ? "game-bets-badge-won" : "game-bets-badge-lost"}">${settled.won ? "WON" : "LOST"}</span>`
+            : `<span class="game-bets-badge game-bets-badge-open">OPEN</span>`;
+        const pnl = settled
+            ? `<span class="${settled.won ? "game-bets-pos" : "game-bets-neg"}">${settled.won ? "+" : ""}$${(settled.profit_cents/100).toFixed(2)}</span>`
+            : `<span class="game-bets-meta">cost $${(cost/100).toFixed(2)}</span>`;
+        return `
+          <li>
+            ${badge}
+            <span class="game-bets-label">${escapeHtml(sideLabel(f))}</span>
+            ${pnl}
+          </li>
+        `;
+    }).join("");
+    const overflow = onGame.length > 12 ? `<li class="game-bets-overflow">+${onGame.length - 12} more</li>` : "";
+    return `
+      <section class="game-bets-strip" data-practice="${practiceMode ? 'true' : 'false'}">
+        <header class="game-bets-head">
+          <span class="game-bets-tag">${practiceMode ? "PRACTICE" : "LIVE"}</span>
+          <span class="game-bets-title">Your bets on this game</span>
+          <span class="game-bets-summary">${onGame.length} bet${onGame.length === 1 ? "" : "s"} · $${(totalCost/100).toFixed(2)} staked${realizedTxt}</span>
+        </header>
+        <ul class="game-bets-list">${rows}${overflow}</ul>
+      </section>
+    `;
+}
+function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"]/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+    }[c]));
 }
 
 function gamecastLoadingShell() {

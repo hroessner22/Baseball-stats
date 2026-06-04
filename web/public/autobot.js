@@ -3399,6 +3399,12 @@ function bindPracticePaneHandlers(overlay) {
             refreshDrawerContent();
         });
     });
+    // Game-jump link (↗ on each row) — close the drawer so the
+    // game view becomes visible behind it. Don't preventDefault;
+    // the hash change navigation should still fire normally.
+    overlay.querySelectorAll("[data-game-jump]").forEach((a) => {
+        a.addEventListener("click", () => { closeDrawer(); });
+    });
     // Per-row expand/collapse — click a bet to reveal the full
     // rationale (factors, edge math, score) AND live tracking
     // (current bid/ask, mark-to-market, Kalshi link). State is
@@ -3774,19 +3780,25 @@ async function renderPracticeBetsPane() {
             `;
         })();
 
+        const gameLink = f.game_pk
+            ? `<a class="bot-recent-jump" href="#game/${f.game_pk}" title="Open game view" aria-label="Open game view" data-game-jump>↗</a>`
+            : "";
         return `
           <div class="bot-recent-row ${isOpen ? "is-open" : ""}">
-            <button class="bot-recent-row-head" data-fire-toggle="${escapeText(id)}" aria-expanded="${isOpen}">
-              <span class="bot-recent-chevron">${isOpen ? "▾" : "▸"}</span>
-              <span class="bot-recent-label">${label}</span>
-              <span class="bot-recent-meta">
-                <span class="${sideCls}">${sideTag}</span>
-                $${(cost/100).toFixed(2)}
-                ${resultBadge}
-                <span class="${resultCls}">${resultText}</span>
-                <span class="bot-recent-ts">${when}</span>
-              </span>
-            </button>
+            <div class="bot-recent-row-head-wrap">
+              <button class="bot-recent-row-head" data-fire-toggle="${escapeText(id)}" aria-expanded="${isOpen}">
+                <span class="bot-recent-chevron">${isOpen ? "▾" : "▸"}</span>
+                <span class="bot-recent-label">${label}</span>
+                <span class="bot-recent-meta">
+                  <span class="${sideCls}">${sideTag}</span>
+                  $${(cost/100).toFixed(2)}
+                  ${resultBadge}
+                  <span class="${resultCls}">${resultText}</span>
+                  <span class="bot-recent-ts">${when}</span>
+                </span>
+              </button>
+              ${gameLink}
+            </div>
             <div class="bot-recent-detail" ${isOpen ? "" : "hidden"}>
               ${liveSection}
               ${renderPracticeReasoning(f)}

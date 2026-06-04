@@ -2377,6 +2377,102 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-size: 10px;
 }
 
+/* ── BETS-ON-THIS-GAME STRIP ──────────────────────────────────── */
+/* Shown above the mode toggle on every game view when the user
+   has placed bets on the game. Pulls from the bot/practice fire
+   log in localStorage; hidden when the game has none. */
+
+.game-bets-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 14px;
+    margin: 12px 0 8px;
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.game-bets-strip[data-practice="true"] {
+    background: rgba(34, 197, 94, 0.05);
+    border-color: rgba(34, 197, 94, 0.28);
+}
+.game-bets-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.game-bets-tag {
+    background: rgba(56, 189, 248, 0.2);
+    color: #38BDF8;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 4px;
+}
+.game-bets-strip[data-practice="true"] .game-bets-tag {
+    background: rgba(34, 197, 94, 0.22);
+    color: #22C55E;
+}
+.game-bets-title {
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-size: 12px;
+    color: var(--text);
+}
+.game-bets-summary {
+    color: var(--text-dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+}
+.game-bets-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 4px 16px;
+    font-size: 12px;
+}
+.game-bets-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+    min-width: 0;
+}
+.game-bets-badge {
+    flex-shrink: 0;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.game-bets-badge-open { background: rgba(148, 163, 184, 0.18); color: var(--text-dim); }
+.game-bets-badge-won  { background: rgba(34, 197, 94, 0.22); color: #22C55E; }
+.game-bets-badge-lost { background: rgba(248, 113, 113, 0.22); color: #f87171; }
+.game-bets-label {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.game-bets-meta {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.game-bets-pos { color: #22C55E; font-weight: 600; font-variant-numeric: tabular-nums; }
+.game-bets-neg { color: #f87171; font-weight: 600; font-variant-numeric: tabular-nums; }
+.game-bets-overflow {
+    color: var(--text-dim);
+    font-style: italic;
+}
+
 /* ── GAMECAST ──────────────────────────────────────────────────── */
 /* Toggle bar above the game pane, segmented-control style. */
 
@@ -9597,11 +9693,16 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-recent-row.is-open {
     background: rgba(56, 189, 248, 0.04);
 }
+.bot-recent-row-head-wrap {
+    display: flex;
+    align-items: stretch;
+}
 .bot-recent-row-head {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     appearance: none;
     background: transparent;
     border: none;
@@ -9615,6 +9716,22 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-recent-row-head:hover {
     background: rgba(148, 163, 184, 0.06);
+}
+.bot-recent-jump {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    margin-left: 4px;
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 14px;
+    border-radius: 4px;
+    transition: background 120ms, color 120ms;
+}
+.bot-recent-jump:hover {
+    background: rgba(56, 189, 248, 0.15);
+    color: var(--accent-action, #38BDF8);
 }
 .bot-recent-chevron {
     color: var(--text-dim);
