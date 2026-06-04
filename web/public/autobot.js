@@ -210,6 +210,13 @@ const DEFAULTS = {
     // AND confidence are well above normal.
     huge_edge_pp:          12,     // adjusted edge ≥ 12pp = 'huge'
     huge_edge_cap_pct:     0.60,   // cap moves 50% → 60% on those
+    // CONCENTRATION CAP — max fires per (player, stat, game). Prop
+    // ladders (Cole over 6/7/8/9/10 Ks) are perfectly correlated —
+    // they all share one strikeout outcome. Stacking 5 fires across
+    // a ladder is really one 5x-sized bet on the same underlying.
+    // Default 2 = the bot picks at most 2 thresholds (best edges)
+    // per player+stat per game; the rest skip with 'concentration cap.'
+    max_fires_per_player_stat: 2,
 };
 
 const SCAN_INTERVAL_MS    = 30_000;
@@ -229,6 +236,7 @@ const _state = {
     sessionBets: new Set(),    // "ticker:side" strings we've already fired on
     deadProps:  new Set(),     // tickers permanently skipped this session (our_p≈0, pitcher pulled, PA exhaustion)
     loggedDecisions: new Set(),// ticker:side:reason already logged to Edges this session — dedup
+    playerStatFires: new Map(),// "game_pk:player_id:stat" → fire count this session (concentration cap)
     dailyLoss: { date: todayUtcDate(), cents: 0 },
     openPositions: [],         // last Kalshi.getPositions() snapshot
     scanTimer: null,
@@ -305,6 +313,7 @@ function clampSettings(s) {
         bet_no_side_player_props:   s.bet_no_side_player_props === true,   // default OFF
         practice_mode:              s.practice_mode === true,               // default OFF (real-money)
         practice_starting_bankroll_cents: clampInt(s.practice_starting_bankroll_cents, 100, 1_000_00),
+        max_fires_per_player_stat:  clampInt(s.max_fires_per_player_stat, 1, 5),
     };
 }
 function clampFloat(n, lo, hi) {
@@ -979,6 +988,26 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const key = `${ticker}:${side}`;
         if (_state.sessionBets.has(key)) continue;
 
+        // CONCENTRATION CAP — prop ladders are perfectly correlated.
+        // Cole over 6/7/8/9/10 K is one strikeout-game outcome,
+        // priced 5 different ways. Stacking 5 fires sizes the same
+        // underlying bet 5x. Limit fires per (game, player, stat)
+        // so the bot picks the top max_fires_per_player_stat
+        // thresholds and skips the rest of the ladder.
+        const groupKey = `${g.game_pk}:${mlbam}:${parsed.stat}`;
+        const firedCount = _state.playerStatFires.get(groupKey) || 0;
+        if (firedCount >= _state.settings.max_fires_per_player_stat) {
+            if (score) logScoredDecisionOnce(score, {
+                action: "skip", reason: "concentration_cap",
+                player: parsed.player, stat: parsed.stat,
+                already_fired: firedCount,
+                cap: _state.settings.max_fires_per_player_stat,
+                side,
+            });
+            log("skip", `Concentration cap — ${parsed.player} ${parsed.stat}: already ${firedCount} fires this game (cap ${_state.settings.max_fires_per_player_stat}); ladder thresholds are correlated`);
+            continue;
+        }
+
         const contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
         if (contracts < 1) {
             if (score) logScoredDecisionOnce(score, {
@@ -1097,6 +1126,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                     },
                 });
                 _state.sessionBets.add(key);
+                _state.playerStatFires.set(groupKey, firedCount + 1);
                 persistSessionBets();
                 log("buy-practice", `[PRACTICE] auto-fired ${contracts}× ${parsed.player} ${(side === "no" ? "UNDER" : "OVER")} ${parsed.threshold} ${parsed.stat} @ ${askCents}¢`);
                 toast(`Practice: ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${(side === "no" ? "UNDER" : "OVER")} @ ${askCents}¢`, "ok");
@@ -1116,6 +1146,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             // Any successful order resets the insufficient-funds streak.
             root._botInsufStreak = 0;
             _state.sessionBets.add(key);
+            _state.playerStatFires.set(groupKey, firedCount + 1);
             persistSessionBets();
             // Capture the FULL context for forward analysis.
             recordFiredBet({
@@ -4478,6 +4509,13 @@ function renderBotPane() {
                    value="${s.min_conviction.toFixed(2)}"
                    data-bot-setting-float="min_conviction">
             <small>Multi-factor confirmation required (0.40 ≈ model edge + one corroborating factor) · raise = fewer/better fires</small>
+          </label>
+          <label>
+            <span>Max fires per player+stat per game</span>
+            <input type="number" min="1" max="5" step="1"
+                   value="${s.max_fires_per_player_stat}"
+                   data-bot-setting="max_fires_per_player_stat">
+            <small>Concentration cap — prop ladders (over 6/7/8/9/10 K) are correlated, sized 1x as one bet. Default 2 = at most 2 thresholds per player+stat per game</small>
           </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.require_savant_agree ? "checked" : ""}
