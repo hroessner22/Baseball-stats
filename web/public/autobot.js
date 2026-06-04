@@ -2298,67 +2298,98 @@ function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
 
 // Settlement helpers for practice bets. Once a game ends, every
 // practice fire on that game can be graded WON / LOST against the
-// final boxscore, so the Practice tab can show real results
-// instead of leaving them at '—' forever.
+// final boxscore. Uses /api/game/{pk}/boxscore directly — works
+// for ANY date, not just today (previous impl checked /api/games/
+// today which left yesterday's fires permanently unresolved).
 //
-// One /api/games/today fetch covers status + score; one
-// /api/game/{id}/model-props fetch per (Final) game_pk covers
-// player final stats. Both are cached by the rendering loop so
-// 13 fires across 4 games = 5 network calls, not 13.
-async function fetchGameStatusMap() {
-    try {
-        const res = await fetch("/api/games/today");
-        if (!res.ok) return new Map();
-        const j = await res.json();
-        const out = new Map();
-        for (const g of (j.games || [])) out.set(g.game_pk, g);
-        return out;
-    } catch { return new Map(); }
-}
-async function fetchModelPropsForGames(gamePks) {
+// One boxscore call per unique game_pk; cached per render loop.
+const _settlementCache = new Map();   // game_pk → { t, data }
+const SETTLEMENT_TTL_MS = 5 * 60 * 1000;  // 5min: Finals don't change
+async function fetchBoxscoreForGames(gamePks) {
     const out = new Map();
     const results = await Promise.allSettled(gamePks.map(async (pk) => {
+        const cached = _settlementCache.get(pk);
+        if (cached && Date.now() - cached.t < SETTLEMENT_TTL_MS) {
+            return { pk, d: cached.data };
+        }
         try {
-            const res = await fetch(`/api/game/${pk}/model-props`);
+            const res = await fetch(`/api/game/${pk}/boxscore`);
             if (!res.ok) return null;
             const d = await res.json();
+            if (d.status === "Final") {
+                _settlementCache.set(pk, { t: Date.now(), data: d });
+            }
             return { pk, d };
         } catch { return null; }
     }));
     for (const r of results) {
-        if (r.status === "fulfilled" && r.value) out.set(r.value.pk, r.value.d);
+        if (r.status === "fulfilled" && r.value?.d) out.set(r.value.pk, r.value.d);
     }
     return out;
+}
+function findPlayerLine(lines, mlbam, playerName) {
+    if (!Array.isArray(lines)) return null;
+    const want = String(mlbam || "");
+    const target = normName(playerName || "");
+    for (const ln of lines) {
+        if (want && String(ln.mlbam) === want) return ln;
+        if (target && normName(ln.name) === target) return ln;
+    }
+    return null;
+}
+function boxscoreStatForProp(boxscore, playerName, stat) {
+    if (!boxscore) return null;
+    if (stat === "strikeouts") {
+        // Pitcher prop — check pitching lines on both sides.
+        for (const side of ["home", "away"]) {
+            const ln = findPlayerLine(boxscore.pitching?.[side], null, playerName);
+            if (ln) return ln.K ?? 0;
+        }
+        return null;
+    }
+    // Hitter prop — check batting lines on both sides.
+    for (const side of ["home", "away"]) {
+        const ln = findPlayerLine(boxscore.batting?.[side], null, playerName);
+        if (!ln) continue;
+        if (stat === "hits")        return ln.H  ?? 0;
+        if (stat === "home_runs")   return ln.HR ?? 0;
+        if (stat === "total_bases") {
+            return (ln.H || 0)
+                 + (ln._2B || 0)
+                 + 2 * (ln._3B || 0)
+                 + 3 * (ln.HR || 0);
+        }
+    }
+    return null;
 }
 // Returns { settled, won, profit_cents } or null when not yet
 // graded. Profit is in cents: +contracts*(100-price) on a win,
 // -contracts*price on a loss.
-function settleFire(f, gameInfo, modelProps) {
-    if (!gameInfo || gameInfo.status !== "Final") return null;
+function settleFire(f, boxscore) {
+    if (!boxscore || boxscore.status !== "Final") return null;
     const contracts  = f.contracts || 1;
     const price      = f.price_cents || 0;
     const profitWin  =  contracts * (100 - price);
     const profitLoss = -contracts * price;
 
     if (f.kind === "moneyline") {
-        const homeWon = (gameInfo.home_score ?? 0) > (gameInfo.away_score ?? 0);
-        const awayWon = (gameInfo.away_score ?? 0) > (gameInfo.home_score ?? 0);
-        const betTeam = String(f.bet_team || "").toUpperCase();
-        const homeAbbr = String(gameInfo.home?.abbr || gameInfo.home || "").toUpperCase();
-        const awayAbbr = String(gameInfo.away?.abbr || gameInfo.away || "").toUpperCase();
-        const betHome = betTeam === homeAbbr;
-        const betAway = betTeam === awayAbbr;
-        if (!betHome && !betAway) return null;        // can't resolve
+        const totals  = boxscore.line_score?.totals || {};
+        const homeRun = totals.home?.runs ?? 0;
+        const awayRun = totals.away?.runs ?? 0;
+        const homeWon = homeRun > awayRun;
+        const awayWon = awayRun > homeRun;
+        const betTeam  = String(f.bet_team || "").toUpperCase();
+        const homeAbbr = String(boxscore.teams?.home?.abbr || "").toUpperCase();
+        const awayAbbr = String(boxscore.teams?.away?.abbr || "").toUpperCase();
+        const betHome  = betTeam === homeAbbr;
+        const betAway  = betTeam === awayAbbr;
+        if (!betHome && !betAway) return null;
         const yesWon = betHome ? homeWon : awayWon;
-        // Moneyline practice fires always entered on YES side.
         const won = yesWon;
         return { settled: true, won, profit_cents: won ? profitWin : profitLoss };
     }
     if (f.kind === "player_prop") {
-        if (!modelProps) return null;
-        const mlbam = modelProps.name_to_mlbam?.[normName(f.player || "")];
-        if (!mlbam) return null;
-        const finalStat = liveStatForBet(modelProps, mlbam, f.stat);
+        const finalStat = boxscoreStatForProp(boxscore, f.player, f.stat);
         if (finalStat == null) return null;
         const yesWon = finalStat >= (f.threshold || 0);
         const won    = (f.side === "yes") ? yesWon : !yesWon;
@@ -3367,24 +3398,21 @@ async function renderPracticeBetsPane() {
             if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
         }
     }
-    // Fetch game statuses + final stats for SETTLED practice fires
-    // so each row can show WON / LOST instead of leaving it at '—'.
-    const gameMap = await fetchGameStatusMap();
-    const finalGamePks = [...new Set(
-        fires.map((f) => f.game_pk)
-            .filter((pk) => gameMap.get(pk)?.status === "Final")
-    )];
-    const modelPropsMap = finalGamePks.length
-        ? await fetchModelPropsForGames(finalGamePks)
+    // Fetch boxscores for each unique game_pk in the fire log.
+    // Boxscore works for any game (yesterday's included) and has
+    // final scores + per-player stats in one call. Settles bets
+    // whose game is Final and leaves the rest on mark-to-market.
+    const uniqueGamePks = [...new Set(fires.map((f) => f.game_pk).filter(Boolean))];
+    const boxscoreMap = uniqueGamePks.length
+        ? await fetchBoxscoreForGames(uniqueGamePks)
         : new Map();
 
     let totalCost = 0, totalLive = 0;
     let settledWon = 0, settledLost = 0, settledNet = 0;
     const rows = fires.slice(0, 100).map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
-        const gameInfo = gameMap.get(f.game_pk);
-        const mp = modelPropsMap.get(f.game_pk);
-        const result = settleFire(f, gameInfo, mp);
+        const boxscore = boxscoreMap.get(f.game_pk);
+        const result = settleFire(f, boxscore);
 
         let resultText = "—", resultCls = "", resultBadge = "";
         if (result?.settled) {
