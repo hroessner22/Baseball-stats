@@ -4488,25 +4488,22 @@ function perfSparkline(days) {
 }
 
 
-// Natural-language bet label, used everywhere a fire is rendered.
-// Kalshi props are all OVER-type markets ("Player: X+ stat?"). The
-// market itself is fixed; YES vs NO tells direction. Labeling NO
-// fires as 'under N stat' doubled up with the visible NO tag and
-// read weirdly ('under 1 hits'). User direction (2026-06-04):
-// 'If you take "no" on the under, put over there.' → always use
-// 'over N stat'; the YES / NO side chip carries the direction.
+// Natural-language bet label using Kalshi's native 'N+ stat'
+// market notation. The YES/NO chip rendered alongside tells the
+// bet direction. User direction (2026-06-04): 'use "7+" rather
+// than over 7 if thats what you mean.'
 //
 // Examples:
 //   { side: 'yes', stat: 'total_bases', threshold: 2, player: 'A. Judge' }
-//     → 'A. Judge over 2 total bases' + YES tag
+//     → 'A. Judge 2+ total bases' + YES tag
 //   { side: 'no', stat: 'hits',  threshold: 1, player: 'B. Buxton' }
-//     → 'B. Buxton over 1 hit' + NO tag (we bet he WON'T hit)
+//     → 'B. Buxton 1+ hit' + NO tag (we bet he WON'T reach 1+)
 //   { kind: 'moneyline', bet_team: 'NYY', matchup: 'NYY@TB' }
 //     → 'NYY moneyline (NYY@TB)'
 function betLabel(f) {
     if (f.kind === "player_prop" && f.player && f.stat) {
         const statText  = statFullName(f.stat, f.threshold);
-        return `${f.player} over ${f.threshold} ${statText}`;
+        return `${f.player} ${f.threshold}+ ${statText}`;
     }
     if (f.bet_team && f.matchup) {
         return `${f.bet_team} moneyline (${f.matchup})`;

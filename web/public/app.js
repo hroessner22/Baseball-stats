@@ -3754,10 +3754,10 @@ function renderGameBetsSection(gamePk) {
     const source = practiceMode ? practice : real;
     const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
     if (!onGame.length) return "";
-    // Match the bot's betLabel convention: always 'over N stat'
-    // for prop markets; the YES/NO chip carries the bet direction.
-    // Pluralize stat name based on threshold so it reads 'over 1
-    // hit' not 'over 1 hits.' User direction 2026-06-04.
+    // Use Kalshi's native 'N+ stat' market notation. The YES/NO
+    // chip carries the bet direction (in the strip, the (YES)/(NO)
+    // suffix on each label since we don't render chips here).
+    // User direction (2026-06-04): 'use "7+" rather than over 7.'
     const statPluralName = (stat, threshold) => {
         const plural = threshold !== 1;
         switch (stat) {
@@ -3772,7 +3772,7 @@ function renderGameBetsSection(gamePk) {
         if (f.kind === "moneyline") return `${f.bet_team || ""} ML YES`;
         const stat = statPluralName(f.stat, f.threshold || 0);
         const side = (f.side || "yes") === "no" ? "NO" : "YES";
-        return `${f.player || ""} over ${f.threshold || ""} ${stat} (${side})`;
+        return `${f.player || ""} ${f.threshold || ""}+ ${stat} (${side})`;
     };
     const totalCost = onGame.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
     const settled  = onGame.filter((f) => f.settled);
@@ -3783,7 +3783,10 @@ function renderGameBetsSection(gamePk) {
     const realizedTxt = (won + lost) > 0
         ? ` · settled ${won}–${lost} <strong class="${realizedCls}">${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</strong>`
         : "";
-    const rows = onGame.slice(0, 12).map((f) => {
+    // Show every bet — user direction (2026-06-04): 'Show the
+    // three more, and so you dont need the dots.' No overflow
+    // truncation; labels wrap to a new line instead of ellipsing.
+    const rows = onGame.map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const settled = f.settled;
         const badge = settled
@@ -3800,7 +3803,7 @@ function renderGameBetsSection(gamePk) {
           </li>
         `;
     }).join("");
-    const overflow = onGame.length > 12 ? `<li class="game-bets-overflow">+${onGame.length - 12} more</li>` : "";
+    const overflow = "";
     return `
       <section class="game-bets-strip" data-practice="${practiceMode ? 'true' : 'false'}">
         <header class="game-bets-head">
@@ -3888,7 +3891,44 @@ function renderGamecast(plays, predictionMap, teams) {
     }
     return `
       <div class="gamecast-list">
-        ${plays.map((p) => renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`], teams)).join("")}
+        ${plays.map((p) => p.type === "baserunning"
+            ? renderBaserunningRow(p, teams)
+            : renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`], teams)
+        ).join("")}
+      </div>
+    `;
+}
+
+// Thin one-line event strip between PA blocks. Stolen bases,
+// wild pitches, passed balls, balks, pickoffs — anything that
+// moved a runner without a plate appearance. Mirrors the PA
+// header chips (inning, score, WE swing) so the gamecast flows
+// as one continuous story instead of skipping over runner moves.
+function renderBaserunningRow(ev, teams) {
+    const inn = `${ev.half === "top" ? "▲" : "▼"} ${ordinalSuffix(ev.inning)}`;
+    const score = ev.score_after
+        ? `${ev.score_after.away}-${ev.score_after.home}`
+        : "";
+    const weDelta = ev.we_delta_home;
+    let weChip = "";
+    if (weDelta != null && Math.abs(weDelta) >= 0.0005 && teams) {
+        const winnerAbbr = weDelta >= 0
+            ? (teams.home?.abbr || "HOME")
+            : (teams.away?.abbr || "AWAY");
+        const sign = weDelta >= 0 ? "+" : "+";
+        weChip = `<span class="br-we-delta">${winnerAbbr} ${sign}${Math.abs(weDelta * 100).toFixed(1)}pp WE</span>`;
+    }
+    const runnerName = ev.runner_name
+        ? `<a class="br-runner player-link" href="#player/${ev.runner_id}">${escapeHtml(shortName(ev.runner_name))}</a>`
+        : "";
+    return `
+      <div class="br-row" data-event-type="${escapeHtml(ev.event_type)}">
+        <span class="br-inning">${inn}</span>
+        <span class="br-event">${escapeHtml(ev.event_label)}</span>
+        ${runnerName}
+        <span class="br-desc">${escapeHtml(ev.description)}</span>
+        ${score ? `<span class="br-score">${score}</span>` : ""}
+        ${weChip}
       </div>
     `;
 }

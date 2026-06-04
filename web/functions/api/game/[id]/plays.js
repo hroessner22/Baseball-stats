@@ -213,20 +213,52 @@ function parsePlays(data) {
     for (let i = 0; i < allPlays.length; i++) {
         const p = allPlays[i];
         const r = p.result || {};
+        const eventType = r.eventType || "";
+        const about = p.about || {};
+
+        // BASERUNNING EVENTS — stolen bases, wild pitches, passed
+        // balls, balks, pickoffs, advances on errors. Emit as a
+        // thin event row between PA blocks so the user can see
+        // how a runner got into scoring position outside the
+        // batter's PA. User direction (2026-06-04): 'If someone
+        // steals, you need to add that in here, or advances on a
+        // wild pitch etc.'
+        if (NON_PA_EVENT_TYPES.has(eventType)) {
+            const sb = states[i].before;
+            const sa = states[i].after;
+            const weBefore = lookupWE(sb.inning, sb.half, sb.outs, sb.bases, sb.home - sb.away);
+            const weAfter  = lookupWE(sa.inning, sa.half, sa.outs, sa.bases, sa.home - sa.away);
+            const weDelta  = (weBefore != null && weAfter != null) ? (weAfter - weBefore) : null;
+            const runner = (p.runners || []).find((rn) => rn.details?.runner);
+            out.push({
+                play_index: i,
+                type: "baserunning",
+                event_type: eventType,
+                event_label: r.event || prettifyEventType(eventType),
+                inning: about.inning,
+                half: about.isTopInning ? "top" : "bottom",
+                description: r.description || "",
+                runner_name: runner?.details?.runner?.fullName || null,
+                runner_id:   runner?.details?.runner?.id || null,
+                score_after: r.awayScore != null && r.homeScore != null
+                    ? { away: r.awayScore, home: r.homeScore }
+                    : null,
+                we_delta_home: weDelta,
+            });
+            continue;
+        }
+
         if (r.type !== "atBat") continue;
         // Skip PAs still in progress — they don't have a resolved
         // event yet, so there's nothing meaningful to compare the
         // model's prediction against.
         if (p.about?.isComplete === false) continue;
-        const eventType = r.eventType || "";
-        if (NON_PA_EVENT_TYPES.has(eventType)) continue;
 
         const matchup = p.matchup || {};
         const batter = matchup.batter || {};
         const pitcher = matchup.pitcher || {};
         if (!batter.id || !pitcher.id) continue;
 
-        const about = p.about || {};
         const finalCount = p.count || {};
         const score = r.awayScore != null && r.homeScore != null
             ? { away: r.awayScore, home: r.homeScore }
@@ -242,6 +274,7 @@ function parsePlays(data) {
 
         out.push({
             play_index: i,
+            type: "PA",
             inning: about.inning,
             half: about.isTopInning ? "top" : "bottom",
             outs_after: finalCount.outs ?? null,
@@ -271,6 +304,36 @@ function parsePlays(data) {
     // Most recent first — the gamecast scrolls top-down through "what
     // just happened" before older PAs.
     return out.reverse();
+}
+
+// Map raw eventType (snake_case) to a short user-facing label
+// when MLB's result.event isn't already set. Covers the
+// non-PA event types we surface in the gamecast.
+function prettifyEventType(t) {
+    switch (t) {
+        case "stolen_base_2b":       return "Stolen Base (2B)";
+        case "stolen_base_3b":       return "Stolen Base (3B)";
+        case "stolen_base_home":     return "Stolen Base (Home)";
+        case "caught_stealing_2b":   return "Caught Stealing (2B)";
+        case "caught_stealing_3b":   return "Caught Stealing (3B)";
+        case "caught_stealing_home": return "Caught Stealing (Home)";
+        case "pickoff_caught_stealing_2b":   return "Pickoff/CS (2B)";
+        case "pickoff_caught_stealing_3b":   return "Pickoff/CS (3B)";
+        case "pickoff_caught_stealing_home": return "Pickoff/CS (Home)";
+        case "pickoff_1b":           return "Pickoff (1B)";
+        case "pickoff_2b":           return "Pickoff (2B)";
+        case "pickoff_3b":           return "Pickoff (3B)";
+        case "wild_pitch":           return "Wild Pitch";
+        case "passed_ball":          return "Passed Ball";
+        case "balk":                 return "Balk";
+        case "defensive_indiff":     return "Defensive Indifference";
+        case "other_advance":        return "Runner Advance";
+        case "runner_double_play":   return "Runner Double Play";
+        case "runner_placed":        return "Runner Placed";
+        case "game_advisory":        return "Game Advisory";
+        case "ejection":             return "Ejection";
+        default: return String(t || "").replace(/_/g, " ");
+    }
 }
 
 function parsePitches(playEvents) {
