@@ -2296,6 +2296,77 @@ function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
     return null;
 }
 
+// Settlement helpers for practice bets. Once a game ends, every
+// practice fire on that game can be graded WON / LOST against the
+// final boxscore, so the Practice tab can show real results
+// instead of leaving them at '—' forever.
+//
+// One /api/games/today fetch covers status + score; one
+// /api/game/{id}/model-props fetch per (Final) game_pk covers
+// player final stats. Both are cached by the rendering loop so
+// 13 fires across 4 games = 5 network calls, not 13.
+async function fetchGameStatusMap() {
+    try {
+        const res = await fetch("/api/games/today");
+        if (!res.ok) return new Map();
+        const j = await res.json();
+        const out = new Map();
+        for (const g of (j.games || [])) out.set(g.game_pk, g);
+        return out;
+    } catch { return new Map(); }
+}
+async function fetchModelPropsForGames(gamePks) {
+    const out = new Map();
+    const results = await Promise.allSettled(gamePks.map(async (pk) => {
+        try {
+            const res = await fetch(`/api/game/${pk}/model-props`);
+            if (!res.ok) return null;
+            const d = await res.json();
+            return { pk, d };
+        } catch { return null; }
+    }));
+    for (const r of results) {
+        if (r.status === "fulfilled" && r.value) out.set(r.value.pk, r.value.d);
+    }
+    return out;
+}
+// Returns { settled, won, profit_cents } or null when not yet
+// graded. Profit is in cents: +contracts*(100-price) on a win,
+// -contracts*price on a loss.
+function settleFire(f, gameInfo, modelProps) {
+    if (!gameInfo || gameInfo.status !== "Final") return null;
+    const contracts  = f.contracts || 1;
+    const price      = f.price_cents || 0;
+    const profitWin  =  contracts * (100 - price);
+    const profitLoss = -contracts * price;
+
+    if (f.kind === "moneyline") {
+        const homeWon = (gameInfo.home_score ?? 0) > (gameInfo.away_score ?? 0);
+        const awayWon = (gameInfo.away_score ?? 0) > (gameInfo.home_score ?? 0);
+        const betTeam = String(f.bet_team || "").toUpperCase();
+        const homeAbbr = String(gameInfo.home?.abbr || gameInfo.home || "").toUpperCase();
+        const awayAbbr = String(gameInfo.away?.abbr || gameInfo.away || "").toUpperCase();
+        const betHome = betTeam === homeAbbr;
+        const betAway = betTeam === awayAbbr;
+        if (!betHome && !betAway) return null;        // can't resolve
+        const yesWon = betHome ? homeWon : awayWon;
+        // Moneyline practice fires always entered on YES side.
+        const won = yesWon;
+        return { settled: true, won, profit_cents: won ? profitWin : profitLoss };
+    }
+    if (f.kind === "player_prop") {
+        if (!modelProps) return null;
+        const mlbam = modelProps.name_to_mlbam?.[normName(f.player || "")];
+        if (!mlbam) return null;
+        const finalStat = liveStatForBet(modelProps, mlbam, f.stat);
+        if (finalStat == null) return null;
+        const yesWon = finalStat >= (f.threshold || 0);
+        const won    = (f.side === "yes") ? yesWon : !yesWon;
+        return { settled: true, won, profit_cents: won ? profitWin : profitLoss };
+    }
+    return null;
+}
+
 function liveStatForBet(modelProps, playerMlbam, stat) {
     if (!modelProps?.lineups || !playerMlbam) return null;
     const want = String(playerMlbam);
@@ -3284,7 +3355,7 @@ async function renderPracticeBetsPane() {
           </div>
         `;
     }
-    // Pull live bid per ticker so each row shows mark-to-market.
+    // Pull live bid per ticker for mark-to-market on still-open bets.
     const tickers = [...new Set(fires.map((f) => f.ticker))];
     const obMap = new Map();
     if (root.Kalshi && root.Kalshi.getOrderbook) {
@@ -3296,21 +3367,49 @@ async function renderPracticeBetsPane() {
             if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
         }
     }
+    // Fetch game statuses + final stats for SETTLED practice fires
+    // so each row can show WON / LOST instead of leaving it at '—'.
+    const gameMap = await fetchGameStatusMap();
+    const finalGamePks = [...new Set(
+        fires.map((f) => f.game_pk)
+            .filter((pk) => gameMap.get(pk)?.status === "Final")
+    )];
+    const modelPropsMap = finalGamePks.length
+        ? await fetchModelPropsForGames(finalGamePks)
+        : new Map();
+
     let totalCost = 0, totalLive = 0;
+    let settledWon = 0, settledLost = 0, settledNet = 0;
     const rows = fires.slice(0, 100).map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
-        const ob   = obMap.get(f.ticker);
-        const liveBid = ob
-            ? (f.side === "no" ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob))
-            : null;
-        let pnlText = "—", pnlCls = "";
-        if (liveBid != null) {
-            const liveVal = (f.contracts || 1) * liveBid;
-            const pnl = liveVal - cost;
-            pnlCls = pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
-            pnlText = `${pnl >= 0 ? "+" : ""}$${(pnl/100).toFixed(2)}`;
-            totalCost += cost;
-            totalLive += liveVal;
+        const gameInfo = gameMap.get(f.game_pk);
+        const mp = modelPropsMap.get(f.game_pk);
+        const result = settleFire(f, gameInfo, mp);
+
+        let resultText = "—", resultCls = "", resultBadge = "";
+        if (result?.settled) {
+            const sign = result.won ? "+" : "";
+            resultText = `${sign}$${(result.profit_cents/100).toFixed(2)}`;
+            resultCls  = result.won ? "bot-pl-pos" : "bot-pl-neg";
+            resultBadge = result.won
+                ? `<span class="bot-result-badge bot-result-won">WON</span>`
+                : `<span class="bot-result-badge bot-result-lost">LOST</span>`;
+            settledNet += result.profit_cents;
+            if (result.won) settledWon++; else settledLost++;
+        } else {
+            // Still open — fall back to live mark-to-market.
+            const ob = obMap.get(f.ticker);
+            const liveBid = ob
+                ? (f.side === "no" ? orderbookNoBidCents(ob) : orderbookYesBidCents(ob))
+                : null;
+            if (liveBid != null) {
+                const liveVal = (f.contracts || 1) * liveBid;
+                const pnl = liveVal - cost;
+                resultCls  = pnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+                resultText = `${pnl >= 0 ? "+" : ""}$${(pnl/100).toFixed(2)}`;
+                totalCost += cost;
+                totalLive += liveVal;
+            }
         }
         const label = escapeText(betLabel(f));
         const sideTag = f.side === "no" ? "NO" : "YES";
@@ -3322,22 +3421,27 @@ async function renderPracticeBetsPane() {
             <span class="bot-recent-meta">
               <span class="${sideCls}">${sideTag}</span>
               $${(cost/100).toFixed(2)}
-              ${liveBid != null ? `→ ${liveBid}¢` : ""}
-              <span class="${pnlCls}">${pnlText}</span>
+              ${resultBadge}
+              <span class="${resultCls}">${resultText}</span>
               <span class="bot-recent-ts">${when}</span>
             </span>
           </div>
         `;
     }).join("");
-    const totalPnl = totalLive - totalCost;
-    const totalCls = totalPnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
-    const totalTxt = `${totalPnl >= 0 ? "+" : ""}$${(totalPnl/100).toFixed(2)}`;
+    const openPnl = totalLive - totalCost;
+    const openCls = openPnl >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+    const openTxt = `${openPnl >= 0 ? "+" : ""}$${(openPnl/100).toFixed(2)}`;
+    const settledCls = settledNet >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+    const settledTxt = `${settledNet >= 0 ? "+" : ""}$${(settledNet/100).toFixed(2)}`;
+    const settledLine = (settledWon + settledLost) > 0
+        ? ` · settled ${settledWon}–${settledLost} <strong class="${settledCls}">${settledTxt}</strong>`
+        : "";
     return `
       ${banner}
       <div class="bot-recent-section">
         <div class="bot-recent-head">
           Practice bets · ${fires.length} placed
-          <span class="bot-recent-hint">live mark-to-market <strong class="${totalCls}">${totalTxt}</strong></span>
+          <span class="bot-recent-hint">open mark-to-market <strong class="${openCls}">${openTxt}</strong>${settledLine}</span>
         </div>
         <div class="bot-recent-list">${rows}</div>
       </div>
