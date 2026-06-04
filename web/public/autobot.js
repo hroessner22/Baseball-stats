@@ -3561,6 +3561,83 @@ function renderDecisionsPane() {
 
 // ── Open Bets pane ────────────────────────────────────────────────
 
+// Inline progress strip on each open bet row — current live stat
+// vs the prop threshold, or score + inning for moneylines. Mimics
+// how DraftKings / FanDuel show 'K: 3 / 5 needed' under the
+// pending bet so you don't have to drill in.
+function renderBetProgress(f, boxscore) {
+    if (f.settled) return "";
+    if (!boxscore) return "";
+    if (f.kind === "player_prop") {
+        const current = boxscoreStatForProp(boxscore, f.player, f.stat);
+        if (current == null) return "";
+        const threshold = f.threshold || 0;
+        const pct = threshold > 0
+            ? Math.min(100, (current / threshold) * 100)
+            : 0;
+        const isYes = (f.side || "yes") === "yes";
+        // YES wants current to reach threshold (good when bar fills).
+        // NO wants current to stay BELOW threshold (bad when bar fills).
+        const fillCls = isYes ? "bot-progress-fill-yes" : "bot-progress-fill-no";
+        const statShort = shortStatLabel(f.stat).toUpperCase();
+        const status = isYes
+            ? (current >= threshold ? "✓ HIT" : `${threshold - current} more to win`)
+            : (current >= threshold ? "✗ HIT" : `room for ${threshold - 1 - current} more`);
+        const statusCls = isYes
+            ? (current >= threshold ? "bot-pl-pos" : "")
+            : (current >= threshold ? "bot-pl-neg" : "");
+        return `
+          <div class="bot-progress">
+            <div class="bot-progress-row">
+              <span class="bot-progress-stat">${statShort}: <strong>${current}</strong> / ${threshold}</span>
+              <span class="bot-progress-status ${statusCls}">${status}</span>
+            </div>
+            <div class="bot-progress-track">
+              <span class="bot-progress-fill ${fillCls}" style="width:${pct.toFixed(0)}%"></span>
+              ${threshold > 0 ? `<span class="bot-progress-threshold" style="left:100%"></span>` : ""}
+            </div>
+          </div>
+        `;
+    }
+    if (f.kind === "moneyline") {
+        const totals = boxscore.line_score?.totals || {};
+        const home = totals.home?.runs ?? 0;
+        const away = totals.away?.runs ?? 0;
+        const homeAbbr = boxscore.teams?.home?.abbr || "HOME";
+        const awayAbbr = boxscore.teams?.away?.abbr || "AWAY";
+        const betTeam = String(f.bet_team || "").toUpperCase();
+        const betHome = betTeam === String(homeAbbr).toUpperCase();
+        const ourScore  = betHome ? home : away;
+        const oppScore  = betHome ? away : home;
+        const status = ourScore > oppScore
+            ? "winning"
+            : ourScore < oppScore
+                ? "losing"
+                : "tied";
+        const statusCls = ourScore > oppScore
+            ? "bot-pl-pos"
+            : ourScore < oppScore
+                ? "bot-pl-neg"
+                : "";
+        const inningsArr = boxscore.line_score?.innings || [];
+        const completed  = inningsArr.length;
+        const totalInn   = boxscore.line_score?.scheduled_innings || 9;
+        const innPct = Math.min(100, (completed / totalInn) * 100);
+        return `
+          <div class="bot-progress">
+            <div class="bot-progress-row">
+              <span class="bot-progress-stat">${awayAbbr} ${away} – ${home} ${homeAbbr}</span>
+              <span class="bot-progress-status ${statusCls}">${betTeam} ${status} · ${boxscore.status === "Final" ? "Final" : `${completed} of ${totalInn} inn`}</span>
+            </div>
+            <div class="bot-progress-track">
+              <span class="bot-progress-fill ${ourScore > oppScore ? "bot-progress-fill-yes" : "bot-progress-fill-no"}" style="width:${innPct.toFixed(0)}%"></span>
+            </div>
+          </div>
+        `;
+    }
+    return "";
+}
+
 async function renderPracticeBetsPane() {
     // Grade any finished games BEFORE reading the bankroll so the
     // banner reflects realized P/L like a real account.
@@ -3654,6 +3731,17 @@ async function renderPracticeBetsPane() {
             if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
         }
     }
+    // Fetch boxscores for the games of every OPEN bet so the row
+    // can show live progress without the user clicking in. Live
+    // games re-fetch each render (short cache); Finals are cached
+    // 5 min. User direction (2026-06-04): show progress like
+    // other sportsbooks do.
+    const openGamePks = [...new Set(
+        fires.filter((f) => !f.settled && f.game_pk).map((f) => f.game_pk)
+    )];
+    const progressBoxscoreMap = openGamePks.length
+        ? await fetchBoxscoreForGames(openGamePks)
+        : new Map();
     // Active / History filter. Active = open (unsettled). History
     // = everything. Persisted to localStorage so the toggle survives
     // reloads.
@@ -3783,6 +3871,7 @@ async function renderPracticeBetsPane() {
         const gameLink = f.game_pk
             ? `<a class="bot-recent-jump" href="#game/${f.game_pk}" title="Open game view" aria-label="Open game view" data-game-jump>↗</a>`
             : "";
+        const progressHtml = renderBetProgress(f, progressBoxscoreMap.get(f.game_pk));
         return `
           <div class="bot-recent-row ${isOpen ? "is-open" : ""}">
             <div class="bot-recent-row-head-wrap">
@@ -3799,6 +3888,7 @@ async function renderPracticeBetsPane() {
               </button>
               ${gameLink}
             </div>
+            ${progressHtml}
             <div class="bot-recent-detail" ${isOpen ? "" : "hidden"}>
               ${liveSection}
               ${renderPracticeReasoning(f)}

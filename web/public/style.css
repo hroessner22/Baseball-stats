@@ -9825,6 +9825,60 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: rgba(15, 23, 42, 0.4);
 }
 .bot-recent-detail[hidden] { display: none; }
+
+/* Inline progress strip on each open bet row. Mimics the live
+   progress sportsbooks show on pending wagers: 'K: 3 / 5 — 2 more
+   to win' plus a thin bar that fills as the player accumulates
+   the stat. YES bets fill green (toward win); NO bets fill amber
+   (toward loss). */
+.bot-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 16px 10px 28px;
+    border-top: 1px dashed rgba(148, 163, 184, 0.1);
+}
+.bot-recent-row.is-open .bot-progress {
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.1);
+}
+.bot-progress-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.bot-progress-stat {
+    letter-spacing: 0.04em;
+}
+.bot-progress-stat strong {
+    color: var(--text);
+    font-weight: 700;
+}
+.bot-progress-status {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.bot-progress-track {
+    position: relative;
+    height: 4px;
+    background: rgba(148, 163, 184, 0.18);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.bot-progress-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    border-radius: 999px;
+    transition: width 300ms;
+}
+.bot-progress-fill-yes {
+    background: linear-gradient(90deg, #22C55E, #38BDF8);
+}
+.bot-progress-fill-no {
+    background: linear-gradient(90deg, #F59E0B, #f87171);
+}
 .bot-recent-detail a {
     color: var(--accent-action, #38BDF8);
     text-decoration: none;
