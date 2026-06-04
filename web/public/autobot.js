@@ -1699,31 +1699,88 @@ function declinePracticeBet(id, userNote) {
 //   position resolves. The Practice tab UI shows BOTH numbers:
 //   available + total wealth (including open MTM).
 function computePracticeBankroll() {
+    // Real-money behavior: starting balance + realized P/L on settled
+    // bets - cost locked up in still-open bets. A won bet returns its
+    // cost AND adds profit; a lost bet is just gone; an open bet ties
+    // up its cost but isn't yet realized.
     const starting = _state.settings.practice_starting_bankroll_cents;
     const fires = getPracticeFires();
-    let totalCost = 0;
+    let openCost   = 0;
+    let realizedPnl = 0;
+    let settledWon  = 0;
+    let settledLost = 0;
     for (const f of fires) {
-        totalCost += (f.contracts || 0) * (f.price_cents || 0);
+        const cost = (f.contracts || 0) * (f.price_cents || 0);
+        const settled = f.settled;
+        if (settled) {
+            realizedPnl += (settled.profit_cents || 0);
+            if (settled.won) settledWon++; else settledLost++;
+        } else {
+            openCost += cost;
+        }
     }
+    const balance   = starting + realizedPnl;
+    const available = Math.max(0, balance - openCost);
     return {
-        starting_cents: starting,
-        total_cost_cents: totalCost,
-        available_cents:  Math.max(0, starting - totalCost),
+        starting_cents:    starting,
+        total_cost_cents:  openCost,   // legacy alias — open-bet cost only
+        realized_pnl_cents: realizedPnl,
+        balance_cents:     balance,    // starting + realized
+        available_cents:   available,  // balance - open cost
+        settled_won:       settledWon,
+        settled_lost:      settledLost,
     };
 }
 
 // Kind-split open exposure for practice fires — used so the same
 // 50/50 split that constrains real-money fires also constrains
-// practice fires, scaled to the practice bankroll. Returns cost
-// (contracts × price) accumulated across ALL practice fires by kind.
+// practice fires, scaled to the practice bankroll. Only OPEN (un-
+// settled) fires count against the cap; settled bets have already
+// resolved and freed (or burned) their capital.
 function computePracticeExposureByKind() {
     let moneyline = 0, player_prop = 0;
     for (const f of getPracticeFires()) {
+        if (f.settled) continue;
         const cost = (f.contracts || 0) * (f.price_cents || 0);
         if (f.kind === "moneyline") moneyline += cost;
         else                         player_prop += cost;
     }
     return { moneyline, player_prop, unknown: 0 };
+}
+
+// Settle any pending practice fires whose games have finished.
+// Mutates the practice-fires array in localStorage in place so the
+// next computePracticeBankroll picks up realized P/L. Skipped fires
+// (no boxscore, game not Final yet) stay open. Idempotent.
+async function settleFinishedPracticeFires() {
+    const fires = getPracticeFires();
+    const pendingGamePks = [...new Set(
+        fires
+            .filter((f) => !f.settled && f.game_pk)
+            .map((f) => f.game_pk)
+    )];
+    if (!pendingGamePks.length) return { newlySettled: 0 };
+    const boxscoreMap = await fetchBoxscoreForGames(pendingGamePks);
+    let newlySettled = 0;
+    let mutated = false;
+    for (const f of fires) {
+        if (f.settled) continue;
+        const box = boxscoreMap.get(f.game_pk);
+        const result = settleFire(f, box);
+        if (result && result.settled) {
+            f.settled = {
+                won:          result.won,
+                profit_cents: result.profit_cents,
+                settled_at:   new Date().toISOString(),
+            };
+            newlySettled++;
+            mutated = true;
+        }
+    }
+    if (mutated) {
+        try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(fires)); } catch {}
+    }
+    return { newlySettled };
 }
 
 
@@ -3366,14 +3423,22 @@ function renderDecisionsPane() {
 // ── Open Bets pane ────────────────────────────────────────────────
 
 async function renderPracticeBetsPane() {
+    // Grade any finished games BEFORE reading the bankroll so the
+    // banner reflects realized P/L like a real account.
+    await settleFinishedPracticeFires();
     const fires = getPracticeFires();
     const bankroll = computePracticeBankroll();
+    const realizedTxt = bankroll.realized_pnl_cents === 0
+        ? ""
+        : ` · realized <strong class="${bankroll.realized_pnl_cents >= 0 ? "bot-pl-pos" : "bot-pl-neg"}">${bankroll.realized_pnl_cents >= 0 ? "+" : ""}$${(bankroll.realized_pnl_cents/100).toFixed(2)}</strong>`;
+    const recordTxt = (bankroll.settled_won + bankroll.settled_lost) > 0
+        ? ` · ${bankroll.settled_won}–${bankroll.settled_lost}`
+        : "";
     const banner = `
       <div class="bot-status-banner bot-practice-banner">
         <span class="bot-status-row">
           <span class="bot-practice-mode-on" style="margin-right:8px">PRACTICE</span>
-          Virtual bankroll: <strong>$${(bankroll.available_cents/100).toFixed(2)}</strong> of $${(bankroll.starting_cents/100).toFixed(2)} ·
-          ${fires.length} practice bet${fires.length === 1 ? "" : "s"} placed
+          Balance: <strong>$${(bankroll.balance_cents/100).toFixed(2)}</strong> (started $${(bankroll.starting_cents/100).toFixed(2)})${realizedTxt}${recordTxt} · available <strong>$${(bankroll.available_cents/100).toFixed(2)}</strong> · ${fires.length} bet${fires.length === 1 ? "" : "s"} placed
         </span>
       </div>
     `;
@@ -3398,21 +3463,15 @@ async function renderPracticeBetsPane() {
             if (r.status === "fulfilled" && r.value.ob) obMap.set(r.value.t, r.value.ob);
         }
     }
-    // Fetch boxscores for each unique game_pk in the fire log.
-    // Boxscore works for any game (yesterday's included) and has
-    // final scores + per-player stats in one call. Settles bets
-    // whose game is Final and leaves the rest on mark-to-market.
-    const uniqueGamePks = [...new Set(fires.map((f) => f.game_pk).filter(Boolean))];
-    const boxscoreMap = uniqueGamePks.length
-        ? await fetchBoxscoreForGames(uniqueGamePks)
-        : new Map();
-
+    // Settlement is already persisted onto each fire by the
+    // settleFinishedPracticeFires() call at the top — just read it.
     let totalCost = 0, totalLive = 0;
     let settledWon = 0, settledLost = 0, settledNet = 0;
     const rows = fires.slice(0, 100).map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
-        const boxscore = boxscoreMap.get(f.game_pk);
-        const result = settleFire(f, boxscore);
+        const result = f.settled
+            ? { settled: true, won: f.settled.won, profit_cents: f.settled.profit_cents }
+            : null;
 
         let resultText = "—", resultCls = "", resultBadge = "";
         if (result?.settled) {
