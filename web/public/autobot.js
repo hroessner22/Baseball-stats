@@ -2653,17 +2653,21 @@ function drawerHtml(initialTab) {
       <div class="bot-drawer" role="dialog" aria-modal="true">
         <header class="bot-drawer-head">
           <h2>Bot Console</h2>
-          <button class="bot-drawer-close" aria-label="Close">×</button>
+          <div class="bot-drawer-actions">
+            <button class="bot-mailbox" data-mailbox-toggle aria-label="Notifications" title="Notifications">
+              <span class="bot-mailbox-icon">✉</span>
+              <span class="bot-mailbox-badge" data-questions-count>0</span>
+            </button>
+            <button class="bot-drawer-close" aria-label="Close">×</button>
+          </div>
         </header>
+        <div class="bot-mailbox-popover" data-mailbox-popover hidden></div>
         <nav class="bot-drawer-tabs" role="tablist">
           <button class="bot-tab ${initialTab === "performance" ? "active" : ""}" data-tab="performance" role="tab">
             Results
           </button>
           <button class="bot-tab ${initialTab === "bets" ? "active" : ""}" data-tab="bets" role="tab">
             Bets <span class="bot-tab-count" data-bets-count>0</span>
-          </button>
-          <button class="bot-tab ${initialTab === "questions" ? "active" : ""}" data-tab="questions" role="tab">
-            Questions <span class="bot-tab-count bot-tab-unread" data-questions-count>0</span>
           </button>
           <button class="bot-tab ${initialTab === "practice" ? "active" : ""}" data-tab="practice" role="tab">
             Practice <span class="bot-tab-count" data-practice-count>0</span>
@@ -2680,7 +2684,6 @@ function drawerHtml(initialTab) {
         </nav>
         <div class="bot-tab-pane ${initialTab === "performance" ? "active" : ""}" data-pane="performance"></div>
         <div class="bot-tab-pane ${initialTab === "bets"        ? "active" : ""}" data-pane="bets"></div>
-        <div class="bot-tab-pane ${initialTab === "questions"   ? "active" : ""}" data-pane="questions"></div>
         <div class="bot-tab-pane ${initialTab === "practice"    ? "active" : ""}" data-pane="practice"></div>
         <div class="bot-tab-pane ${initialTab === "history"     ? "active" : ""}" data-pane="history"></div>
         <div class="bot-tab-pane ${initialTab === "decisions"   ? "active" : ""}" data-pane="decisions"></div>
@@ -2829,15 +2832,20 @@ async function refreshDrawerContent() {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
     overlay.querySelector("[data-pane='bets']").innerHTML        = await renderOpenBetsPane();
-    overlay.querySelector("[data-pane='questions']").innerHTML   = renderQuestionsPane();
     overlay.querySelector("[data-pane='practice']").innerHTML    = await renderPracticePane();
     overlay.querySelector("[data-pane='performance']").innerHTML = await renderPerformancePane();
     overlay.querySelector("[data-pane='history']").innerHTML     = await renderHistoryPane();
     overlay.querySelector("[data-pane='decisions']").innerHTML   = renderDecisionsPane();
     overlay.querySelector("[data-pane='bot']").innerHTML         = renderBotPane();
+    // Mailbox popover (replacement for the Questions tab). Render
+    // into the dedicated popover; the toggle button shows/hides it.
+    const mailboxEl = overlay.querySelector("[data-mailbox-popover]");
+    if (mailboxEl) {
+        mailboxEl.innerHTML = renderMailbox();
+    }
     bindBotPaneHandlers(overlay);
     bindBetsPaneHandlers(overlay);
-    bindQuestionsPaneHandlers(overlay);
+    bindMailboxHandlers(overlay);
     bindPracticePaneHandlers(overlay);
     // Update count chips on the Bets + Questions + Practice + History + Decisions tabs.
     const betsCt = overlay.querySelector("[data-bets-count]");
@@ -2868,27 +2876,46 @@ async function refreshDrawerContent() {
     if (decCt && root.BotScoring) decCt.textContent = String(root.BotScoring.getScoredDecisions(2000).length);
 }
 
-function renderQuestionsPane() {
+function renderMailbox() {
+    // Replaces the old Questions tab — same notifications, surfaced
+    // as a corner inbox instead of taking up a top-level tab slot.
     if (!root.BotNotifications) {
-        return `<div class="bot-empty">Notifications module not loaded.</div>`;
+        return `
+          <div class="bot-mailbox-head">
+            <span class="bot-mailbox-title">Notifications</span>
+            <button class="bot-mailbox-close" data-mailbox-close aria-label="Close">×</button>
+          </div>
+          <div class="bot-empty">Notifications module not loaded.</div>
+        `;
     }
     const items = root.BotNotifications.list(100);
+    const head = `
+      <div class="bot-mailbox-head">
+        <span class="bot-mailbox-title">Notifications</span>
+        <div class="bot-mailbox-actions">
+          ${items.length ? `
+            <button class="bot-notif-mark-all" data-mark-all-read>Mark all read</button>
+            <button class="bot-notif-clear-all" data-clear-notifs>Clear all</button>
+          ` : ""}
+          <button class="bot-mailbox-close" data-mailbox-close aria-label="Close">×</button>
+        </div>
+      </div>
+    `;
     if (!items.length) {
         return `
+          ${head}
           <div class="bot-empty bot-questions-empty">
             <p>Nothing needs your attention.</p>
-            <p class="bot-help">The bot will surface a question here only when
-              it hits something it can't fix on its own — a stuck position,
-              auth loss, daily-loss-limit pause, or repeated insufficient-funds
+            <p class="bot-help">The bot only writes to the inbox when it hits
+              something it can't fix on its own — a stuck position, auth
+              loss, daily-loss-limit pause, or repeated insufficient-funds
               rejections.</p>
-          </div>`;
+          </div>
+        `;
     }
     const rows = items.map(renderNotifRow).join("");
     return `
-      <div class="bot-questions-head">
-        <button class="bot-notif-mark-all" data-mark-all-read>Mark all read</button>
-        <button class="bot-notif-clear-all" data-clear-notifs>Clear all</button>
-      </div>
+      ${head}
       <div class="bot-notif-list">${rows}</div>
     `;
 }
@@ -2929,7 +2956,17 @@ function formatNotifTime(iso) {
     return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function bindQuestionsPaneHandlers(overlay) {
+function bindMailboxHandlers(overlay) {
+    const popover = overlay.querySelector("[data-mailbox-popover]");
+    overlay.querySelector("[data-mailbox-toggle]")?.addEventListener("click", () => {
+        if (!popover) return;
+        const isOpen = !popover.hasAttribute("hidden");
+        if (isOpen) popover.setAttribute("hidden", "");
+        else        popover.removeAttribute("hidden");
+    });
+    overlay.querySelector("[data-mailbox-close]")?.addEventListener("click", () => {
+        popover?.setAttribute("hidden", "");
+    });
     overlay.querySelectorAll("[data-mark-read]").forEach((btn) => {
         btn.addEventListener("click", () => {
             const id = btn.dataset.markRead;
@@ -2942,7 +2979,7 @@ function bindQuestionsPaneHandlers(overlay) {
         refreshDrawerContent();
     });
     overlay.querySelector("[data-clear-notifs]")?.addEventListener("click", () => {
-        if (confirm("Clear all questions?")) {
+        if (confirm("Clear all notifications?")) {
             root.BotNotifications?.clear();
             refreshDrawerContent();
         }
@@ -5320,22 +5357,21 @@ function toast(msg, kind = "ok") {
 loadState();
 
 // Auto-refresh the drawer when a new notification fires so the
-// Questions badge updates in real time without the user reopening.
+// Mailbox badge + popover update in real time without the user
+// reopening. Cheap to touch (no Kalshi refetch).
 window.addEventListener("bot-notification-change", () => {
     const overlay = document.querySelector(".bot-drawer-overlay");
     if (!overlay) return;
-    // Only update what's cheap to touch: the badge + the pane
-    // (avoid a full refreshDrawerContent which re-pulls Kalshi).
     const qCt = overlay.querySelector("[data-questions-count]");
     if (qCt && root.BotNotifications) {
         const unread = root.BotNotifications.unreadCount();
         qCt.textContent = String(unread);
         qCt.classList.toggle("has-unread", unread > 0);
     }
-    const pane = overlay.querySelector("[data-pane='questions']");
-    if (pane && pane.classList.contains("active")) {
-        pane.innerHTML = renderQuestionsPane();
-        bindQuestionsPaneHandlers(overlay);
+    const popover = overlay.querySelector("[data-mailbox-popover]");
+    if (popover && !popover.hasAttribute("hidden")) {
+        popover.innerHTML = renderMailbox();
+        bindMailboxHandlers(overlay);
     }
 });
 

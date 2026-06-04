@@ -8577,6 +8577,110 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-drawer-close:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); }
 
+/* Header actions row — mailbox + close. */
+.bot-drawer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Mailbox button (replaces the old Questions tab). Lives in the
+   drawer header; click opens a popover with the notification list. */
+.bot-mailbox {
+    position: relative;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    width: 36px;
+    height: 30px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 120ms, color 120ms, border-color 120ms;
+}
+.bot-mailbox:hover {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text);
+}
+.bot-mailbox-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+.bot-mailbox-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: rgba(148, 163, 184, 0.25);
+    color: var(--text-dim);
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    line-height: 16px;
+    padding: 0 4px;
+    text-align: center;
+}
+.bot-mailbox-badge.has-unread {
+    background: var(--accent-live);
+    color: #fff;
+}
+
+/* Mailbox popover — slides down from the header, sits above the
+   tab content. Click 'close' or toggle the button to hide. */
+.bot-mailbox-popover {
+    position: absolute;
+    top: 64px;       /* below the header */
+    right: 16px;
+    width: min(420px, calc(100% - 32px));
+    max-height: calc(100% - 88px);
+    overflow-y: auto;
+    background: var(--surface, #0F172A);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    z-index: 10;
+}
+.bot-mailbox-popover[hidden] { display: none; }
+.bot-mailbox-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+}
+.bot-mailbox-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+.bot-mailbox-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.bot-mailbox-close {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+}
+.bot-mailbox-close:hover {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text);
+}
+
 .bot-drawer-tabs {
     display: flex;
     gap: 2px;
