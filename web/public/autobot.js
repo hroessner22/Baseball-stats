@@ -2506,8 +2506,21 @@ async function runCashoutCheck() {
             : null;
 
         const hitAbsolute = profitPerContract >= _state.settings.profit_take_cents;
+        // Side-aware EV-capture threshold (2026-06-05). One global
+        // 0.55 didn't fit: YES winners are rare/cheap, the edge is
+        // fat, let them run further before locking. NO winners have
+        // already used most of their available cents (entry 80¢ →
+        // upside max 20¢), lock fast because the remaining cents
+        // aren't worth tail risk.
+        //   YES: 0.75  (let winners run)
+        //   NO:  0.45  (lock fast)
+        // Honors a manual override via _state.settings.live_ev_take_pct
+        // if the user has set one outside the default 0.55.
+        const sideCaptureBar = (Math.abs(_state.settings.live_ev_take_pct - 0.55) > 0.001)
+            ? _state.settings.live_ev_take_pct
+            : (heldSide === "yes" ? 0.75 : 0.45);
         const hitEvCapture = captureFraction != null
-            && captureFraction >= _state.settings.live_ev_take_pct
+            && captureFraction >= sideCaptureBar
             && profitPerContract > 0;
 
         // EMPIRICAL EV VETO. If the conditional probability table
@@ -2763,13 +2776,18 @@ async function runCashoutCheck() {
         let hitLockIn = false;
         let lockInDetail = "";
         if (profitPerContract > 0) {
+            // Side-aware lock-in % gain. YES winners: wait for big
+            // multiples on what we paid (75% gain). NO winners: lock
+            // at smaller gains because upside is structurally capped
+            // (NO @ 85¢ entry max upside is 15¢ = 18% gain).
+            const gainBar = heldSide === "yes" ? 0.75 : 0.30;
             if (yesBidCents >= 85) {
                 hitLockIn = true;
                 lockInDetail = `bid ${yesBidCents}¢ — only ${100 - yesBidCents}¢ upside left, lock in +${profitPerContract}¢`;
-            } else if (entryCents > 0 && profitPerContract >= entryCents * 0.5) {
+            } else if (entryCents > 0 && profitPerContract >= entryCents * gainBar) {
                 hitLockIn = true;
                 const pctGain = Math.round((profitPerContract / entryCents) * 100);
-                lockInDetail = `+${pctGain}% gain (entry ${entryCents}¢, bid ${yesBidCents}¢) — lock`;
+                lockInDetail = `+${pctGain}% gain (${heldSide.toUpperCase()} entry ${entryCents}¢, bid ${yesBidCents}¢, bar ${Math.round(gainBar*100)}%) — lock`;
             }
         }
 
@@ -3078,11 +3096,12 @@ async function runPracticeCashoutCheck() {
         // longer there, cashout.'
         let lockReason = null;
         if (profitPerContract > 0) {
+            const gainBar = heldSide === "yes" ? 0.75 : 0.30;
             if (liveBidCents >= 85) {
                 lockReason = `bid ${liveBidCents}¢ — only ${100 - liveBidCents}¢ upside left, +${profitPerContract}¢/contract`;
-            } else if (entryCents > 0 && profitPerContract >= entryCents * 0.5) {
+            } else if (entryCents > 0 && profitPerContract >= entryCents * gainBar) {
                 const pctGain = Math.round((profitPerContract / entryCents) * 100);
-                lockReason = `+${pctGain}% gain (entry ${entryCents}¢, bid ${liveBidCents}¢) — lock`;
+                lockReason = `+${pctGain}% gain (${heldSide.toUpperCase()} entry ${entryCents}¢, bid ${liveBidCents}¢, bar ${Math.round(gainBar*100)}%) — lock`;
             }
         }
         if (!empDead && !pullReason && !lockReason) continue;
