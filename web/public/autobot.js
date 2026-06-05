@@ -2328,25 +2328,27 @@ async function runCashoutCheck() {
         // says our hold value still exceeds the current bid by a
         // meaningful margin, override the profit-take + EV-capture
         // triggers. These heuristics often sell winners too early
-        // when the position still has real upside (e.g. pitcher
-        // at 4 K through 12 BF has 84.5% P(5+) → hold value 84¢
-        // even if market bid is only 65¢). Currently K-props only;
-        // hit-prop conditional table not yet derived.
+        // when the position still has real upside.
+        // Now covers K-props, hit/HR/TB props, AND moneylines.
         let empiricalEdgePp = null;
         let empiricalVeto = false;
-        if (fire?.stat === "strikeouts" && heldSide === "yes") {
-            const emp = await getEmpiricalKpropPYes(fire);
+        let empiricalSource = null;
+        if (fire?.kind === "player_prop") {
+            const emp = (fire.stat === "strikeouts")
+                ? await getEmpiricalKpropPYes(fire)
+                : await getEmpiricalHitPropPYes(fire);
             if (emp != null) {
-                empiricalEdgePp = emp.p_yes_cents - yesBidCents;
+                const ourSidePYes = (heldSide === "no") ? (100 - emp.p_yes_cents) : emp.p_yes_cents;
+                empiricalEdgePp = ourSidePYes - yesBidCents;
+                empiricalSource = `emp ${fire.stat} n=${emp.sample_n}`;
                 if (empiricalEdgePp >= 5) empiricalVeto = true;
             }
-        }
-        if (fire?.stat === "strikeouts" && heldSide === "no") {
-            const emp = await getEmpiricalKpropPYes(fire);
+        } else if (fire?.kind === "moneyline") {
+            const emp = await getEmpiricalMlPYes(fire);
             if (emp != null) {
-                // Our side is NO; hold value for NO = 100 - YES prob.
-                const noHoldCents = 100 - emp.p_yes_cents;
-                empiricalEdgePp = noHoldCents - yesBidCents;
+                // ML position is always YES.
+                empiricalEdgePp = emp.p_yes_cents - yesBidCents;
+                empiricalSource = `emp ML WE_v2`;
                 if (empiricalEdgePp >= 5) empiricalVeto = true;
             }
         }
@@ -2364,22 +2366,29 @@ async function runCashoutCheck() {
         // for the next scan to redeploy.
         let hitLiveEv = false;
         let liveEvDetail = "";
-        if (fire?.kind === "player_prop" && fire.game_pk && fire.player && fire.stat && fire.threshold) {
-            // EMPIRICAL preference: for K-props, look up the actual
-            // P(reach threshold | current state) from Retrosheet
-            // 2018-2024 instead of the bot's live model. That's the
-            // direct EV-optimal signal.
+        if (fire && fire.game_pk && fire.threshold && (fire.kind === "player_prop" || fire.kind === "moneyline")) {
+            // EMPIRICAL preference: look up actual P(YES wins from
+            // current state) from Retrosheet for all prop kinds and
+            // WE table for moneylines, instead of bot's live model.
             let livePCents = null;
             let source = "model";
-            if (fire.stat === "strikeouts") {
-                const emp = await getEmpiricalKpropPYes(fire);
+            if (fire.kind === "player_prop") {
+                const emp = (fire.stat === "strikeouts")
+                    ? await getEmpiricalKpropPYes(fire)
+                    : await getEmpiricalHitPropPYes(fire);
                 if (emp != null) {
                     const yesP = emp.p_yes_cents;
                     livePCents = heldSide === "no" ? (100 - yesP) : yesP;
                     source = `empirical n=${emp.sample_n}`;
                 }
+            } else if (fire.kind === "moneyline") {
+                const emp = await getEmpiricalMlPYes(fire);
+                if (emp != null) {
+                    livePCents = emp.p_yes_cents;
+                    source = "empirical WE_v2";
+                }
             }
-            if (livePCents == null) {
+            if (livePCents == null && fire.kind === "player_prop") {
                 const livePCentsYes = await getLivePlayerPropPCents(fire);
                 livePCents = livePCentsYes == null ? null
                            : (heldSide === "no" ? 100 - livePCentsYes : livePCentsYes);
@@ -3103,6 +3112,118 @@ async function getEmpiricalKpropPYes(fire) {
         state_key:      key,
         bf, current_k:  k,
         season_k9:      pInfo.seasonK9,
+    };
+}
+
+// HIT/HR/TB prop empirical cashout. Looks up P(reach threshold)
+// from hitprop_conditional by (game state, current hits/HR/TB,
+// AVG bucket).
+async function getEmpiricalHitPropPYes(fire) {
+    if (!fire || !fire.game_pk || !fire.player) return null;
+    const stat = fire.stat;
+    if (stat !== "hits" && stat !== "home_runs" && stat !== "total_bases") return null;
+    const coefs = await getCoefficients();
+    const table = coefs?.hitprop_conditional;
+    if (!table) return null;
+    // Pull current game state + batter line from model-props.
+    let mp;
+    const cached = _livePropsCache.get(fire.game_pk);
+    if (cached && Date.now() - cached.t < LIVE_PROPS_TTL_MS) mp = cached.data;
+    else {
+        try {
+            const res = await fetch(`/api/game/${fire.game_pk}/model-props`);
+            if (!res.ok) return null;
+            mp = await res.json();
+            _livePropsCache.set(fire.game_pk, { t: Date.now(), data: mp });
+        } catch { return null; }
+    }
+    if (!mp?.game_state || !mp.name_to_mlbam) return null;
+    const mlbam = mp.name_to_mlbam[normName(fire.player)];
+    if (!mlbam) return null;
+
+    // Find batter's current line + AVG.
+    let batter = null;
+    for (const sk of ["home", "away"]) {
+        const lp = mp.lineups?.[sk];
+        if (!lp?.batters) continue;
+        const b = lp.batters.find((x) => String(x.mlbam) === String(mlbam));
+        if (b) { batter = b; break; }
+    }
+    // Fall back to all_player_stats for subs / non-starters.
+    if (!batter) {
+        const all = mp.all_player_stats?.[mlbam];
+        if (all) batter = {
+            hits: all.hits || 0,
+            doubles: all.doubles || 0,
+            triples: all.triples || 0,
+            home_runs: all.home_runs || 0,
+            season_avg: null,   // not in all_player_stats
+        };
+    }
+    if (!batter) return null;
+    const h  = Math.min(3, batter.hits || 0);
+    const hr = Math.min(2, batter.home_runs || 0);
+    const tb = Math.min(5, (batter.hits || 0)
+                          + (batter.doubles || 0)
+                          + 2 * (batter.triples || 0)
+                          + 3 * (batter.home_runs || 0));
+    const avgBucket = bucketForAvg(batter.season_avg);
+    if (!avgBucket) return null;
+    const inning = mp.game_state.inning;
+    const half   = mp.game_state.half;
+    if (inning == null || !half) return null;
+    const key = `${inning}|${half}|h${h}|hr${hr}|tb${tb}|${avgBucket}`;
+    const rec = table[key];
+    if (!rec) return null;
+    // Pick the empirical column for this prop.
+    const empKey =
+        (stat === "hits"        && fire.threshold === 1) ? "p_1_plus_h"
+      : (stat === "hits"        && fire.threshold === 2) ? "p_2_plus_h"
+      : (stat === "hits"        && fire.threshold === 3) ? "p_3_plus_h"
+      : (stat === "home_runs"   && fire.threshold === 1) ? "p_1_plus_hr"
+      : (stat === "home_runs"   && fire.threshold === 2) ? "p_2_plus_hr"
+      : (stat === "total_bases" && fire.threshold === 2) ? "p_2_plus_tb"
+      : (stat === "total_bases" && fire.threshold === 3) ? "p_3_plus_tb"
+      : (stat === "total_bases" && fire.threshold === 4) ? "p_4_plus_tb"
+      : null;
+    if (!empKey) return null;
+    const empPYes = rec[empKey];
+    if (empPYes == null) return null;
+    return {
+        p_yes:        empPYes,
+        p_yes_cents:  Math.round(empPYes * 100),
+        sample_n:     rec.n,
+        state_key:    key,
+        current_hits: h,
+        current_hr:   hr,
+        current_tb:   tb,
+        avg_bucket:   avgBucket,
+    };
+}
+
+// Moneyline empirical cashout via the WE consensus exposed by
+// /api/game/{id}/markets. The bot's our_we_home is itself derived
+// from the empirical WE table built on 132 seasons. So for ML
+// cashout: hold value for YES on home = our_we_home × 100.
+async function getEmpiricalMlPYes(fire) {
+    if (!fire || fire.kind !== "moneyline" || !fire.game_pk || !fire.bet_team) return null;
+    let d;
+    try {
+        const res = await fetch(`/api/game/${fire.game_pk}/markets`);
+        if (!res.ok) return null;
+        d = await res.json();
+    } catch { return null; }
+    if (d.our_we_home == null) return null;
+    const homeAbbr = String(d.teams?.home?.abbr || d.teams?.home?.tricode || "").toUpperCase();
+    const betTeam  = String(fire.bet_team).toUpperCase();
+    const betHome  = betTeam === homeAbbr;
+    const pYes     = betHome ? d.our_we_home : (1 - d.our_we_home);
+    return {
+        p_yes:       pYes,
+        p_yes_cents: Math.round(pYes * 100),
+        sample_n:    null,   // WE table is empirical; sample is per-state
+        state_key:   "WE_v2",
+        bet_home:    betHome,
     };
 }
 

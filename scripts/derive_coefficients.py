@@ -619,6 +619,129 @@ def derive_kprop_conditional(conn: sqlite3.Connection):
     return out
 
 
+# ── Hit-prop conditional (batter cashout EV) ──────────────────
+
+def derive_hitprop_conditional(conn: sqlite3.Connection):
+    """For each (PA num, current_hits, current_TB, current_HR, AVG bucket),
+    report P(final ≥ threshold) for hits / TB / HR. The bot uses this
+    for hitter-prop cashout decisions analogous to the K-prop table.
+    """
+    print("  hit-prop conditional P (cashout table)...", file=sys.stderr)
+    sql = f"""
+    WITH game_lines AS (
+        SELECT
+            year, batter, game_id,
+            SUM(CASE WHEN outcome IN ('1B','2B','3B','HR') THEN 1 ELSE 0 END) AS total_h,
+            SUM(CASE WHEN outcome = 'HR' THEN 1 ELSE 0 END) AS total_hr,
+            SUM(CASE outcome WHEN '1B' THEN 1 WHEN '2B' THEN 2 WHEN '3B' THEN 3 WHEN 'HR' THEN 4 ELSE 0 END) AS total_tb,
+            SUM(CASE WHEN outcome NOT IN ('BB','HBP','OTHER') AND sh_fl=0 AND sf_fl=0 THEN 1 ELSE 0 END) AS total_ab
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, batter, game_id
+    ),
+    season AS (
+        SELECT year, batter,
+               SUM(total_h)  AS sh,
+               SUM(total_ab) AS sab
+        FROM game_lines
+        GROUP BY year, batter
+        HAVING SUM(total_ab) >= 200
+    ),
+    walked AS (
+        SELECT
+            ab.game_id, ab.batter, ab.year, ab.inning, ab.half,
+            ROW_NUMBER() OVER (PARTITION BY ab.game_id, ab.batter
+                               ORDER BY ab.inning,
+                                        CASE WHEN ab.half='top' THEN 0 ELSE 1 END,
+                                        ab.outs) AS pa_num,
+            SUM(CASE WHEN ab.outcome IN ('1B','2B','3B','HR') THEN 1 ELSE 0 END) OVER (
+                PARTITION BY ab.game_id, ab.batter
+                ORDER BY ab.inning,
+                         CASE WHEN ab.half='top' THEN 0 ELSE 1 END,
+                         ab.outs
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS h_after,
+            SUM(CASE WHEN ab.outcome = 'HR' THEN 1 ELSE 0 END) OVER (
+                PARTITION BY ab.game_id, ab.batter
+                ORDER BY ab.inning,
+                         CASE WHEN ab.half='top' THEN 0 ELSE 1 END,
+                         ab.outs
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS hr_after,
+            SUM(CASE ab.outcome WHEN '1B' THEN 1 WHEN '2B' THEN 2 WHEN '3B' THEN 3 WHEN 'HR' THEN 4 ELSE 0 END) OVER (
+                PARTITION BY ab.game_id, ab.batter
+                ORDER BY ab.inning,
+                         CASE WHEN ab.half='top' THEN 0 ELSE 1 END,
+                         ab.outs
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS tb_after,
+            gl.total_h,
+            gl.total_hr,
+            gl.total_tb,
+            CAST(s.sh AS REAL) / NULLIF(s.sab, 0) AS avg
+        FROM at_bats ab
+        JOIN game_lines gl ON gl.game_id = ab.game_id AND gl.batter = ab.batter
+        JOIN season s      ON s.year     = ab.year    AND s.batter  = ab.batter
+        WHERE ab.year IN {YEARS_SQL}
+    )
+    SELECT inning, half, h_after, hr_after, tb_after,
+           total_h, total_hr, total_tb, avg
+    FROM walked
+    WHERE inning <= 12
+    """
+
+    def avg_b(a):
+        if a is None: return None
+        if a < 0.200: return "0.000-0.200"
+        if a < 0.225: return "0.200-0.225"
+        if a < 0.250: return "0.225-0.250"
+        if a < 0.275: return "0.250-0.275"
+        if a < 0.300: return "0.275-0.300"
+        return "0.300+"
+    def state_b(inn, half):
+        if inn is None or half is None: return None
+        return f"{inn}|{half}"
+
+    # State: (inning|half, h_after capped at 3, hr_after capped at 2,
+    #         tb_after capped at 5, avg_bucket)
+    agg = {}
+    for row in conn.execute(sql):
+        ab = avg_b(row["avg"])
+        sb = state_b(row["inning"], row["half"])
+        if ab is None or sb is None: continue
+        h  = min(3, int(row["h_after"]  or 0))
+        hr = min(2, int(row["hr_after"] or 0))
+        tb = min(5, int(row["tb_after"] or 0))
+        key = (sb, h, hr, tb, ab)
+        if key not in agg:
+            agg[key] = {
+                "n": 0,
+                "p_1_plus_h": 0, "p_2_plus_h": 0, "p_3_plus_h": 0,
+                "p_1_plus_hr": 0, "p_2_plus_hr": 0,
+                "p_2_plus_tb": 0, "p_3_plus_tb": 0, "p_4_plus_tb": 0,
+            }
+        a = agg[key]
+        a["n"] += 1
+        if (row["total_h"]  or 0) >= 1: a["p_1_plus_h"]  += 1
+        if (row["total_h"]  or 0) >= 2: a["p_2_plus_h"]  += 1
+        if (row["total_h"]  or 0) >= 3: a["p_3_plus_h"]  += 1
+        if (row["total_hr"] or 0) >= 1: a["p_1_plus_hr"] += 1
+        if (row["total_hr"] or 0) >= 2: a["p_2_plus_hr"] += 1
+        if (row["total_tb"] or 0) >= 2: a["p_2_plus_tb"] += 1
+        if (row["total_tb"] or 0) >= 3: a["p_3_plus_tb"] += 1
+        if (row["total_tb"] or 0) >= 4: a["p_4_plus_tb"] += 1
+
+    out = {}
+    for (sb, h, hr, tb, ab), a in agg.items():
+        if a["n"] < 20: continue
+        rec = {"n": a["n"]}
+        for k in ("p_1_plus_h","p_2_plus_h","p_3_plus_h","p_1_plus_hr","p_2_plus_hr",
+                  "p_2_plus_tb","p_3_plus_tb","p_4_plus_tb"):
+            rec[k] = round(a[k] / a["n"], 4)
+        out[f"{sb}|h{h}|hr{hr}|tb{tb}|{ab}"] = rec
+    return out
+
+
 # ── Pitcher pull point (BF distribution at final batter) ──
 
 def derive_pitcher_pull_point(conn: sqlite3.Connection):
@@ -705,6 +828,7 @@ def main() -> int:
         "pitcher_recent_form_5gs":        derive_pitcher_recent_form(conn),
         "pitcher_pull_point":             derive_pitcher_pull_point(conn),
         "kprop_conditional":              derive_kprop_conditional(conn),
+        "hitprop_conditional":            derive_hitprop_conditional(conn),
         "pa_exhaustion_by_state":         derive_pa_exhaustion(conn),
         "league_per_pa":                  derive_league_rates(conn),
     }
