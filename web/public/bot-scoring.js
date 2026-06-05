@@ -518,16 +518,19 @@ async function buildXeraAlignmentFactor(opp) {
     const row = players[opp.pitcher_id] || players[String(opp.pitcher_id)];
     if (!row || row.era_diff == null) return { name: "xera_alignment", weight: 0, present: false };
 
+    // diff = est_era - era. Negative diff (xERA LOWER than ERA)
+    // means the pitcher has been UNLUCKY (their stuff is better
+    // than results show) → expect K rate to hold = lean YES.
+    // Positive diff (xERA HIGHER than ERA) = pitcher LUCKY → K
+    // rate likely regresses down = lean NO.
     const diff = row.era_diff;
-    // Diff is in ERA points. Buckets: |0.50| ≥ 3pp, |0.25| ≥ 1.5pp.
     let basePP = 0;
     const absGap = Math.abs(diff);
     if      (absGap >= 0.75) basePP = 3;
     else if (absGap >= 0.40) basePP = 1.5;
     else if (absGap >= 0.20) basePP = 0.75;
-    // Diff > 0 (xERA > ERA) = pitcher unlucky → K rate likely truer
-    // than results = lean YES on K props slightly.
-    const signedPP = diff >= 0 ? basePP : -basePP;
+    // Negative diff (unlucky) → boost YES = positive signed pp.
+    const signedPP = diff <= 0 ? basePP : -basePP;
     const directedPP = (opp.side === "no") ? -signedPP : signedPP;
 
     return {
