@@ -234,9 +234,15 @@ async function callKalshi(method, path, body = null) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-        // 401/403 → key revoked or signing mismatch. Drop creds so the
-        // UI re-prompts cleanly.
-        if (res.status === 401 || res.status === 403) clearCredentials();
+        // User direction (2026-06-05): 'stop logging me out of kalshi.'
+        // We used to clearCredentials() on every 401/403 here, on the
+        // theory that the key had been revoked. In practice the
+        // overwhelmingly common cause is a transient signing/clock
+        // hiccup or a proxy timeout retried into a 401 — and we were
+        // wiping a perfectly good API key for it. Now we just bubble
+        // the error; the next call retries with the same creds, and
+        // signing-out remains an explicit user action (X in the
+        // account strip).
         const msg = (data && (data.error?.message || data.error || data.message))
             || `kalshi ${path} → HTTP ${res.status}`;
         throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
