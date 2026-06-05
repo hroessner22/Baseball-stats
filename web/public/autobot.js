@@ -3021,9 +3021,37 @@ function findPlayerLine(lines, mlbam, playerName) {
     if (!Array.isArray(lines)) return null;
     const want = String(mlbam || "");
     const target = normName(playerName || "");
+    // First pass: id match, then exact normalized name match.
     for (const ln of lines) {
         if (want && String(ln.mlbam) === want) return ln;
         if (target && normName(ln.name) === target) return ln;
+    }
+    // Fallback: Kalshi tickers / bet fires store the player as
+    // 'R. Ray' / 'E. Cabrera', but the boxscore stores 'Robbie Ray' /
+    // 'Edward Cabrera'. Match on first-initial + last-name when the
+    // bet side looks like an initialized form. Unique within a single
+    // boxscore side (two pitchers with the same last name + initial
+    // on the same team mid-game is functionally never going to
+    // happen), so this is safe.
+    if (target) {
+        const tParts = target.split(/\s+/).filter(Boolean);
+        if (tParts.length >= 2) {
+            const tFirst = tParts[0];
+            const tLast  = tParts.slice(1).join(" ");
+            const looksInitialized = tFirst.length === 1;
+            for (const ln of lines) {
+                const n = normName(ln.name).split(/\s+/).filter(Boolean);
+                if (n.length < 2) continue;
+                const nFirst = n[0];
+                const nLast  = n.slice(1).join(" ");
+                if (nLast !== tLast) continue;
+                if (looksInitialized) {
+                    if (nFirst.startsWith(tFirst)) return ln;
+                } else if (nFirst === tFirst) {
+                    return ln;
+                }
+            }
+        }
     }
     return null;
 }
