@@ -4074,16 +4074,12 @@ async function refreshGame(id) {
         if (gameViewMode === "boxscore") {
             hydrateBoxscore(id, g.status);
         } else if (gameViewMode === "live" && hasGameBets(id)) {
-            // Live View also needs the boxscore — it's what feeds the
-            // per-bet progress bars in the rail card. Edge-cached, so
-            // the refetch on the 5s tick is essentially free. Also
-            // pull Kalshi orderbooks so each row shows live mark vs
-            // entry, then repaint just the rail card so the user
-            // doesn't have to wait for the next 5s tick.
-            Promise.allSettled([
-                hydrateBoxscore(id, g.status),
-                hydrateRailLiveData(id),
-            ]).then(() => {
+            // Live View hydrates its own dedicated boxscore (for the
+            // rail meter) + Kalshi orderbooks (for the live mark).
+            // Edge-cached, so the refetch on the 5s tick is cheap.
+            // After both settle, repaintRailBets swaps just the rail
+            // card without re-rendering the whole game view.
+            hydrateRailLiveData(id).then(() => {
                 if (String(id) !== String(activeGameId)) return;
                 if (gameViewMode !== "live") return;
                 repaintRailBets(g);
@@ -4191,6 +4187,28 @@ const LS_GAME_BETS_SETTINGS       = "diamond_context_bot_settings";
 // refreshGame so the rail rows show live mark-to-market vs entry.
 const _railLiveMarks = new Map();
 const RAIL_MARK_TTL_MS = 8000;
+// Per-game boxscore cache for the rail bets meter — mirrors the
+// drawer's fetchBoxscoreForGames approach instead of piggybacking
+// on the Box Score tab's single-slot cachedBoxscoreData (which was
+// fragile: name shape mismatches, pane-mount gating, only-one-game
+// limit). Fetched directly from the boxscore endpoint per game pk.
+const _railBoxscores = new Map();
+const RAIL_BOXSCORE_TTL_MS = 5000;
+async function hydrateRailBoxscore(gamePk) {
+    if (!gamePk) return null;
+    const now = Date.now();
+    const cached = _railBoxscores.get(String(gamePk));
+    if (cached && (now - cached.t) < RAIL_BOXSCORE_TTL_MS) return cached.data;
+    try {
+        const res = await fetch(`/api/game/${gamePk}/boxscore`);
+        if (!res.ok) return cached?.data || null;
+        const data = await res.json();
+        _railBoxscores.set(String(gamePk), { t: now, data });
+        return data;
+    } catch {
+        return cached?.data || null;
+    }
+}
 
 // Targeted re-render of just the rail bets card — runs after
 // async hydrate (boxscore + Kalshi orderbooks) so the live mark
@@ -4227,25 +4245,29 @@ async function hydrateRailLiveData(gamePk) {
     const tickers = [...new Set(onGame.map((f) => ({ t: f.ticker, side: f.side || "yes" })).map(JSON.stringify))]
         .map((s) => JSON.parse(s));
     let any = false;
-    await Promise.all(tickers.map(async ({ t, side }) => {
-        const cached = _railLiveMarks.get(t);
-        if (cached && (now - cached.t) < RAIL_MARK_TTL_MS) return;
-        try {
-            const ob = await window.Kalshi?.getOrderbook?.(t);
-            if (!ob) return;
-            const mark = side === "no"
-                ? (window.Kalshi.orderbookNoBidCents
-                    ? window.Kalshi.orderbookNoBidCents(ob)
-                    : __obNoBidCents(ob))
-                : (window.Kalshi.orderbookYesBidCents
-                    ? window.Kalshi.orderbookYesBidCents(ob)
-                    : __obYesBidCents(ob));
-            if (mark != null) {
-                _railLiveMarks.set(t, { t: now, mark });
-                any = true;
-            }
-        } catch {}
-    }));
+    // Fetch boxscore + orderbooks in parallel.
+    await Promise.all([
+        hydrateRailBoxscore(gamePk).then((d) => { if (d) any = true; }),
+        ...tickers.map(async ({ t, side }) => {
+            const cached = _railLiveMarks.get(t);
+            if (cached && (now - cached.t) < RAIL_MARK_TTL_MS) return;
+            try {
+                const ob = await window.Kalshi?.getOrderbook?.(t);
+                if (!ob) return;
+                const mark = side === "no"
+                    ? (window.Kalshi.orderbookNoBidCents
+                        ? window.Kalshi.orderbookNoBidCents(ob)
+                        : __obNoBidCents(ob))
+                    : (window.Kalshi.orderbookYesBidCents
+                        ? window.Kalshi.orderbookYesBidCents(ob)
+                        : __obYesBidCents(ob));
+                if (mark != null) {
+                    _railLiveMarks.set(t, { t: now, mark });
+                    any = true;
+                }
+            } catch {}
+        }),
+    ]);
     return any;
 }
 
@@ -4452,14 +4474,11 @@ function renderGameBetsCardRail(g) {
     const hidden     = onGame.length - relevant.length;
     const displayed  = showAll ? onGame : relevant;
 
-    // Boxscore is the source of truth for live per-player stats —
-    // K count, hits, total bases — which renderBetProgress needs to
-    // draw the bar. Use the in-memory cache populated by
-    // hydrateBoxscore. When pk doesn't match (first paint on this
-    // game) we skip the bar; next refresh cycle fills it in.
-    const boxscore = (cachedBoxscoreData && String(cachedBoxscorePk) === String(gamePk))
-        ? cachedBoxscoreData
-        : null;
+    // Boxscore — source of truth for live per-player stats. Use the
+    // rail's own cache (populated by hydrateRailBoxscore) rather than
+    // the Box Score tab's single-slot cache, which had multiple
+    // failure modes (pane-mount gating, single-game limit).
+    const boxscore = _railBoxscores.get(String(gamePk))?.data || null;
 
     const statPluralName = (stat, threshold) => {
         const plural = threshold !== 1;
@@ -4483,83 +4502,15 @@ function renderGameBetsCardRail(g) {
     const lost     = settled.filter((f) => !f.settled.won).length;
     const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
 
-    // Per-bet progress meter — always render something for open
-    // bets. When the boxscore hasn't landed yet (first paint after
-    // navigation), draw the meter with 0 current and a "..." note
-    // so the user sees the meter shape immediately; next 5s tick
-    // fills it in.
+    // Per-bet progress meter — uses the SAME renderBetProgress helper
+    // that the drawer's 'All bets' pane uses. User direction
+    // (2026-06-05): 'Look at how you do it in "all bets".' The drawer
+    // path is the source of truth — same boxscore-lookup function,
+    // same bar shape, same status text.
     const railProgress = (f) => {
         if (f.settled) return "";
-        const isYes = (f.side || "yes") === "yes";
-        const fillCls = isYes ? "rail-meter-fill-yes" : "rail-meter-fill-no";
-        if (f.kind === "player_prop") {
-            const threshold = f.threshold || 0;
-            const haveBoxscore = !!boxscore;
-            const lookupCurrent = haveBoxscore && typeof boxscoreStatForProp === "function"
-                ? boxscoreStatForProp(boxscore, f.player, f.stat)
-                : null;
-            const current = lookupCurrent == null ? 0 : lookupCurrent;
-            const pct = threshold > 0
-                ? Math.min(100, (current / threshold) * 100)
-                : 0;
-            const statShort = String(f.stat || "").replace(/_/g, " ").slice(0, 1).toUpperCase();
-            const statusTxt = !haveBoxscore
-                ? "..."
-                : isYes
-                    ? (current >= threshold ? "✓ HIT" : `${threshold - current} to win`)
-                    : (current >= threshold ? "✗ HIT" : `${Math.max(0, threshold - 1 - current)} room`);
-            const statusCls = isYes
-                ? (current >= threshold ? "rail-bet-won"  : "")
-                : (current >= threshold ? "rail-bet-lost" : "");
-            return `
-              <div class="rail-meter">
-                <div class="rail-meter-row">
-                  <span class="rail-meter-stat">${statShort}: <strong>${current}</strong> / ${threshold}</span>
-                  <span class="rail-meter-status ${statusCls}">${statusTxt}</span>
-                </div>
-                <div class="rail-meter-track">
-                  <span class="rail-meter-fill ${fillCls}" style="width:${pct.toFixed(0)}%"></span>
-                </div>
-              </div>
-            `;
-        }
-        if (f.kind === "moneyline") {
-            if (!boxscore) {
-                return `
-                  <div class="rail-meter">
-                    <div class="rail-meter-row">
-                      <span class="rail-meter-stat">Score</span>
-                      <span class="rail-meter-status">...</span>
-                    </div>
-                    <div class="rail-meter-track"><span class="rail-meter-fill ${fillCls}" style="width:0%"></span></div>
-                  </div>
-                `;
-            }
-            const totals = boxscore.line_score?.totals || {};
-            const home = totals.home?.runs ?? 0;
-            const away = totals.away?.runs ?? 0;
-            const homeAbbr = boxscore.teams?.home?.abbr || "HOME";
-            const awayAbbr = boxscore.teams?.away?.abbr || "AWAY";
-            const betTeam  = String(f.bet_team || "").toUpperCase();
-            const betHome  = betTeam === String(homeAbbr).toUpperCase();
-            const ourScore = betHome ? home : away;
-            const oppScore = betHome ? away : home;
-            const ourAbbr  = betHome ? homeAbbr : awayAbbr;
-            const oppAbbr  = betHome ? awayAbbr : homeAbbr;
-            const lead = ourScore - oppScore;
-            const statusTxt = lead > 0 ? `up ${lead}` : lead < 0 ? `down ${-lead}` : "tied";
-            const statusCls = lead > 0 ? "rail-bet-won" : lead < 0 ? "rail-bet-lost" : "";
-            const total = Math.max(1, ourScore + oppScore);
-            const pct = (ourScore / total) * 100;
-            return `
-              <div class="rail-meter">
-                <div class="rail-meter-row">
-                  <span class="rail-meter-stat">${ourAbbr} <strong>${ourScore}</strong> · ${oppAbbr} ${oppScore}</span>
-                  <span class="rail-meter-status ${statusCls}">${statusTxt}</span>
-                </div>
-                <div class="rail-meter-track"><span class="rail-meter-fill ${fillCls}" style="width:${pct.toFixed(0)}%"></span></div>
-              </div>
-            `;
+        if (typeof renderBetProgress === "function") {
+            return renderBetProgress(f, boxscore);
         }
         return "";
     };
