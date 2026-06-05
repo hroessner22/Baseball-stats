@@ -1277,18 +1277,31 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         if (parsed.stat === "strikeouts") {
             const pInfo = await getLivePitcherInfo(g.game_pk, parsed.player);
             if (pInfo) {
-                // (1) Sample-size guard for YES bets.
+                // (1) Sample-size guard for YES bets — ONLY on high
+                //     thresholds (≥ 6 K). User direction (2026-06-05):
+                //     'The 5 is ok. Once we get larger it gets
+                //     sketchier. If the edge is large enough for 5,
+                //     dont auto void it.' Reason: 5+ K is achievable
+                //     by most starters; the empirical P(5+) gap
+                //     between K/9 buckets is small enough that
+                //     small-sample K/9 noise doesn't kill the edge.
+                //     P(7+) and P(8+) swing dramatically by bucket,
+                //     so K/9 inflation creates fake edges there.
                 const MIN_STARTS_FOR_K_PROP_YES = 8;
-                if (side === "yes" && (pInfo.seasonGs || 0) < MIN_STARTS_FOR_K_PROP_YES) {
+                const HIGH_THRESHOLD_CUTOFF     = 5;   // > this → guard applies
+                if (side === "yes"
+                    && parsed.threshold > HIGH_THRESHOLD_CUTOFF
+                    && (pInfo.seasonGs || 0) < MIN_STARTS_FOR_K_PROP_YES) {
                     if (score) logScoredDecisionOnce(score, {
                         action: "skip", reason: "k_prop_yes_small_sample",
                         player: parsed.player, threshold: parsed.threshold,
                         season_gs: pInfo.seasonGs,
                         season_k9: pInfo.seasonK9,
                         min_starts:  MIN_STARTS_FOR_K_PROP_YES,
+                        high_threshold_cutoff: HIGH_THRESHOLD_CUTOFF,
                         side,
                     });
-                    log("skip", `Small-sample K/9 — ${parsed.player} ${parsed.threshold}+ K YES: only ${pInfo.seasonGs||0} starts this season (K/9=${pInfo.seasonK9?.toFixed(1) ?? "?"}); need ≥${MIN_STARTS_FOR_K_PROP_YES} to trust season rate`);
+                    log("skip", `Small-sample K/9 — ${parsed.player} ${parsed.threshold}+ K YES: only ${pInfo.seasonGs||0} starts this season (K/9=${pInfo.seasonK9?.toFixed(1) ?? "?"}); threshold >${HIGH_THRESHOLD_CUTOFF} needs ≥${MIN_STARTS_FOR_K_PROP_YES} starts. Thresholds ≤${HIGH_THRESHOLD_CUTOFF} pass through.`);
                     continue;
                 }
                 // (2) Empirical conditional lookup — same table as the
