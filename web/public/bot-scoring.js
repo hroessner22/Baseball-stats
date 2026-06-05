@@ -61,6 +61,8 @@ const TUNABLES = {
         pitcher_recent_form:  0.6,   // last 5 starts ERA/K9 trend
         batter_recent_form:   0.6,   // last 15 games OPS trend
         h2h:                  1.0,   // sample-weighted; max here is the ceiling
+        xba_alignment:        0.7,   // batter xBA vs BA gap (Statcast)
+        xera_alignment:       0.7,   // pitcher xERA vs ERA gap (Statcast)
     },
     adjustments: {
         // ±pp adjustments by factor band. See each builder for
@@ -164,6 +166,25 @@ async function scoreBet(opportunity) {
         && opportunity.batter_id
         && opportunity.pitcher_id) {
         factors.push(await buildH2HFactor(opportunity));
+    }
+
+    // F8 — Statcast xBA/xSLG/xwOBA alignment for batter props.
+    //      Captures cluster-luck regression: a batter with .240 BA
+    //      but .280 xBA has been unlucky on batted balls and is
+    //      likely to regress UP toward expected.
+    if (opportunity.kind === "player_prop"
+        && opportunity.stat !== "strikeouts"
+        && opportunity.batter_id) {
+        factors.push(await buildXbaAlignmentFactor(opportunity));
+    }
+
+    // F9 — Statcast xERA alignment for K-prop pitchers. A pitcher
+    //      with 4.50 ERA but 3.20 xERA has been unlucky and is
+    //      throwing better than results suggest.
+    if (opportunity.kind === "player_prop"
+        && opportunity.stat === "strikeouts"
+        && opportunity.pitcher_id) {
+        factors.push(await buildXeraAlignmentFactor(opportunity));
     }
 
     // Combine. Baseline = market price (cents → 0..1). Each
@@ -416,6 +437,113 @@ async function buildBatterRecentFormFactor(opp) {
 // Min 10 PAs to trust the sample. Prefer last-2-years window if
 // available — career numbers can include data from when both
 // players were different versions of themselves.
+// Statcast expected-stats leaderboard cache. One fetch per type
+// per session; the endpoint itself is edge-cached 6 hours.
+const _xstatsCache = { batter: null, pitcher: null };
+async function fetchXstats(type) {
+    if (_xstatsCache[type]) return _xstatsCache[type];
+    try {
+        const res = await fetch(`/api/savant/expected-stats?type=${type}`);
+        if (!res.ok) return null;
+        const j = await res.json();
+        if (!j.available || !j.players) return null;
+        _xstatsCache[type] = j.players;
+        return j.players;
+    } catch { return null; }
+}
+
+// Batter xBA alignment. Compare BA to xBA — negative diff (xBA > BA)
+// means the hitter has been UNLUCKY on contact, expect regression
+// up = bias toward YES on hit/TB props. Positive diff = lucky,
+// bias toward NO. Same logic for SLG and wOBA. Bucket the gap so
+// the adjustment is bounded.
+async function buildXbaAlignmentFactor(opp) {
+    if (!opp.batter_id) return { name: "xba_alignment", weight: 0, present: false };
+    const players = await fetchXstats("batter");
+    if (!players) return { name: "xba_alignment", weight: 0, present: false };
+    const row = players[opp.batter_id] || players[String(opp.batter_id)];
+    if (!row || row.ba_diff == null) return { name: "xba_alignment", weight: 0, present: false };
+
+    // Per-stat sensitivity. xBA gap most informative for hit props,
+    // xSLG more for TB props, xwOBA blended for HR.
+    let diff = row.ba_diff;
+    if (opp.stat === "total_bases") diff = row.slg_diff != null ? row.slg_diff : row.ba_diff;
+    if (opp.stat === "home_runs")   diff = row.woba_diff != null ? row.woba_diff : row.ba_diff;
+
+    // Direction: a hitter with positive diff (xStat > actual) is
+    // UNLUCKY → boost YES expectation. Apply ±pp scaled by gap:
+    //   |gap| ≥ 0.040 → ±4pp on YES probability
+    //   |gap| ≥ 0.020 → ±2pp
+    //   |gap| ≥ 0.010 → ±1pp
+    //   smaller → 0
+    let basePP = 0;
+    const absGap = Math.abs(diff);
+    if      (absGap >= 0.040) basePP = 4;
+    else if (absGap >= 0.020) basePP = 2;
+    else if (absGap >= 0.010) basePP = 1;
+    // Sign: positive diff means xStat > actual = batter unlucky =
+    // YES more likely than the model already says.
+    const signedPP = diff >= 0 ? basePP : -basePP;
+    // For NO-side bets, the adjustment flips sign — if hitter is
+    // unlucky (boost YES), that hurts NO bets.
+    const directedPP = (opp.side === "no") ? -signedPP : signedPP;
+
+    return {
+        name:    "xba_alignment",
+        weight:  0.7,
+        value:   {
+            ba:        row.ba,
+            est_ba:    row.est_ba,
+            ba_diff:   row.ba_diff,
+            slg_diff:  row.slg_diff,
+            woba_diff: row.woba_diff,
+            stat_used: opp.stat,
+            gap_used:  diff,
+        },
+        adjust_pp: round2(directedPP),
+        present:   true,
+    };
+}
+
+// Pitcher xERA alignment for K-prop scoring. Negative ERA diff
+// (xERA > ERA) means pitcher LUCKY → expect K rate to regress down
+// = NO leans more attractive. Positive diff (xERA < ERA) = unlucky
+// → YES leans better. Smaller effect than for hitters because K
+// rate is a known-good leading indicator already, but Statcast
+// captures BABIP/sequence luck on top.
+async function buildXeraAlignmentFactor(opp) {
+    if (!opp.pitcher_id) return { name: "xera_alignment", weight: 0, present: false };
+    const players = await fetchXstats("pitcher");
+    if (!players) return { name: "xera_alignment", weight: 0, present: false };
+    const row = players[opp.pitcher_id] || players[String(opp.pitcher_id)];
+    if (!row || row.era_diff == null) return { name: "xera_alignment", weight: 0, present: false };
+
+    const diff = row.era_diff;
+    // Diff is in ERA points. Buckets: |0.50| ≥ 3pp, |0.25| ≥ 1.5pp.
+    let basePP = 0;
+    const absGap = Math.abs(diff);
+    if      (absGap >= 0.75) basePP = 3;
+    else if (absGap >= 0.40) basePP = 1.5;
+    else if (absGap >= 0.20) basePP = 0.75;
+    // Diff > 0 (xERA > ERA) = pitcher unlucky → K rate likely truer
+    // than results = lean YES on K props slightly.
+    const signedPP = diff >= 0 ? basePP : -basePP;
+    const directedPP = (opp.side === "no") ? -signedPP : signedPP;
+
+    return {
+        name:    "xera_alignment",
+        weight:  0.7,
+        value:   {
+            era:      row.era,
+            est_era:  row.est_era,
+            era_diff: row.era_diff,
+            woba_against_diff: row.woba_against_diff,
+        },
+        adjust_pp: round2(directedPP),
+        present:   true,
+    };
+}
+
 async function buildH2HFactor(opp) {
     let data;
     try {
