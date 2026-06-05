@@ -4810,7 +4810,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     margin-bottom: 4px;
 }
 .this-inning .ti-pitches .pa-pitch-row {
-    grid-template-columns: 18px minmax(0, 1fr) minmax(0, max-content) minmax(0, 1.6fr) 24px;
+    /* Type column was 1fr so 'Changeup' filled its cell edge-to-edge
+       and visually crashed into the velo (user feedback 2026-06-05:
+       'Slide the mph to the right'). max-content sizes the type to
+       its own text width and lets the gap actually breathe. Result
+       column gets the leftover space. */
+    grid-template-columns: 18px max-content minmax(0, max-content) minmax(0, 1fr) 24px;
+    gap: 12px;
     font-size: 11px;
     padding: 3px 0;
 }
