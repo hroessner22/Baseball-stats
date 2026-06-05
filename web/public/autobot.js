@@ -361,7 +361,30 @@ function clampInt(n, lo, hi) {
     if (!Number.isFinite(x)) return lo;
     return Math.max(lo, Math.min(hi, x));
 }
-function todayUtcDate() { return new Date().toISOString().slice(0, 10); }
+// Was returning UTC midnight which rolled over the 'daily loss'
+// reset at 8pm Eastern (= start of next UTC day) — mid-game on
+// the East Coast. Now returns the baseball day so the daily-loss
+// limit resets at the same boundary the history grouping uses.
+function todayUtcDate() { return currentBaseballDayKey(); }
+
+// "Baseball day" key — used everywhere we group bets / history
+// per day. Calendar midnight (the previous boundary) split west-
+// coast night games across two dates: a 10pm PT first pitch
+// finishing at 1am ET would have its fires split between Mon
+// and Tue. User direction (2026-06-05): 'that day doesnt mean
+// until 12am, it just means until that day of games is over
+// (including the west coast games).' Subtract 6 hours from the
+// local timestamp before taking the date — anything before 6am
+// local rolls into the previous day's slate. Covers PT-night
+// games (usually finish by 1-2am ET = 10-11pm PT) plus a
+// reasonable buffer for extra-inning overruns.
+function baseballDayKey(isoOrDate) {
+    const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
+    if (!Number.isFinite(d.getTime())) return "";
+    const shifted = new Date(d.getTime() - 6 * 60 * 60 * 1000);
+    return `${shifted.getFullYear()}-${String(shifted.getMonth()+1).padStart(2,"0")}-${String(shifted.getDate()).padStart(2,"0")}`;
+}
+function currentBaseballDayKey() { return baseballDayKey(new Date()); }
 
 // Wrap BotScoring.logScoredDecision so repeated identical SKIPs
 // don't flood the Edges screen. Same ticker + side + reason gets
@@ -4409,19 +4432,20 @@ async function renderPerformancePane() {
     const totalCost  = settled.reduce((s, f) => s + f.cost, 0);
     const roi        = totalCost > 0 ? totalPnl / totalCost : 0;
 
-    // Per-day rollup (last 14 days, UTC).
+    // Per-day rollup keyed by BASEBALL DAY (6am local cutoff) so
+    // late west-coast games stay in the same bucket as the rest of
+    // their slate. See baseballDayKey().
     const dayPnl = new Map();   // YYYY-MM-DD → net cents
     for (const f of settled) {
-        const day = (f.placed_at || "").slice(0, 10);
+        const day = baseballDayKey(f.placed_at);
         if (!day) continue;
         dayPnl.set(day, (dayPnl.get(day) || 0) + (f.pnl || 0));
     }
-    const todayKey = new Date().toISOString().slice(0, 10);
+    const todayKey = currentBaseballDayKey();
     const days = [];
     for (let i = 13; i >= 0; i--) {
-        const d = new Date();
-        d.setUTCDate(d.getUTCDate() - i);
-        const k = d.toISOString().slice(0, 10);
+        const ref = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+        const k = baseballDayKey(ref);
         days.push({ key: k, pnl: dayPnl.get(k) || 0, isToday: k === todayKey });
     }
     const todayPnl = dayPnl.get(todayKey) || 0;
@@ -4850,17 +4874,16 @@ async function renderHistoryPane() {
         return !!settle || sellFills.length > 0;
     });
 
-    // Group resolved fires by local calendar day (YYYY-MM-DD). Order
-    // newest day first — within each day, newest bet first. Was
-    // previously slicing at 500 fires which silently dropped older
-    // days when newer days were heavy (the Jun 2 case where 72 fires
-    // alone consumed most of the budget). Group ALL resolved fires,
-    // then paginate by DAY below.
+    // Group resolved fires by BASEBALL DAY (6am-to-6am local). User
+    // direction 2026-06-05: 'that day doesnt mean until 12am, it just
+    // means until that day of games is over (including the west coast
+    // games).' So a 1am-ET fire on a west-coast night game stays with
+    // the prior day's slate, not the calendar's next day.
     const byDay = new Map();
     for (const f of resolvedFires) {
         if (!f.placed_at) continue;
-        const d = new Date(f.placed_at);
-        const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+        const dayKey = baseballDayKey(f.placed_at);
+        if (!dayKey) continue;
         if (!byDay.has(dayKey)) byDay.set(dayKey, []);
         byDay.get(dayKey).push(f);
     }
@@ -4881,15 +4904,8 @@ async function renderHistoryPane() {
     const visibleDays = sortedDays.slice(0, daysShown);
     const hasMoreDays = sortedDays.length > daysShown;
     const olderHidden = sortedDays.length - daysShown;
-    const todayKey = (() => {
-        const t = new Date();
-        return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
-    })();
-    const yesterdayKey = (() => {
-        const y = new Date();
-        y.setDate(y.getDate() - 1);
-        return `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,"0")}-${String(y.getDate()).padStart(2,"0")}`;
-    })();
+    const todayKey = currentBaseballDayKey();
+    const yesterdayKey = baseballDayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
     const daySections = visibleDays.map((dayKey) => {
         const dayFires = byDay.get(dayKey);
