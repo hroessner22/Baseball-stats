@@ -4084,6 +4084,11 @@ async function refreshGame(id) {
                 if (gameViewMode !== "live") return;
                 repaintRailBets(g);
             });
+            // Also kick the practice cashout check on this tick so a
+            // newly-dead position exits within the same 5s window the
+            // user is watching — without waiting for the global
+            // practice-cashout timer to come around.
+            try { window.AutoBot?.runPracticeCashoutCheck?.(); } catch {}
         }
         if (gameViewMode === "markets") {
             hydrateMarkets(id);

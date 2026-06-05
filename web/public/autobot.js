@@ -336,6 +336,7 @@ const _state = {
     openPositions: [],         // last Kalshi.getPositions() snapshot
     scanTimer: null,
     cashoutTimer: null,
+    practiceCashoutTimer: null,
     lastScanAt: null,
     isScanning: false,
 };
@@ -2869,7 +2870,9 @@ async function starterPullProbableReason(fire) {
 // bid. User direction (2026-06-05): bot should auto-cashout when a
 // pitcher is going to be pulled and missed his line.
 async function runPracticeCashoutCheck() {
-    if (!_state.settings.enabled) return;
+    // Practice mode is a sandbox — run regardless of bot enable state.
+    // Practice fires have no real-money risk; gating on enabled meant
+    // a user with the bot off saw the cashout never fire.
     let fires = [];
     try { fires = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); } catch { return; }
     const open = fires.filter((f) => !f.settled && f.ticker
@@ -7010,6 +7013,21 @@ if (document.readyState === "loading") {
         log("bot", "Resumed (session persisted)");
     }
 }
+
+// Always-on practice-cashout loop. Independent of the bot enable
+// state because practice fires don't carry real-money risk and the
+// user expects 'when a position goes dead, get me out NOW' even with
+// the bot off. 5-second cadence (matches the live game-poll tick)
+// so cashouts feel instant.
+function ensurePracticeCashoutTimer() {
+    if (_state.practiceCashoutTimer) return;
+    _state.practiceCashoutTimer = setInterval(() => {
+        try { runPracticeCashoutCheck(); } catch {}
+    }, 5_000);
+    // Immediate kick — don't wait 5s for the first tick after load.
+    setTimeout(() => { try { runPracticeCashoutCheck(); } catch {} }, 0);
+}
+ensurePracticeCashoutTimer();
 
 
 // ── Public surface ────────────────────────────────────────────────
