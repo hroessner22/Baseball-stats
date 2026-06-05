@@ -13,7 +13,7 @@
          actually exist rather than silently rounding to the nearest
          discrete weight. -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20260605SIDESPLIT">
+    <link rel="stylesheet" href="style.css?v=20260605PREGAME">
     <link rel="icon" type="image/svg+xml" href="logo.svg">
 </head>
 <body>
@@ -73,9 +73,9 @@
     </footer>
 
     <script src="parks.js"></script>
-    <script src="kalshi.js?v=20260605SIDESPLIT"></script>
-    <script src="health.js?v=20260605SIDESPLIT"></script>
-    <script src="app.js?v=20260605SIDESPLIT"></script>
+    <script src="kalshi.js?v=20260605PREGAME"></script>
+    <script src="health.js?v=20260605PREGAME"></script>
+    <script src="app.js?v=20260605PREGAME"></script>
     <!-- Loaded as a module so it can import @supabase/supabase-js
          from the ESM CDN. Exposes window.Auth for any non-module
          caller that wants to gate behavior on sign-in state. -->
@@ -85,18 +85,18 @@
          so the bot can call scoreBet() / logScoredDecision().
          Query-string version pins Cloudflare cache so a fresh deploy
          doesn't serve stale JS from CDN edge. */ -->
-    <script src="bot-scoring.js?v=20260605SIDESPLIT"></script>
+    <script src="bot-scoring.js?v=20260605PREGAME"></script>
     <!-- Notifications log — surfaces only what the bot can't fix
          on its own (stuck position, auth loss, balance empty, daily
          loss limit). Must load BEFORE autobot.js so the bot can
          push to it from any failure path. -->
-    <script src="bot-notifications.js?v=20260605SIDESPLIT"></script>
+    <script src="bot-notifications.js?v=20260605PREGAME"></script>
     <!-- AutoBot: edge-detection bot + Open Bets drawer. Loads last
          so it can read window.Kalshi (must already be initialized). -->
-    <script src="autobot.js?v=20260605SIDESPLIT"></script>
+    <script src="autobot.js?v=20260605PREGAME"></script>
     <!-- Active Bets strip: slim bottom widget showing every active
          position with deep-links + DraftKings-style progress bars
          on player props. Reads window.Kalshi and the bot fires log. -->
-    <script src="active-bets-strip.js?v=20260605SIDESPLIT"></script>
+    <script src="active-bets-strip.js?v=20260605PREGAME"></script>
 </body>
 </html>

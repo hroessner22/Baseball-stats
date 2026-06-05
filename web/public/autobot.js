@@ -737,6 +737,22 @@ async function fetchLiveGames() {
 }
 
 async function scanOneGame(g) {
+    // GAME-MUST-BE-LIVE GATE (2026-06-05). User direction: 'you also
+    // now placed and cashed out a bet before the game started. Never
+    // let that happen.' The MLB API sometimes flags games as 'Live'
+    // during warmup, before any pitch has been thrown. The fetchLive
+    // status filter let those through and the bot bought a YES K-prop
+    // pregame. Defensive double-check on the actual game-state
+    // fields: at least one pitch must have been thrown, or at least
+    // one PA must have happened, or the inning must be past 0.
+    const gInningChk = parseInt(g.inning, 10) || 0;
+    const anyAction = (parseInt(g.outs, 10) > 0)
+                   || (parseInt(g.balls, 10) > 0)
+                   || (parseInt(g.strikes, 10) > 0);
+    if (gInningChk < 1 || (gInningChk === 1 && g.half === "top" && !anyAction)) {
+        log("skip", `Pre-first-pitch — ${g.away}@${g.home} status=${g.status} inning=${gInningChk}: blocked`);
+        return;
+    }
     // Pull markets (for moneyline + player_prop Kalshi quotes),
     // model-props (player-level probabilities), and weather (for
     // wind/temp adjustments on prop scoring) in parallel.
@@ -2940,6 +2956,26 @@ async function isMathematicallyDead(fire) {
     catch { return null; }
     const box = boxMap.get(fire.game_pk);
     if (!box) return null;
+    // PRE-GAME GUARD (2026-06-05). isMathematicallyDead must never
+    // fire before the game has started. 'YES K-prop, pitcher not yet
+    // on the live lineup' isn't a pull signal pregame — it just means
+    // the lineup endpoint hasn't loaded the starter yet. Same for NO
+    // sides: the threshold can't be 'already met' on a game that
+    // hasn't thrown a pitch.
+    if (box.status && box.status !== "Live" && box.status !== "Final" && box.status !== "In Progress") {
+        return null;
+    }
+    const totals = box.line_score?.totals;
+    const hasPitchedAtAll = totals
+        && ((totals.home?.hits ?? 0) + (totals.away?.hits ?? 0)
+            + (totals.home?.runs ?? 0) + (totals.away?.runs ?? 0)) > 0;
+    // Also bail if the pitching arrays exist but every pitcher has
+    // 0 batters faced — strong pregame signal.
+    const pitchedHome = (box.pitching?.home || []).some((p) => (p.IP || "0.0") !== "0.0" || (p.batters_faced || 0) > 0 || (p.pitches || 0) > 0);
+    const pitchedAway = (box.pitching?.away || []).some((p) => (p.IP || "0.0") !== "0.0" || (p.batters_faced || 0) > 0 || (p.pitches || 0) > 0);
+    if (!pitchedHome && !pitchedAway && !hasPitchedAtAll) {
+        return null;
+    }
     const current = boxscoreStatForProp(box, fire.player, fire.stat);
     if (current == null) return null;
     // Case 1: NO side already lost.
@@ -2966,11 +3002,20 @@ async function isMathematicallyDead(fire) {
 async function starterPullProbableReason(fire) {
     if (!fire || !fire.game_pk || !fire.player) return null;
     const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
-    // getLivePitcherInfo returns null when the named pitcher is no
-    // longer the current mound pitcher — strongest possible pull
-    // signal.
-    if (!pInfo) return `pitcher already replaced (live lineup no longer lists ${fire.player})`;
+    // PRE-GAME GUARD (2026-06-05). getLivePitcherInfo returning null
+    // pregame just means the lineup endpoint hasn't loaded yet — it's
+    // NOT a 'pitcher replaced' signal. Need to distinguish: if the
+    // named pitcher is on neither team's lineup pregame, no pull
+    // conclusion possible. Wait for actual game data.
+    if (!pInfo) {
+        const gInfo = await getLiveGameState(fire.game_pk);
+        if (!gInfo || !gInfo.inning || gInfo.inning < 1) return null;
+        return `pitcher already replaced (live lineup no longer lists ${fire.player})`;
+    }
     const pitches   = pInfo.pitchesThrown || 0;
+    // Pre-first-pitch: pitcher is listed but hasn't thrown yet. NOT
+    // a pull signal.
+    if (pitches === 0 && (pInfo.battersFaced || 0) === 0) return null;
     const currentK  = pInfo.currentStrikeouts || 0;
     const threshold = fire.threshold || 0;
     // Threshold already met → not dead, just waiting for settle.
@@ -3030,6 +3075,18 @@ async function runPracticeCashoutCheck() {
         const heldSide = fire.side || "yes";
         const contractsEarly = fire.contracts || 1;
         const entryEarly     = fire.price_cents || 0;
+        // PRE-GAME GUARD (2026-06-05). User direction: 'you also now
+        // placed and cashed out a bet before the game started. Never
+        // let that happen.' Before any pitch has been thrown the
+        // mark-to-market is noise, the empirical lookups use the
+        // pregame state which is always 'still reachable', and any
+        // 'dead' signal we'd find is a lineup-not-loaded artifact.
+        // Just hold pregame fires — they go live with the game.
+        if (fire.game_pk) {
+            const gInfo = await getLiveGameState(fire.game_pk);
+            const inningNow = gInfo?.inning || 0;
+            if (inningNow < 1) continue;
+        }
         // STEP 0: mathematically dead check. NO with threshold met,
         // or YES K-prop with pitcher pulled. These are flat losses —
         // settle immediately at -cost, don't try to find a sell bid.
