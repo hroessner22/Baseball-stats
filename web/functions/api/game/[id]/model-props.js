@@ -22,6 +22,8 @@
 // Per-card model display tolerates "no quote" gracefully so the rare
 // upstream failure stays invisible.
 
+import { parkFactor } from "../../_park_factors.js";
+
 const UA = "DIAMOND:CONTEXT/0.1 (+https://diamond-context.pages.dev)";
 
 // Heuristics for "PAs you still expect this player to get in the game."
@@ -277,6 +279,12 @@ export async function onRequest(context) {
         };
     }
 
+    // Stadium / park factors. The home team plays the home park; the
+    // bot uses these multipliers to nudge prop probabilities (HR
+    // boost at Coors / Citizens Bank, HR suppression at Oracle / Petco).
+    const homeAbbr = teams.home?.team || null;
+    const park = parkFactor(homeAbbr);
+
     return jsonResponse({
         game_pk: parseInt(gameId, 10),
         available: true,
@@ -292,6 +300,10 @@ export async function onRequest(context) {
         // fallback when the starting-lineup map doesn't have the
         // player (the Luis Torrens case).
         all_player_stats: allPlayers.stats_by_id,
+        // Park factors keyed to the home team's stadium. Bot adjusts
+        // prop probabilities using these (HR-friendly bandbox vs
+        // pitcher-friendly cavern).
+        park_factors: { home_team: homeAbbr, ...park },
     }, 60);
 }
 

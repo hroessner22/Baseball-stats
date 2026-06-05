@@ -795,11 +795,28 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             _state.deadProps.add(propKey);
             continue;
         }
-        const our_p_yes = ladder[parsed.threshold];
-        if (our_p_yes == null) {
+        const raw_our_p_yes = ladder[parsed.threshold];
+        if (raw_our_p_yes == null) {
             _state.deadProps.add(propKey);
             continue;
         }
+        // PARK-FACTOR ADJUSTMENT. Bandbox parks (Coors, Citizens Bank,
+        // Cincy) boost batter outcomes; pitcher-friendly parks (Oracle,
+        // Petco, Coliseum) suppress them. Apply the relevant factor
+        // before scoring so our_p reflects the venue.
+        const park = modelProps.park_factors || {};
+        let parkMultiplier = 1.0;
+        if (parsed.stat === "home_runs")        parkMultiplier = park.hr   || 1.0;
+        else if (parsed.stat === "total_bases") parkMultiplier = ((park.hr || 1.0) + (park.hits || 1.0)) / 2;
+        else if (parsed.stat === "hits")        parkMultiplier = park.hits || 1.0;
+        // Strikeouts: park has small inverse effect (more HR-friendly
+        // parks slightly reduce strikeouts as hitters swing harder).
+        else if (parsed.stat === "strikeouts")  parkMultiplier = 1 / Math.max(0.7, (park.hr || 1.0));
+        // Cap the swing so a single factor can't move our_p by more
+        // than ±10pp on its own (Coors at 1.28 HR factor would
+        // otherwise apply 28% multiplicative which clobbers tail props).
+        const adjustedMultiplier = 1 + (parkMultiplier - 1) * 0.5;  // half-weight the factor
+        let our_p_yes = Math.min(0.999, Math.max(0.001, raw_our_p_yes * adjustedMultiplier));
 
         // DEAD-MODEL guard — our_p ≤ 1% means the model has given
         // up on this prop entirely (player out of PAs, threshold
