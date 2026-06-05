@@ -109,6 +109,8 @@ const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
 const teamView = document.getElementById("team-view");
+const trackRecordView = document.getElementById("track-record-view");
+const howItWorksView  = document.getElementById("how-it-works-view");
 
 const BOARD_REFRESH_MS = 30_000;
 // Game view polls fast — every PA boundary (out, hit, walk, run scoring,
@@ -266,6 +268,16 @@ function handleRoute() {
         setActiveNav("hot");
         return;
     }
+    if (hash === "#track-record") {
+        showTrackRecord();
+        setActiveNav(null);
+        return;
+    }
+    if (hash === "#how-it-works") {
+        showHowItWorks();
+        setActiveNav(null);
+        return;
+    }
     if (hash === "#edges") {
         // Legacy / deep-link route — Edges is now a sub-tab of Markets.
         // Set the markets sub-view to 'edges' and re-route.
@@ -421,6 +433,8 @@ function hideAllViews() {
     playerView.hidden = true;
     marketsView.hidden = true;
     teamView.hidden = true;
+    if (trackRecordView) trackRecordView.hidden = true;
+    if (howItWorksView)  howItWorksView.hidden  = true;
 }
 
 // Centralized timer-clear so each show* doesn't have to know about every
@@ -2418,6 +2432,395 @@ function showAbout() {
     hideAllViews();
     aboutView.hidden = false;
     aboutView.innerHTML = renderAbout();
+}
+
+// ── TRACK RECORD VIEW ───────────────────────────────────────────────
+//
+// Public-ish page showing the bot's settled-bet performance: total
+// fires, hit rate, ROI, broken down by category. Currently reads
+// from the user's localStorage fire log; the structure is shaped so
+// it can fan out to a real backend later (Supabase / D1) for a true
+// multi-user audited record.
+
+const LS_REAL_FIRES     = "diamond_context_bot_fires";
+const LS_PRACTICE_FIRES_TR = "diamond_context_bot_practice_fires";
+
+function showTrackRecord() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    trackRecordView.hidden = false;
+    refreshTrackRecord();
+}
+
+async function refreshTrackRecord() {
+    if (trackRecordView.hidden) return;
+    trackRecordView.innerHTML = renderTrackRecordShell();
+    let practice = [];
+    let real     = [];
+    try { practice = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES_TR) || "[]"); } catch {}
+    try { real     = JSON.parse(localStorage.getItem(LS_REAL_FIRES) || "[]"); } catch {}
+    const all = [...practice, ...real];
+    // Pull boxscores for each unique Final game so we can grade fires
+    // server-free. Caches at the browser level via the boxscore endpoint.
+    const settled = await gradeFires(all);
+    trackRecordView.innerHTML = renderTrackRecord(all, settled);
+}
+
+function renderTrackRecordShell() {
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>TRACK RECORD</h1>
+        <p class="page-sub">Bot performance from your local log. Public multi-user audit coming after auth ships.</p>
+      </header>
+      <div class="page-loading">Grading fires against settled box scores…</div>
+    `;
+}
+
+async function gradeFires(fires) {
+    const out = fires.map((f) => ({ ...f, _graded: null }));
+    const gamePks = [...new Set(out.filter((f) => f.game_pk && !f.settled).map((f) => f.game_pk))];
+    if (!gamePks.length) {
+        for (const f of out) if (f.settled) f._graded = f.settled;
+        return out;
+    }
+    const boxMap = new Map();
+    const results = await Promise.allSettled(gamePks.map(async (pk) => {
+        try {
+            const res = await fetch(`/api/game/${pk}/boxscore`);
+            if (!res.ok) return null;
+            const d = await res.json();
+            return { pk, d };
+        } catch { return null; }
+    }));
+    for (const r of results) {
+        if (r.status === "fulfilled" && r.value?.d) boxMap.set(r.value.pk, r.value.d);
+    }
+    for (const f of out) {
+        if (f.settled) { f._graded = f.settled; continue; }
+        const box = boxMap.get(f.game_pk);
+        if (!box || box.status !== "Final") continue;
+        const won = gradeFireAgainstBoxscore(f, box);
+        if (won == null) continue;
+        const contracts = f.contracts || 1;
+        const price    = f.price_cents || 0;
+        const profit   = won ? (contracts * (100 - price)) : -(contracts * price);
+        f._graded = { won, profit_cents: profit };
+    }
+    return out;
+}
+function gradeFireAgainstBoxscore(f, box) {
+    if (f.kind === "moneyline") {
+        const home = box.line_score?.totals?.home?.runs ?? 0;
+        const away = box.line_score?.totals?.away?.runs ?? 0;
+        const homeAbbr = String(box.teams?.home?.abbr || "").toUpperCase();
+        const awayAbbr = String(box.teams?.away?.abbr || "").toUpperCase();
+        const betTeam  = String(f.bet_team || "").toUpperCase();
+        if (betTeam === homeAbbr) return home > away;
+        if (betTeam === awayAbbr) return away > home;
+        return null;
+    }
+    if (f.kind === "player_prop") {
+        const stat = f.stat;
+        const want = (lines) => (lines || []).find((p) => normName(p.name) === normName(f.player || ""));
+        const inAll = (side) => want(box[side]?.[side === "pitching" ? null : "batting"]);  // unused fallback
+        let stat_value = null;
+        if (stat === "strikeouts") {
+            for (const side of ["home", "away"]) {
+                const ln = (box.pitching?.[side] || []).find((p) => normName(p.name) === normName(f.player || ""));
+                if (ln) { stat_value = ln.K ?? 0; break; }
+            }
+        } else {
+            for (const side of ["home", "away"]) {
+                const ln = (box.batting?.[side] || []).find((p) => normName(p.name) === normName(f.player || ""));
+                if (!ln) continue;
+                if (stat === "hits") stat_value = ln.H ?? 0;
+                else if (stat === "home_runs") stat_value = ln.HR ?? 0;
+                else if (stat === "total_bases") {
+                    stat_value = (ln.H || 0) + (ln._2B || 0) + 2*(ln._3B || 0) + 3*(ln.HR || 0);
+                }
+                if (stat_value != null) break;
+            }
+        }
+        if (stat_value == null) return null;
+        const yesWon = stat_value >= (f.threshold || 0);
+        return (f.side === "yes") ? yesWon : !yesWon;
+    }
+    return null;
+}
+function normName(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function renderTrackRecord(fires, graded) {
+    const settled = graded.filter((f) => f._graded);
+    const wins    = settled.filter((f) => f._graded.won);
+    const losses  = settled.filter((f) => !f._graded.won);
+    const open    = graded.filter((f) => !f._graded);
+    const totalStake = settled.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
+    const totalProfit = settled.reduce((s, f) => s + (f._graded.profit_cents || 0), 0);
+    const roi       = totalStake > 0 ? (totalProfit / totalStake) : 0;
+    const hitRate   = settled.length > 0 ? (wins.length / settled.length) : 0;
+
+    // 95% confidence interval on win rate (Wilson score interval — handles small n cleanly)
+    const n = settled.length;
+    const p = hitRate;
+    const z = 1.96;
+    let ciLow = 0, ciHigh = 0;
+    if (n > 0) {
+        const denom = 1 + z*z/n;
+        const center = (p + z*z/(2*n)) / denom;
+        const margin = z * Math.sqrt(p*(1-p)/n + z*z/(4*n*n)) / denom;
+        ciLow  = Math.max(0, center - margin);
+        ciHigh = Math.min(1, center + margin);
+    }
+
+    // Bucket by category
+    const byKind = new Map();
+    for (const f of settled) {
+        const key = f.kind === "moneyline" ? "moneyline"
+                  : `${f.stat}_${f.threshold}+_${f.side}`;
+        if (!byKind.has(key)) byKind.set(key, { wins: 0, losses: 0, stake: 0, profit: 0 });
+        const rec = byKind.get(key);
+        const stake = (f.contracts || 1) * (f.price_cents || 0);
+        rec.stake  += stake;
+        rec.profit += (f._graded.profit_cents || 0);
+        if (f._graded.won) rec.wins++; else rec.losses++;
+    }
+    const catRows = Array.from(byKind.entries())
+        .sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses))
+        .slice(0, 20)
+        .map(([key, r]) => {
+            const total = r.wins + r.losses;
+            const wr    = total > 0 ? r.wins / total : 0;
+            const rRoi  = r.stake > 0 ? r.profit / r.stake : 0;
+            const pCls  = r.profit >= 0 ? "tr-pos" : "tr-neg";
+            return `
+              <tr>
+                <td>${escapeHTML(key)}</td>
+                <td class="tr-num">${total}</td>
+                <td class="tr-num">${r.wins}-${r.losses}</td>
+                <td class="tr-num">${(wr*100).toFixed(0)}%</td>
+                <td class="tr-num ${pCls}">${(rRoi*100).toFixed(0)}%</td>
+                <td class="tr-num ${pCls}">${r.profit >= 0 ? "+" : ""}\$${(r.profit/100).toFixed(2)}</td>
+              </tr>
+            `;
+        }).join("");
+
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>TRACK RECORD</h1>
+        <p class="page-sub">${fires.length} fires placed · ${settled.length} settled · ${open.length} open or unresolvable</p>
+      </header>
+
+      <section class="tr-hero">
+        <div class="tr-stat">
+          <div class="tr-stat-label">Hit rate</div>
+          <div class="tr-stat-val">${(hitRate*100).toFixed(1)}%</div>
+          <div class="tr-stat-sub">${wins.length}–${losses.length} settled · 95% CI: ${(ciLow*100).toFixed(0)}–${(ciHigh*100).toFixed(0)}%</div>
+        </div>
+        <div class="tr-stat">
+          <div class="tr-stat-label">ROI</div>
+          <div class="tr-stat-val ${roi >= 0 ? "tr-pos" : "tr-neg"}">${roi >= 0 ? "+" : ""}${(roi*100).toFixed(1)}%</div>
+          <div class="tr-stat-sub">on \$${(totalStake/100).toFixed(2)} total staked</div>
+        </div>
+        <div class="tr-stat">
+          <div class="tr-stat-label">Net P/L</div>
+          <div class="tr-stat-val ${totalProfit >= 0 ? "tr-pos" : "tr-neg"}">${totalProfit >= 0 ? "+" : ""}\$${(totalProfit/100).toFixed(2)}</div>
+          <div class="tr-stat-sub">${settled.length} settled · ${open.length} open</div>
+        </div>
+        <div class="tr-stat">
+          <div class="tr-stat-label">Avg edge</div>
+          <div class="tr-stat-val">${settled.length > 0 ? (settled.reduce((s, f) => s + (f.edge_pp || 0), 0) / settled.length).toFixed(1) : "—"}pp</div>
+          <div class="tr-stat-sub">model vs market at fire</div>
+        </div>
+      </section>
+
+      ${settled.length === 0 ? `
+        <section class="tr-empty">
+          <p>No settled fires yet. Turn the bot on in <a href="#" class="tr-link" data-open-bot>practice mode</a> and check back after a slate.</p>
+        </section>
+      ` : `
+        <section class="tr-section">
+          <h2>By bet category</h2>
+          <table class="tr-table">
+            <thead><tr>
+              <th>Category</th><th class="tr-num">n</th><th class="tr-num">W-L</th>
+              <th class="tr-num">Win %</th><th class="tr-num">ROI</th><th class="tr-num">Net</th>
+            </tr></thead>
+            <tbody>${catRows}</tbody>
+          </table>
+        </section>
+      `}
+
+      <footer class="tr-foot">
+        <p><strong>Methodology</strong>: Every bot fire is logged with its model/market edge, then graded against the official MLB boxscore once the game ends. Wilson score interval used for the 95% CI on hit rate.</p>
+        <p>Current data is local to this browser. A multi-user audited record requires user accounts — on the roadmap.</p>
+        <p><a class="tr-link" href="#how-it-works">How the bot picks bets →</a></p>
+      </footer>
+    `;
+}
+
+// ── HOW IT WORKS VIEW ───────────────────────────────────────────────
+//
+// Methodology page showing the empirical derivations powering the
+// bot. Pulls _bot_coefficients.json (served via /api/coefficients)
+// and renders each empirical table with plain-English explanations.
+
+function showHowItWorks() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    howItWorksView.hidden = false;
+    refreshHowItWorks();
+}
+
+async function refreshHowItWorks() {
+    howItWorksView.innerHTML = renderHowItWorksShell();
+    let coefs = null;
+    try {
+        const res = await fetch("/api/coefficients");
+        if (res.ok) coefs = await res.json();
+    } catch {}
+    howItWorksView.innerHTML = renderHowItWorks(coefs);
+}
+
+function renderHowItWorksShell() {
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>HOW THE BOT PICKS BETS</h1>
+        <p class="page-sub">Every coefficient below is derived from data, not guessed.</p>
+      </header>
+      <div class="page-loading">Loading empirical coefficients…</div>
+    `;
+}
+
+function renderHowItWorks(coefs) {
+    if (!coefs) {
+        return `
+          <a class="back-link" href="#">← BOARD</a>
+          <header class="page-head"><h1>HOW IT WORKS</h1></header>
+          <p>Couldn't load coefficients. Refresh in a moment.</p>
+        `;
+    }
+    const seasons = coefs.seasons || "n/a";
+    const source  = coefs.source  || "Retrosheet PBP";
+
+    const hq = coefs.hitter_quality_by_season_avg || {};
+    const hqRows = Object.entries(hq).map(([bucket, d]) => `
+        <tr>
+          <td>${bucket}</td>
+          <td class="tr-num">${(d.game_batter_pairs || 0).toLocaleString()}</td>
+          <td class="tr-num">${((d.p_1_plus_hit || 0) * 100).toFixed(1)}%</td>
+          <td class="tr-num">${((d.p_2_plus_hit || 0) * 100).toFixed(1)}%</td>
+          <td class="tr-num">${((d.p_1_plus_hr  || 0) * 100).toFixed(2)}%</td>
+          <td class="tr-num">${((d.p_2_plus_tb  || 0) * 100).toFixed(1)}%</td>
+        </tr>
+      `).join("");
+
+    const kp = coefs.kprop_by_pitcher_season_k9 || {};
+    const kpRows = Object.entries(kp).map(([bucket, d]) => `
+        <tr>
+          <td>${bucket}</td>
+          <td class="tr-num">${(d.starts || 0).toLocaleString()}</td>
+          <td class="tr-num">${(d.avg_k_per_start || 0).toFixed(1)}</td>
+          <td class="tr-num">${((d.p_5_plus || 0) * 100).toFixed(0)}%</td>
+          <td class="tr-num">${((d.p_7_plus || 0) * 100).toFixed(0)}%</td>
+          <td class="tr-num">${((d.p_9_plus || 0) * 100).toFixed(0)}%</td>
+        </tr>
+      `).join("");
+
+    const wx = coefs.weather?.by_bucket || {};
+    const wxRef = coefs.weather?.reference || {};
+    const wxRows = Object.entries(wx)
+        .sort((a, b) => b[1].pa - a[1].pa)
+        .slice(0, 12)
+        .map(([key, d]) => {
+            const [temp, wind] = key.split("|");
+            const cls = (d.hr_multiplier < 0.85) ? "tr-neg" : (d.hr_multiplier > 1.05) ? "tr-pos" : "";
+            return `
+              <tr>
+                <td>${temp}°F · ${wind} mph</td>
+                <td class="tr-num">${d.pa.toLocaleString()}</td>
+                <td class="tr-num ${cls}">${d.hr_multiplier.toFixed(2)}×</td>
+                <td class="tr-num">${d.hit_multiplier.toFixed(2)}×</td>
+              </tr>
+            `;
+        }).join("");
+
+    const pull = coefs.pitcher_pull_point?.by_bf || {};
+    const pullRows = [15, 18, 20, 22, 24, 26, 28, 30, 32].map((bf) => {
+        const rec = pull[String(bf)];
+        if (!rec) return "";
+        return `
+          <tr>
+            <td>${bf} batters faced</td>
+            <td class="tr-num">${((rec.pull_rate || 0) * 100).toFixed(0)}%</td>
+            <td class="tr-num">${(rec.n_still_pitching || 0).toLocaleString()}</td>
+          </tr>
+        `;
+    }).join("");
+
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>HOW THE BOT PICKS BETS</h1>
+        <p class="page-sub">Every threshold below was derived from data — ${source}, seasons ${seasons}. No guesses.</p>
+      </header>
+
+      <section class="hiw-section">
+        <h2>1. Hitter quality — what your AVG says about your next game</h2>
+        <p>For each batter, we computed their actual per-game hit / HR / TB rates against their season AVG. The bot refuses NO bets where the market underprices a quality hitter's baseline rate.</p>
+        <table class="tr-table">
+          <thead><tr><th>Season AVG</th><th class="tr-num">n game-batter</th>
+            <th class="tr-num">P(1+ H)</th><th class="tr-num">P(2+ H)</th>
+            <th class="tr-num">P(1+ HR)</th><th class="tr-num">P(2+ TB)</th></tr></thead>
+          <tbody>${hqRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: a .280 hitter reaches 1+ hit in 67% of games. Betting NO at 33¢ or higher when the market doesn't price this is a losing trade.</p>
+      </section>
+
+      <section class="hiw-section">
+        <h2>2. Pitcher strikeouts — what season K/9 means for tonight</h2>
+        <p>For each starter, we computed their actual per-start K distribution against their season K/9. The bot fires K-prop YES only when the empirical distribution supports it.</p>
+        <table class="tr-table">
+          <thead><tr><th>Season K/9</th><th class="tr-num">n starts</th>
+            <th class="tr-num">avg K/start</th>
+            <th class="tr-num">P(5+)</th><th class="tr-num">P(7+)</th><th class="tr-num">P(9+)</th></tr></thead>
+          <tbody>${kpRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: a 9.0–10.0 K/9 starter hits 5+ K in 67% of starts but 9+ K only in 4%. Bot YES/NO bars adjust to the bucket.</p>
+      </section>
+
+      <section class="hiw-section">
+        <h2>3. Weather — empirical multipliers vs neutral</h2>
+        <p>For each (temperature × wind) bucket, we computed the league hit and HR rate per PA. Multipliers below are relative to the neutral reference: ${wxRef.temp || "60-70°F"}, ${wxRef.wind || "0-5mph"} wind.</p>
+        <table class="tr-table">
+          <thead><tr><th>Conditions</th><th class="tr-num">n PAs</th>
+            <th class="tr-num">HR mult.</th><th class="tr-num">Hit mult.</th></tr></thead>
+          <tbody>${wxRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: cold weather suppresses HRs by 15–35%. Hot weather adds 5–10%. The bot adjusts batter prop probabilities accordingly.</p>
+      </section>
+
+      <section class="hiw-section">
+        <h2>4. Pitcher pull point — when starters actually come out</h2>
+        <p>Across 32K starts, the probability the starter is removed by batter N.</p>
+        <table class="tr-table">
+          <thead><tr><th>State</th><th class="tr-num">Pull rate</th><th class="tr-num">n still pitching</th></tr></thead>
+          <tbody>${pullRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: by BF 28 (≈100 pitches), 49% of starters are gone. The bot uses this to refuse K-prop YES when the math is dominated by remaining innings the pitcher won't pitch.</p>
+      </section>
+
+      <footer class="tr-foot">
+        <p>All coefficients regenerate from <code>data/processed/rates.db</code> via <code>scripts/derive_coefficients.py</code>. Open-source, reproducible.</p>
+        <p><a class="tr-link" href="#track-record">See the bot's track record →</a></p>
+      </footer>
+    `;
 }
 
 // ── PLAYER PROFILE VIEW ─────────────────────────────────────────────

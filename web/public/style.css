@@ -11448,3 +11448,157 @@ button.md-game-outcome:active { transform: translateY(1px); }
 .bot-log-err  .bot-log-msg { color: var(--accent-live); }
 .bot-log-halt .bot-log-msg { color: var(--accent-live); font-weight: 600; }
 
+
+/* ── TRACK RECORD + HOW IT WORKS PAGES ─────────────────────────── */
+
+.page-view {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+}
+
+.page-head {
+    margin-bottom: 32px;
+}
+.page-head h1 {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    margin: 0 0 8px;
+    color: var(--text);
+}
+.page-head .page-sub {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin: 0;
+    max-width: 720px;
+}
+.page-loading {
+    color: var(--text-dim);
+    font-size: 14px;
+    padding: 24px;
+}
+
+/* Hero stats grid */
+.tr-hero {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 32px;
+}
+.tr-stat {
+    padding: 18px 20px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.tr-stat-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+}
+.tr-stat-val {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.15;
+}
+.tr-stat-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+.tr-pos { color: var(--accent-win); }
+.tr-neg { color: var(--accent-live); }
+
+/* Tables */
+.tr-section { margin-bottom: 32px; }
+.tr-section h2,
+.hiw-section h2 {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    margin: 0 0 12px;
+}
+.tr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-bottom: 12px;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.tr-table th, .tr-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+.tr-table th {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: rgba(15, 23, 42, 0.6);
+}
+.tr-table tr:last-child td { border-bottom: none; }
+.tr-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* How-it-works sections */
+.hiw-section {
+    margin-bottom: 36px;
+    padding: 20px 22px;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.hiw-section p {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0 0 14px;
+}
+.hiw-takeaway {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: rgba(56, 189, 248, 0.08);
+    border-left: 3px solid var(--accent-action, #38BDF8);
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+/* Footer */
+.tr-foot {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 13px;
+}
+.tr-foot p {
+    margin: 0 0 8px;
+}
+.tr-link {
+    color: var(--accent-action, #38BDF8);
+    text-decoration: none;
+    border-bottom: 1px dotted currentColor;
+}
+.tr-link:hover { border-bottom-style: solid; }
+.tr-empty {
+    padding: 32px 24px;
+    text-align: center;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+}
