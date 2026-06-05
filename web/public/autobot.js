@@ -211,14 +211,18 @@ const DEFAULTS = {
     huge_edge_pp:          12,     // adjusted edge ≥ 12pp = 'huge'
     huge_edge_cap_pct:     0.60,   // cap moves 50% → 60% on those
     // FAVORED-YES NO-BET extra barrier. When the market itself
-    // prices YES as the likely outcome (yes_market_p ≥ 0.55), the
-    // NO side is structurally swimming upstream — even small
-    // negative variance wipes out many wins. Default +4pp on top
-    // of the regular NO bar = 9pp+4pp = 13pp adjusted edge needed
-    // for NO bets where YES is already favored. User direction
-    // 2026-06-04: 'baseball is very tough to say not one hit.
-    // increase the barriers for that.' Set to 0 to disable.
-    favored_no_extra_pp:   4,
+    // prices YES as the likely outcome, the NO side is structurally
+    // swimming upstream — even small negative variance wipes out
+    // many wins.
+    //
+    // 2026-06-04: introduced +4pp at 55% threshold.
+    // 2026-06-05: bumped +4 → +8pp AND lowered threshold 0.55 →
+    // 0.45 after Jun 4 review. Threshold-1 hitter NO bets ('Buxton
+    // 1+ hit NO', etc.) went 4-13 on Jun 4 = ~24% hit rate, single-
+    // handedly accounting for the night's negative P/L. Doubling
+    // the penalty + lowering the trigger threshold catches the
+    // marginally-favored cases the prior 55% bar missed.
+    favored_no_extra_pp:   8,
     // CORRELATED-LADDER GATE — prop ladders (Cole over 6/7/8/9/10 K)
     // are perfectly correlated. Stacking fires across a ladder
     // sizes the same underlying bet Nx. BUT: a higher threshold
@@ -301,6 +305,16 @@ function loadState() {
             s.bet_player_props = true;
             s.moneyline_reserve_pct = 0.50;
             try { localStorage.setItem(ML_AND_PROPS_FLAG, "1"); } catch {}
+        }
+        // ONE-SHOT MIGRATION 2026-06-05 (PM): bump favored-YES NO
+        // penalty 4 → 8 after Jun 4 1+ hit NO bets went 4-13. Push
+        // the new value to anyone with the old default persisted.
+        const FAVORED_NO_BUMP_FLAG = "diamond_context_favored_no_bump_2026_06_05";
+        if (!localStorage.getItem(FAVORED_NO_BUMP_FLAG)) {
+            if (typeof s.favored_no_extra_pp !== "number" || s.favored_no_extra_pp < 8) {
+                s.favored_no_extra_pp = 8;
+            }
+            try { localStorage.setItem(FAVORED_NO_BUMP_FLAG, "1"); } catch {}
         }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
@@ -1024,7 +1038,11 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const yesMarketProb = market_p != null
             ? (side === "no" ? 1 - market_p : market_p)
             : null;
-        const favoredYesPenalty = (side === "no" && yesMarketProb != null && yesMarketProb >= 0.55)
+        // 2026-06-05: threshold lowered 0.55 → 0.45 so even
+        // marginally-favored YES triggers the extra NO penalty.
+        // Many Jun 4 1+ hit NO fires had yes_market_p around
+        // 50-65% but slipped past the old 55% gate.
+        const favoredYesPenalty = (side === "no" && yesMarketProb != null && yesMarketProb >= 0.45)
             ? (_state.settings.favored_no_extra_pp || 0)
             : 0;
         const noPenalty = side === "no" ? 4 : 0;
@@ -5383,7 +5401,7 @@ function renderBotPane() {
             <input type="number" min="0" max="15" step="0.5"
                    value="${s.favored_no_extra_pp}"
                    data-bot-setting-float="favored_no_extra_pp">
-            <small>When the market itself prices YES as the favorite (≥55%), NO bets need this many extra pp of edge on top of the regular NO bar. Baseball example: most hitters get 1+ hit in ~70% of games, so 'under 1 hit' is structurally tough even with a small model edge. Default +4pp (= 13pp adjusted edge minimum for favored-YES NO bets). 0 = disable.</small>
+            <small>When the market prices YES as the favorite (≥45%), NO bets need this many extra pp of edge on top of the regular NO bar. Baseball example: most hitters get 1+ hit in ~70% of games, so 'under 1 hit' is structurally tough. <strong>Updated 2026-06-05</strong> after Jun 4 review: threshold-1 hit NOs went 4-13. Default raised +4 → +8pp; threshold lowered 55% → 45%. 0 = disable.</small>
           </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.require_savant_agree ? "checked" : ""}
