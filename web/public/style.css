@@ -4664,6 +4664,23 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .rail-bet-open  { color: var(--text-dim); }
 .rail-bet-won   { color: #4ADE80; font-weight: 600; }
 .rail-bet-lost  { color: #F87171; font-weight: 600; }
+/* Live mark-to-market block: 2-line stack with the live P/L delta
+   on top (colored) and the entry → live cents underneath in dim. */
+.rail-bet-live {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1.1;
+    gap: 2px;
+}
+.rail-bet-mark {
+    font-weight: 600;
+    font-size: 11px;
+}
+.rail-bet-entry {
+    color: var(--text-dim);
+    font-size: 9.5px;
+}
 .rail-bet-row .bot-progress {
     margin: 0;
     padding: 0;

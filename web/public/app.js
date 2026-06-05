@@ -4076,8 +4076,18 @@ async function refreshGame(id) {
         } else if (gameViewMode === "live" && hasGameBets(id)) {
             // Live View also needs the boxscore — it's what feeds the
             // per-bet progress bars in the rail card. Edge-cached, so
-            // the refetch on the 5s tick is essentially free.
-            hydrateBoxscore(id, g.status);
+            // the refetch on the 5s tick is essentially free. Also
+            // pull Kalshi orderbooks so each row shows live mark vs
+            // entry, then repaint just the rail card so the user
+            // doesn't have to wait for the next 5s tick.
+            Promise.allSettled([
+                hydrateBoxscore(id, g.status),
+                hydrateRailLiveData(id),
+            ]).then(() => {
+                if (String(id) !== String(activeGameId)) return;
+                if (gameViewMode !== "live") return;
+                repaintRailBets(g);
+            });
         }
         if (gameViewMode === "markets") {
             hydrateMarkets(id);
@@ -4174,6 +4184,93 @@ function renderGame(g) {
 const LS_GAME_BETS_FIRES          = "diamond_context_bot_fires";
 const LS_GAME_BETS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
 const LS_GAME_BETS_SETTINGS       = "diamond_context_bot_settings";
+
+// Per-ticker live mark cache for the rail bets card. Keyed by Kalshi
+// ticker; { t, mark } where mark is cents the position is worth NOW
+// (YES bid for YES bets, NO bid for NO bets). Refreshed alongside
+// refreshGame so the rail rows show live mark-to-market vs entry.
+const _railLiveMarks = new Map();
+const RAIL_MARK_TTL_MS = 8000;
+
+// Targeted re-render of just the rail bets card — runs after
+// async hydrate (boxscore + Kalshi orderbooks) so the live mark
+// and the live K count appear without waiting for the next 5s
+// game-state tick.
+function repaintRailBets(g) {
+    if (!g) return;
+    const card = document.querySelector("#game-view .rail-bets-card");
+    if (!card) return;
+    const fresh = renderGameBetsCardRail(g);
+    if (!fresh) {
+        card.remove();
+        return;
+    }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = fresh.trim();
+    const next = tmp.firstElementChild;
+    if (next) card.replaceWith(next);
+}
+
+async function hydrateRailLiveData(gamePk) {
+    if (!gamePk) return false;
+    let practiceMode = false;
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    const key = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
+    let fires = [];
+    try { fires = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+    const onGame = fires.filter((f) => String(f.game_pk) === String(gamePk) && !f.settled && f.ticker);
+    if (!onGame.length) return false;
+    const now = Date.now();
+    const tickers = [...new Set(onGame.map((f) => ({ t: f.ticker, side: f.side || "yes" })).map(JSON.stringify))]
+        .map((s) => JSON.parse(s));
+    let any = false;
+    await Promise.all(tickers.map(async ({ t, side }) => {
+        const cached = _railLiveMarks.get(t);
+        if (cached && (now - cached.t) < RAIL_MARK_TTL_MS) return;
+        try {
+            const ob = await window.Kalshi?.getOrderbook?.(t);
+            if (!ob) return;
+            const mark = side === "no"
+                ? (window.Kalshi.orderbookNoBidCents
+                    ? window.Kalshi.orderbookNoBidCents(ob)
+                    : __obNoBidCents(ob))
+                : (window.Kalshi.orderbookYesBidCents
+                    ? window.Kalshi.orderbookYesBidCents(ob)
+                    : __obYesBidCents(ob));
+            if (mark != null) {
+                _railLiveMarks.set(t, { t: now, mark });
+                any = true;
+            }
+        } catch {}
+    }));
+    return any;
+}
+
+// Fallback orderbook lookups in case the Kalshi module hasn't exposed
+// them on the global. Mirrors the autobot helpers — best YES bid is
+// the highest YES price someone wants to pay; NO bid = 100 - YES ask.
+function __obYesBidCents(ob) {
+    const book = ob?.yes || [];
+    if (!book.length) return null;
+    const c = Number(book[book.length - 1]?.[0]);
+    if (!Number.isFinite(c) || c < 1 || c > 99) return null;
+    return c;
+}
+function __obYesAskCents(ob) {
+    const book = ob?.no || [];
+    if (!book.length) return null;
+    const noBid = Number(book[book.length - 1]?.[0]);
+    if (!Number.isFinite(noBid) || noBid < 1 || noBid > 99) return null;
+    return 100 - noBid;
+}
+function __obNoBidCents(ob) {
+    const yesAsk = __obYesAskCents(ob);
+    if (yesAsk == null) return null;
+    return 100 - yesAsk;
+}
 
 // Quick check used by refreshGame to decide whether to also pull the
 // boxscore on Live View — the rail bets card needs it for progress bars.
@@ -4468,15 +4565,38 @@ function renderGameBetsCardRail(g) {
     };
 
     const rows = displayed.map((f) => {
-        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const contracts = f.contracts || 1;
+        const entryCents = f.price_cents || 0;
+        const cost = contracts * entryCents;
         const sideCls = (f.side || "yes") === "no" ? "rail-bet-side-no" : "rail-bet-side-yes";
         const sideTag = (f.side || "yes") === "no" ? "NO" : "YES";
+
         let stateHtml;
         if (f.settled) {
             const wonCls = f.settled.won ? "rail-bet-won" : "rail-bet-lost";
             stateHtml = `<span class="rail-bet-state ${wonCls}">${f.settled.won ? "WON " : "LOST "}${f.settled.won ? "+" : ""}$${(f.settled.profit_cents/100).toFixed(2)}</span>`;
         } else {
-            stateHtml = `<span class="rail-bet-state rail-bet-open">$${(cost/100).toFixed(2)}</span>`;
+            // Live mark-to-market straight from the Kalshi orderbook
+            // (yes bid for YES bets, no bid for NO bets — what the
+            // position is worth if you sold it right now). When the
+            // first orderbook tick hasn't landed yet we fall back to
+            // the entry cost so the row never goes blank.
+            const cached = f.ticker ? _railLiveMarks.get(f.ticker) : null;
+            const markCents = cached && cached.mark != null ? cached.mark : null;
+            if (markCents != null) {
+                const liveVal = contracts * markCents;
+                const pnl = liveVal - cost;
+                const cls = pnl >= 0 ? "rail-bet-pos" : "rail-bet-neg";
+                const sign = pnl >= 0 ? "+" : "";
+                stateHtml = `
+                  <span class="rail-bet-state rail-bet-live">
+                    <span class="rail-bet-mark ${cls}">${sign}$${(pnl/100).toFixed(2)}</span>
+                    <span class="rail-bet-entry">$${(cost/100).toFixed(2)} → $${(liveVal/100).toFixed(2)}</span>
+                  </span>
+                `;
+            } else {
+                stateHtml = `<span class="rail-bet-state rail-bet-open">$${(cost/100).toFixed(2)}</span>`;
+            }
         }
         return `
           <li class="rail-bet-row">
