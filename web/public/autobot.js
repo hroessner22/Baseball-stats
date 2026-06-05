@@ -235,6 +235,15 @@ const DEFAULTS = {
     // on threshold-1 hits/TB when the batter's season AVG is at
     // or above this cutoff. Set to 0 to disable.
     quality_hitter_no_avg_min: 0.250,
+    // PITCHER K/9 vs K-PROP THRESHOLD gate. Jun 4 analysis found
+    // Lugo (K/9 ~8.5) went 0-4 on YES K-prop ladder (5/6/7/8+);
+    // Ginn (~10 K/9) 2-0 on YES 5+/6+; Imanaga (~7 K/9) 2-0 on
+    // NO 6+/7+. Translation: expected_k_per_start ≈ 0.61 × K/9
+    // (typical 5.5 IP per start). YES K-prop only fires when
+    // expected_k_per_start covers a reasonable fraction of the
+    // threshold; NO only when expected is comfortably below.
+    k_prop_yes_min_ratio: 0.70,   // expected/threshold ≥ this to fire YES
+    k_prop_no_max_ratio:  1.20,   // expected/threshold ≤ this to fire NO
     // CORRELATED-LADDER GATE — prop ladders (Cole over 6/7/8/9/10 K)
     // are perfectly correlated. Stacking fires across a ladder
     // sizes the same underlying bet Nx. BUT: a higher threshold
@@ -335,6 +344,20 @@ function loadState() {
             }
             try { localStorage.setItem(NO_TUNING_FLAG, "1"); } catch {}
         }
+        // ONE-SHOT MIGRATION 2026-06-05 (late PM): seed the K-prop
+        // pitcher-quality gate defaults. Lugo's 0-4 K YES ladder
+        // (K/9 8.5 vs threshold 8 → 5.2/8=0.65 < floor 0.70) would
+        // have been blocked at 7+/8+.
+        const KPROP_GATE_FLAG = "diamond_context_kprop_gate_2026_06_05";
+        if (!localStorage.getItem(KPROP_GATE_FLAG)) {
+            if (typeof s.k_prop_yes_min_ratio !== "number" || s.k_prop_yes_min_ratio === 0) {
+                s.k_prop_yes_min_ratio = 0.70;
+            }
+            if (typeof s.k_prop_no_max_ratio !== "number" || s.k_prop_no_max_ratio === 0) {
+                s.k_prop_no_max_ratio = 1.20;
+            }
+            try { localStorage.setItem(KPROP_GATE_FLAG, "1"); } catch {}
+        }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
     } catch { _state.settings = { ...DEFAULTS }; }
@@ -394,6 +417,8 @@ function clampSettings(s) {
         ladder_min_edge_increase_pp: clampFloat(s.ladder_min_edge_increase_pp, 0, 10),
         favored_no_extra_pp:        clampFloat(s.favored_no_extra_pp, 0, 15),
         quality_hitter_no_avg_min:  clampFloat(s.quality_hitter_no_avg_min, 0, 0.400),
+        k_prop_yes_min_ratio:       clampFloat(s.k_prop_yes_min_ratio, 0, 2.0),
+        k_prop_no_max_ratio:        clampFloat(s.k_prop_no_max_ratio, 0, 5.0),
     };
 }
 function clampFloat(n, lo, hi) {
@@ -1039,13 +1064,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // Austin Martin utility, +$15.65 total profit), losses
         // all on .250+ established starters (Buxton, Bregman,
         // Hoerner, Swanson, etc., -$23.40). Market underprices
-        // quality hitters' baseline 1+ hit rate. Skip NO on
-        // threshold-1 hit/TB props when the batter's season AVG
-        // is at or above the cutoff so we keep firing the
-        // sub-.240 wins but stop bleeding on the All-Star NOs.
+        // quality hitters' baseline rate. Skip NO on threshold-1
+        // hits/TB AND threshold-2 TB (Bregman/Buxton 2+ TB NO
+        // also lost) when the batter's season AVG is at or above
+        // the cutoff.
+        const hitterQualityClass =
+            (parsed.stat === "hits" && parsed.threshold === 1) ||
+            (parsed.stat === "total_bases" && parsed.threshold <= 2);
         if (side === "no" &&
-            (parsed.stat === "hits" || parsed.stat === "total_bases") &&
-            parsed.threshold === 1 &&
+            hitterQualityClass &&
             _state.settings.quality_hitter_no_avg_min > 0) {
             const batter = (() => {
                 for (const sk of ["home", "away"]) {
@@ -1061,12 +1088,54 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 if (score) logScoredDecisionOnce(score, {
                     action: "skip", reason: "quality_hitter_no_block",
                     player: parsed.player, stat: parsed.stat,
+                    threshold: parsed.threshold,
                     season_avg: avg,
                     cutoff: _state.settings.quality_hitter_no_avg_min,
                     side,
                 });
-                log("skip", `Quality-hitter NO block — ${parsed.player} 1+ ${parsed.stat} NO: season .${Math.round(avg*1000).toString().padStart(3,"0")} AVG ≥ .${Math.round(_state.settings.quality_hitter_no_avg_min*1000)}; market underprices baseline hit rate for established starters`);
+                log("skip", `Quality-hitter NO block — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} NO: season .${Math.round(avg*1000).toString().padStart(3,"0")} AVG ≥ .${Math.round(_state.settings.quality_hitter_no_avg_min*1000)}; market underprices baseline rate for established starters`);
                 continue;
+            }
+        }
+
+        // K-PROP PITCHER K/9 vs THRESHOLD gate (2026-06-05). Jun 4
+        // analysis: Lugo (K/9 ~8.5) went 0-4 on YES K-prop ladder
+        // (5/6/7/8+); Ginn (~10) 2-0 on YES 5+/6+; Imanaga (~7)
+        // 2-0 on NO 6+/7+. Block YES when pitcher's expected K
+        // per start is too low for the threshold to be realistic;
+        // block NO when expected K is comfortably above the
+        // threshold (= YES likely to hit). Uses score.factors'
+        // pitcher_recent_form value (already fetched by scoreBet
+        // for K-props).
+        if (parsed.stat === "strikeouts" && score?.factors) {
+            const pf = score.factors.find((f) => f.name === "pitcher_recent_form" && f.present);
+            const k9 = pf?.value?.k9;
+            if (typeof k9 === "number" && k9 > 0) {
+                // Typical 5.5 IP per start → K/start ≈ 0.61 × K/9
+                const expectedKPerStart = 0.61 * k9;
+                const ratio = parsed.threshold > 0 ? expectedKPerStart / parsed.threshold : 0;
+                const yesMinRatio = _state.settings.k_prop_yes_min_ratio || 0;
+                const noMaxRatio  = _state.settings.k_prop_no_max_ratio  || Infinity;
+                if (side === "yes" && yesMinRatio > 0 && ratio < yesMinRatio) {
+                    if (score) logScoredDecisionOnce(score, {
+                        action: "skip", reason: "k_prop_pitcher_below_yes_floor",
+                        player: parsed.player, threshold: parsed.threshold,
+                        k9, expected_k_per_start: expectedKPerStart,
+                        ratio, min_ratio: yesMinRatio, side,
+                    });
+                    log("skip", `K-prop YES floor — ${parsed.player} ${parsed.threshold}+ K YES: K/9 ${k9.toFixed(1)} → ${expectedKPerStart.toFixed(1)} K/start, need ${(parsed.threshold * yesMinRatio).toFixed(1)} (ratio ${ratio.toFixed(2)} < ${yesMinRatio})`);
+                    continue;
+                }
+                if (side === "no" && noMaxRatio > 0 && ratio > noMaxRatio) {
+                    if (score) logScoredDecisionOnce(score, {
+                        action: "skip", reason: "k_prop_pitcher_above_no_ceiling",
+                        player: parsed.player, threshold: parsed.threshold,
+                        k9, expected_k_per_start: expectedKPerStart,
+                        ratio, max_ratio: noMaxRatio, side,
+                    });
+                    log("skip", `K-prop NO ceiling — ${parsed.player} ${parsed.threshold}+ K NO: K/9 ${k9.toFixed(1)} → ${expectedKPerStart.toFixed(1)} K/start, pitcher likely to reach ${parsed.threshold} (ratio ${ratio.toFixed(2)} > ${noMaxRatio})`);
+                    continue;
+                }
             }
         }
 
@@ -5452,6 +5521,20 @@ function renderBotPane() {
                    value="${s.ladder_min_edge_increase_pp}"
                    data-bot-setting-float="ladder_min_edge_increase_pp">
             <small>Correlated-ladder gate — each higher-threshold prop on the same player+stat must clear the prior fire's adjusted edge by N pp. Stops blind ladder-stacking but allows fires when conviction is genuinely climbing. 0 = allow any non-decreasing edge · 2 = small but meaningful climb required (default)</small>
+          </label>
+          <label>
+            <span>K-prop YES min (expected K/start ÷ threshold)</span>
+            <input type="number" min="0" max="2.0" step="0.05"
+                   value="${s.k_prop_yes_min_ratio.toFixed(2)}"
+                   data-bot-setting-float="k_prop_yes_min_ratio">
+            <small>YES K-prop only fires when pitcher's expected K/start (≈0.61 × season K/9) covers this fraction of the threshold. Lugo K/9 8.5 → 5.2 K/start → 7+ K YES blocked at 0.70 (5.2/7=0.74 OK; 5.2/8=0.65 blocked). Jun 4 Lugo 7+/8+ K losses caught.</small>
+          </label>
+          <label>
+            <span>K-prop NO max (expected K/start ÷ threshold)</span>
+            <input type="number" min="0" max="5.0" step="0.05"
+                   value="${s.k_prop_no_max_ratio.toFixed(2)}"
+                   data-bot-setting-float="k_prop_no_max_ratio">
+            <small>NO K-prop only fires when pitcher's expected K/start is AT MOST this multiple of the threshold. Imanaga K/9 ~7 → 4.3 K/start → NO 6+ K passes (4.3/6=0.72 well under 1.20); a high-K Cole-class pitcher would be blocked from NO bets.</small>
           </label>
           <label>
             <span>Quality-hitter NO block AVG cutoff</span>
