@@ -5421,46 +5421,11 @@ function fieldPane(g) {
             : ""}
         ${stateBanner}
         ${situationStrip(g)}
-        ${renderCurrentPitches(g.current_pitches)}
         </div>
       </div>
     `;
 }
 
-// Renders the "PITCHES THIS AT-BAT" strip on the Live View — same shape
-// the Gamecast uses per PA, but for the IN-PROGRESS one. Surfaces the
-// pitch sequence as it comes in so the user doesn't need to flip to
-// Gamecast just to see what the at-bat has been like.
-function renderCurrentPitches(pitches) {
-    if (!Array.isArray(pitches) || !pitches.length) return "";
-    const rows = pitches.map((p, i) => {
-        const cls =
-            p.result_code === "B" ? "ball" :
-            (p.result_code === "C" || p.result_code === "S") ? "strike" :
-            (p.result_code === "F" || p.result_code === "T") ? "foul" :
-            (p.result_code === "X" || p.result_code === "E") ? "in-play" :
-            "";
-        const velo = p.velo != null ? `${p.velo}<span class="dim">mph</span>` : "—";
-        const count = p.count_after
-            ? `${p.count_after.balls}-${p.count_after.strikes}`
-            : "";
-        return `
-          <div class="cp-row ${cls}">
-            <span class="cp-num">${i + 1}</span>
-            <span class="cp-type">${shortenPitchType(p.type)}</span>
-            <span class="cp-velo">${velo}</span>
-            <span class="cp-result">${escapeHTML(p.result || "")}</span>
-            <span class="cp-count">${count}</span>
-          </div>
-        `;
-    }).join("");
-    return `
-      <div class="current-pitches">
-        <div class="cp-head">▾ This at-bat · ${pitches.length} pitch${pitches.length === 1 ? "" : "es"}</div>
-        ${rows}
-      </div>
-    `;
-}
 
 // Strip the batter's full name (and an optional trailing period) from
 // the head of an MLB play description. The "this-inning" strip already
@@ -5490,9 +5455,18 @@ function trimLeadingBatterName(desc, fullName) {
 // top, then completed PAs newest-first below. Per user direction:
 // 'put the batter who's hitting now at the top.'
 function renderThisInning(g) {
-    if (g.status !== "Live" || !g.this_inning || g.this_inning.length === 0) {
+    // Render the section whenever we're Live AND have any of: an
+    // in-progress at-bat (current batter), pitches thrown this PA,
+    // or completed PAs this half-inning. Previously bailed out at
+    // top of inning before any PA completed, which made the rail
+    // suddenly empty.
+    const haveCurrent  = !!g.batter;
+    const havePitches  = Array.isArray(g.current_pitches) && g.current_pitches.length > 0;
+    const havePast     = Array.isArray(g.this_inning) && g.this_inning.length > 0;
+    if (g.status !== "Live" || (!haveCurrent && !havePitches && !havePast)) {
         return "";
     }
+    if (!Array.isArray(g.this_inning)) g.this_inning = [];
     const arrow = g.half === "top" ? "▲" : "▼";
     const innLabel = `${arrow} ${ordinalSuffix(g.inning)} so far`;
     // Reverse so newest completed PA shows first (right under the
@@ -5547,13 +5521,16 @@ function renderThisInning(g) {
               <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
            </div>`
         : "";
-    // User direction (2026-06-05): 'Im not sure this needs to be
-    // here. When you click on each past at bat, allow me to see the
-    // pitches thrown.' The standalone 'Pitches (N)' block for the
-    // in-progress PA is gone; pitches now live as an expandable
-    // section on each row (past PAs by click, current PA by default).
+    // Live pitch sequence for the in-progress PA, with the original
+    // 'Pitches (N)' header restored. User direction (2026-06-05):
+    // 'while a hitter is hitting, I want to see the pitches there
+    // live and they can condense after the at-bat is over' — the
+    // live block stays visible right under NOW; once the PA flips
+    // to a past row those same pitches collapse behind the chevron
+    // and only show on click.
     const currentPitchesHtml = (g.current_pitches && g.current_pitches.length)
-        ? `<div class="ti-row-pitches">
+        ? `<div class="ti-pitches">
+             <div class="ti-pitches-head">Pitches (${g.current_pitches.length})</div>
              ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).join("")}
            </div>`
         : "";
