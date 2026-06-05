@@ -227,6 +227,24 @@ function buildGame(d, teamAdj) {
                 description: p.result?.description || null,
                 away_score:  p.result?.awayScore ?? 0,
                 home_score:  p.result?.homeScore ?? 0,
+                // Per-PA pitch sequence — same shape as current_pitches
+                // so the Live View can expand a past PA inline and show
+                // the pitches the way the in-progress PA does.
+                pitches: (p.playEvents || [])
+                    .filter((e) => e.type === "pitch")
+                    .map((e) => ({
+                        number:      e.pitchNumber || null,
+                        type:        e.details?.type?.description || "Unknown",
+                        type_code:   e.details?.type?.code || null,
+                        velo:        e.pitchData?.startSpeed != null
+                            ? Math.round(e.pitchData.startSpeed * 10) / 10
+                            : null,
+                        result:      e.details?.call?.description || e.details?.description || "?",
+                        result_code: e.details?.call?.code || null,
+                        count_after: e.count
+                            ? { balls: e.count.balls, strikes: e.count.strikes }
+                            : null,
+                    })),
             }))
         : [];
 

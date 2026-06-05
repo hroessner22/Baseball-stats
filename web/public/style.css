@@ -4746,15 +4746,28 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .this-inning .ti-row {
     display: grid;
-    /* Outcome chip · avatar · batter name (shrinkable, ellipsizes) · description (gets the rest).
-       Was minmax(80px, 1fr) on the batter column + 3fr on the desc — combined with a description
-       that duplicated the batter name, it wrapped to 4 lines on the narrow right rail. */
-    grid-template-columns: 40px 28px minmax(0, max-content) minmax(0, 1fr);
+    /* Chevron · outcome chip · avatar · batter name · description. */
+    grid-template-columns: 10px 40px 28px minmax(0, max-content) minmax(0, 1fr);
     gap: 8px;
     align-items: center;
     padding: 4px 0;
     font-size: 12px;
     line-height: 1.45;
+}
+.ti-row-chev {
+    color: var(--text-dim);
+    font-size: 9px;
+    text-align: center;
+}
+.ti-row-chev-blank { visibility: hidden; }
+.ti-row-clickable { cursor: pointer; }
+.ti-row-clickable:hover { background: rgba(56, 189, 248, 0.05); }
+.ti-row-pitches {
+    margin: 4px 0 4px 18px;
+    padding: 4px 6px;
+    background: rgba(15, 23, 42, 0.55);
+    border-left: 2px solid rgba(56, 189, 248, 0.35);
+    border-radius: 0 4px 4px 0;
 }
 .this-inning .ti-photo {
     width: 26px;
@@ -4826,7 +4839,8 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     text-transform: uppercase;
     margin-bottom: 4px;
 }
-.this-inning .ti-pitches .pa-pitch-row {
+.this-inning .ti-pitches .pa-pitch-row,
+.ti-row-pitches .pa-pitch-row {
     /* Type column was 1fr so 'Changeup' filled its cell edge-to-edge
        and visually crashed into the velo (user feedback 2026-06-05:
        'Slide the mph to the right'). max-content sizes the type to
@@ -4839,10 +4853,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .this-inning .ti-pitches .pa-pitch-velo,
 .this-inning .ti-pitches .pa-pitch-result,
-.this-inning .ti-pitches .pa-pitch-type {
+.this-inning .ti-pitches .pa-pitch-type,
+.ti-row-pitches .pa-pitch-velo,
+.ti-row-pitches .pa-pitch-result,
+.ti-row-pitches .pa-pitch-type {
     font-size: 11px;
 }
-.this-inning .ti-pitches .pa-pitch-num {
+.this-inning .ti-pitches .pa-pitch-num,
+.ti-row-pitches .pa-pitch-num {
     font-size: 10px;
 }
 .this-inning .ti-now {

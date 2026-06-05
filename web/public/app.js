@@ -5498,28 +5498,45 @@ function renderThisInning(g) {
     // Reverse so newest completed PA shows first (right under the
     // 'NOW BATTING' row).
     const reversed = g.this_inning.slice().reverse();
+    // Per-PA expand state — clicking a past PA reveals the pitch
+    // sequence inline. Keyed on pa_index, kept in sessionStorage so
+    // the expansion survives the 5s refresh tick.
+    let expandedPAs = new Set();
+    try {
+        const raw = sessionStorage.getItem(`ti_expanded_${g.game_pk}`);
+        if (raw) expandedPAs = new Set(JSON.parse(raw));
+    } catch {}
     const rows = reversed.map((p) => {
-        // Compact result chip per PA. Color = the outcome category we
-        // already use elsewhere (green for hits, red for outs/K, blue
-        // for walks, etc.).
         const outcomeCls = paOutcomeClass(p.eventType);
         const outcomeLabel = shortEventLabel(p.event || p.eventType || "—");
         const avatar = inlineAvatar(p.batter_id, { size: 30, class: "ti-photo", alt: p.batter });
         const batterLink = p.batter_id
             ? `<a class="player-link" href="#player/${p.batter_id}">${shortName(p.batter)}</a>`
             : shortName(p.batter || "—");
-        // MLB descriptions like "Vinnie Pasquantino called out on strikes."
-        // duplicate the batter name we're already showing one column over.
-        // Strip the leading name and the trailing period so the column
-        // doesn't wrap on top of itself in the narrow right rail.
         const tightDesc = trimLeadingBatterName(p.description || "", p.batter || "");
+        const hasPitches = Array.isArray(p.pitches) && p.pitches.length > 0;
+        const isOpen = p.pa_index != null && expandedPAs.has(p.pa_index);
+        const chevron = hasPitches
+            ? `<span class="ti-row-chev">${isOpen ? "▾" : "▸"}</span>`
+            : `<span class="ti-row-chev ti-row-chev-blank"></span>`;
+        const rowAttrs = hasPitches && p.pa_index != null
+            ? `data-ti-pa="${p.pa_index}" data-ti-gpk="${g.game_pk}" role="button" tabindex="0"`
+            : "";
+        const rowCls = hasPitches ? "ti-row ti-row-clickable" : "ti-row";
+        const pitchesHtml = isOpen && hasPitches
+            ? `<div class="ti-row-pitches">
+                 ${p.pitches.map((pp, i) => renderPitchRow(pp, i)).join("")}
+               </div>`
+            : "";
         return `
-          <div class="ti-row">
+          <div class="${rowCls}" ${rowAttrs}>
+            ${chevron}
             <span class="ti-outcome ${outcomeCls}">${outcomeLabel}</span>
             ${avatar}
             <span class="ti-batter">${batterLink}</span>
             <span class="ti-desc">${escapeHTML(tightDesc)}</span>
           </div>
+          ${pitchesHtml}
         `;
     }).join("");
     const currentRow = g.batter
@@ -5530,14 +5547,13 @@ function renderThisInning(g) {
               <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
            </div>`
         : "";
-    // Live pitch sequence for the current at-bat. User direction
-    // (2026-06-04): 'I want to be able to see the pitches from
-    // this screen.' Reuses the gamecast pitch-row markup so the
-    // visual is consistent. Updates every game-poll tick (5s)
-    // as new pitches land.
-    const livePitches = (g.current_pitches && g.current_pitches.length)
-        ? `<div class="ti-pitches">
-             <div class="ti-pitches-head">Pitches (${g.current_pitches.length})</div>
+    // User direction (2026-06-05): 'Im not sure this needs to be
+    // here. When you click on each past at bat, allow me to see the
+    // pitches thrown.' The standalone 'Pitches (N)' block for the
+    // in-progress PA is gone; pitches now live as an expandable
+    // section on each row (past PAs by click, current PA by default).
+    const currentPitchesHtml = (g.current_pitches && g.current_pitches.length)
+        ? `<div class="ti-row-pitches">
              ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).join("")}
            </div>`
         : "";
@@ -5545,11 +5561,31 @@ function renderThisInning(g) {
       <div class="this-inning">
         <div class="ti-head">${innLabel}</div>
         ${currentRow}
-        ${livePitches}
+        ${currentPitchesHtml}
         ${rows}
       </div>
     `;
 }
+
+// Click delegate for the per-PA expand. Lives at document level
+// since the rail re-renders every 5s. Toggles sessionStorage and
+// triggers a re-render via refreshGame.
+document.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-ti-pa]");
+    if (!row) return;
+    if (e.target.closest("a, button")) return;
+    e.preventDefault();
+    const pa  = row.getAttribute("data-ti-pa");
+    const gpk = row.getAttribute("data-ti-gpk");
+    if (!pa || !gpk) return;
+    const key = `ti_expanded_${gpk}`;
+    let set = new Set();
+    try { set = new Set(JSON.parse(sessionStorage.getItem(key) || "[]")); } catch {}
+    if (set.has(Number(pa))) set.delete(Number(pa));
+    else set.add(Number(pa));
+    try { sessionStorage.setItem(key, JSON.stringify(Array.from(set))); } catch {}
+    if (activeGameId) refreshGame(activeGameId);
+});
 
 // Map a Statcast event type to a short outcome chip label.
 function shortEventLabel(eventType) {
@@ -5767,15 +5803,22 @@ async function hydrateBoxscore(gameId, status) {
         const res = await fetch(`/api/game/${gameId}/boxscore`);
         if (!res.ok) return;
         const data = await res.json();
-        if (gameId !== String(activeGameId)) return;
-        const pane = document.getElementById("boxscore-pane");
-        if (!pane) return;
-        const html = renderBoxscore(data);
-        safeSetHTML(pane, html);
-        cachedBoxscoreHTML = html;
+        if (String(gameId) !== String(activeGameId)) return;
+        // Cache FIRST, render into the pane second. Previously this
+        // function bailed early when the pane wasn't on screen — but
+        // the rail bets card on Live View also needs this data for
+        // the live K/H counts, and skipping the cache meant the meter
+        // sat on '...' forever. Pane render only happens when the
+        // user is actually on the Box Score tab.
+        cachedBoxscoreData = data;
         cachedBoxscorePk = gameId;
         cachedBoxscoreStatus = data.status;
-        cachedBoxscoreData = data;
+        const pane = document.getElementById("boxscore-pane");
+        if (pane) {
+            const html = renderBoxscore(data);
+            safeSetHTML(pane, html);
+            cachedBoxscoreHTML = html;
+        }
     } catch {
         // silent — pane stays with cached content (or loading shell)
     }
