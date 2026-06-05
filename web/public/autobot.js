@@ -1255,46 +1255,76 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             }
         }
 
-        // K-PROP PITCHER K/9 vs THRESHOLD gate — EMPIRICAL.
-        // Look up the actual P(N+ K in a start) for this pitcher's
-        // season K/9 bucket. Fire YES only when market YES is
-        // below empirical - margin; fire NO only when market YES
-        // is above empirical + margin. Replaces the hand-waved
-        // 0.61 × K/9 formula with the actual base-rate table
-        // (Retrosheet 2018-2024, ~28K starts).
-        if (parsed.stat === "strikeouts" && score?.factors) {
-            const pf = score.factors.find((f) => f.name === "pitcher_recent_form" && f.present);
-            const k9 = pf?.value?.k9;
-            if (typeof k9 === "number" && k9 > 0) {
-                const coefs = await getCoefficients();
-                const bucket = bucketForK9(k9);
-                const empBucket = coefs?.kprop_by_pitcher_season_k9?.[bucket];
-                const empPYes = empBucket?.[`p_${parsed.threshold}_plus`];
-                const MARGIN = 0.05;
-                if (empPYes != null && market_p != null) {
-                    const yesMarket = market_p;   // market_p is YES probability
-                    if (side === "yes" && yesMarket > (empPYes - MARGIN)) {
+        // K-PROP PITCHER QUALITY gate — EMPIRICAL + sample-size guard.
+        //
+        // Two fixes vs prior version (Robbie Ray 2026 case):
+        //
+        // 1) SAMPLE-SIZE GUARD. Don't trust season K/9 when pitcher
+        //    has < 8 starts this season. A small sample can inflate
+        //    K/9 wildly (3 hot starts = K/9 of 13, putting the bot
+        //    in the 10.5+ bucket and firing YES on 8+ K threshold
+        //    for a pitcher who's truly an 8-9 K/9 starter). Skip
+        //    YES bets in this case; NO bets fine because they
+        //    benefit from being WRONG about pitcher strength.
+        //
+        // 2) USE THE CONDITIONAL TABLE (same as cashout) instead of
+        //    just bucket-and-ratio. At fire time, current_K=0 and
+        //    BF=0 (or whatever the current state is — handles live-
+        //    fire too). The conditional table internally accounts
+        //    for the typical distribution at that state, including
+        //    the chance pitchers in the K/9 bucket overperform or
+        //    underperform their season average.
+        if (parsed.stat === "strikeouts") {
+            const pInfo = await getLivePitcherInfo(g.game_pk, parsed.player);
+            if (pInfo) {
+                // (1) Sample-size guard for YES bets.
+                const MIN_STARTS_FOR_K_PROP_YES = 8;
+                if (side === "yes" && (pInfo.seasonGs || 0) < MIN_STARTS_FOR_K_PROP_YES) {
+                    if (score) logScoredDecisionOnce(score, {
+                        action: "skip", reason: "k_prop_yes_small_sample",
+                        player: parsed.player, threshold: parsed.threshold,
+                        season_gs: pInfo.seasonGs,
+                        season_k9: pInfo.seasonK9,
+                        min_starts:  MIN_STARTS_FOR_K_PROP_YES,
+                        side,
+                    });
+                    log("skip", `Small-sample K/9 — ${parsed.player} ${parsed.threshold}+ K YES: only ${pInfo.seasonGs||0} starts this season (K/9=${pInfo.seasonK9?.toFixed(1) ?? "?"}); need ≥${MIN_STARTS_FOR_K_PROP_YES} to trust season rate`);
+                    continue;
+                }
+                // (2) Empirical conditional lookup — same table as the
+                //     EV cashout, but at the CURRENT state. At fire
+                //     time that's typically BF=0/K=0 (pre-game), but
+                //     for live fires it reflects whatever the pitcher
+                //     has banked already.
+                const emp = await getEmpiricalKpropPYes({
+                    stat:      "strikeouts",
+                    threshold: parsed.threshold,
+                    game_pk:   g.game_pk,
+                    player:    parsed.player,
+                });
+                if (emp != null && market_p != null) {
+                    const MARGIN = 0.05;
+                    const empPYes = emp.p_yes;
+                    if (side === "yes" && market_p > (empPYes - MARGIN)) {
                         if (score) logScoredDecisionOnce(score, {
                             action: "skip", reason: "k_prop_yes_no_empirical_edge",
                             player: parsed.player, threshold: parsed.threshold,
-                            k9, k9_bucket: bucket,
-                            empirical_p_yes: empPYes,
-                            yes_market_p: yesMarket,
+                            empirical_p_yes: empPYes, yes_market_p: market_p,
+                            sample_n: emp.sample_n, state_key: emp.state_key,
                             side,
                         });
-                        log("skip", `Empirical K-prop YES — ${parsed.player} ${parsed.threshold}+ K YES: K/9 bucket ${bucket} hits ${(empPYes*100).toFixed(0)}% historically; market ${(yesMarket*100).toFixed(0)}% leaves no edge (need < ${((empPYes-MARGIN)*100).toFixed(0)}%)`);
+                        log("skip", `Empirical K-prop YES — ${parsed.player} ${parsed.threshold}+ K YES: P(reach)=${(empPYes*100).toFixed(0)}% (n=${emp.sample_n}, ${emp.state_key}); market ${(market_p*100).toFixed(0)}% leaves no edge (need < ${((empPYes-MARGIN)*100).toFixed(0)}%)`);
                         continue;
                     }
-                    if (side === "no" && yesMarket < (empPYes + MARGIN)) {
+                    if (side === "no" && market_p < (empPYes + MARGIN)) {
                         if (score) logScoredDecisionOnce(score, {
                             action: "skip", reason: "k_prop_no_no_empirical_edge",
                             player: parsed.player, threshold: parsed.threshold,
-                            k9, k9_bucket: bucket,
-                            empirical_p_yes: empPYes,
-                            yes_market_p: yesMarket,
+                            empirical_p_yes: empPYes, yes_market_p: market_p,
+                            sample_n: emp.sample_n, state_key: emp.state_key,
                             side,
                         });
-                        log("skip", `Empirical K-prop NO — ${parsed.player} ${parsed.threshold}+ K NO: K/9 bucket ${bucket} hits ${(empPYes*100).toFixed(0)}% historically; market ${(yesMarket*100).toFixed(0)}% leaves no NO edge (need > ${((empPYes+MARGIN)*100).toFixed(0)}%)`);
+                        log("skip", `Empirical K-prop NO — ${parsed.player} ${parsed.threshold}+ K NO: P(reach)=${(empPYes*100).toFixed(0)}% (n=${emp.sample_n}, ${emp.state_key}); market ${(market_p*100).toFixed(0)}% leaves no NO edge (need > ${((empPYes+MARGIN)*100).toFixed(0)}%)`);
                         continue;
                     }
                 }
@@ -3126,6 +3156,8 @@ async function getLivePitcherInfo(gamePk, playerName) {
             battersFaced:      side.pitcher_bf         || 0,
             currentStrikeouts: side.pitcher_strikeouts || 0,
             seasonK9,
+            seasonGs,
+            seasonSo,
             profile,
         };
     }
