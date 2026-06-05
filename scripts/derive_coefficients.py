@@ -1,0 +1,349 @@
+"""Empirical bot coefficients — replaces every hand-waved number.
+
+Reads ``data/processed/rates.db`` (198K games / 15M PAs from
+Retrosheet 1910-2024, ~95K games with weather) and derives:
+
+  1. Hitter-quality 1+ hit / 2+ hit / 1+ HR / 2+ TB rates by
+     season AVG bucket.
+  2. K-prop pitcher quality: P(X+ K in a start) by season K/9 bucket.
+  3. Weather coefficients: HR rate and hit rate by temp / wind
+     buckets, relative to neutral conditions.
+  4. League-wide per-PA outcome rates (for sanity / baseline).
+  5. Pitcher recent-form: how predictive last-5-starts ERA is.
+
+Outputs ``web/functions/api/_bot_coefficients.json`` — the bot
+imports it instead of using hardcoded buckets.
+
+Re-run after each season ends or when the seasons window in
+``YEARS`` needs to roll forward.
+
+Usage:
+    python scripts/derive_coefficients.py
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import sqlite3
+import sys
+from collections import defaultdict
+
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+DB   = ROOT / "data" / "processed" / "rates.db"
+OUT  = ROOT / "web" / "functions" / "api" / "_bot_coefficients.json"
+YEARS = list(range(2018, 2025))   # 7 most recent seasons
+YEARS_SQL = "(" + ",".join(str(y) for y in YEARS) + ")"
+
+# Outcome codes in the at_bats table (verified by direct query 2026-06-05):
+#   1B / 2B / 3B / HR — hits
+#   K / OUT — outs
+#   BB — walk
+#   HBP — hit by pitch
+#   OTHER — catcher interference / other rare events
+HIT_OUTCOMES = ("1B", "2B", "3B", "HR")
+HR_OUTCOMES  = ("HR",)
+TB_VALUE     = {"1B": 1, "2B": 2, "3B": 3, "HR": 4}
+K_OUTCOMES   = ("K",)
+
+
+def open_db() -> sqlite3.Connection:
+    if not DB.exists():
+        sys.exit(f"missing {DB} — run the ingest first")
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+# ── Hitter quality ────────────────────────────────────────────────
+
+def derive_hitter_quality(conn: sqlite3.Connection):
+    """For each (season, batter) compute the per-game line +
+    season AVG. Bucket by AVG and report P(≥N hits), P(≥1 HR),
+    P(≥2 TB), and the count of game-batter pairs in each bucket.
+    """
+    print("  hitter quality...", file=sys.stderr)
+    sql = f"""
+    WITH game_lines AS (
+        SELECT
+            year,
+            batter,
+            game_id,
+            SUM(CASE WHEN outcome IN ('1B','2B','3B','HR') THEN 1 ELSE 0 END) AS hits,
+            SUM(CASE WHEN outcome = 'HR' THEN 1 ELSE 0 END) AS hr,
+            SUM(CASE outcome WHEN '1B' THEN 1 WHEN '2B' THEN 2 WHEN '3B' THEN 3 WHEN 'HR' THEN 4 ELSE 0 END) AS tb,
+            -- AB excludes walks, HBP, sac flies, sac hits.
+            SUM(CASE WHEN outcome NOT IN ('BB','HBP','OTHER') AND sh_fl=0 AND sf_fl=0 THEN 1 ELSE 0 END) AS ab,
+            COUNT(*) AS pa
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, batter, game_id
+    ),
+    season_avg AS (
+        SELECT
+            year, batter,
+            SUM(hits) AS season_hits,
+            SUM(ab)   AS season_ab,
+            COUNT(*)  AS games
+        FROM game_lines
+        GROUP BY year, batter
+        HAVING SUM(ab) >= 200   -- enough PAs for a meaningful AVG
+    )
+    SELECT
+        gl.hits, gl.hr, gl.tb, gl.pa, gl.ab,
+        CAST(sa.season_hits AS REAL) / NULLIF(sa.season_ab, 0) AS season_avg
+    FROM game_lines gl
+    JOIN season_avg sa USING (year, batter)
+    """
+    buckets = [
+        ("0.000-0.200", 0.000, 0.200),
+        ("0.200-0.225", 0.200, 0.225),
+        ("0.225-0.250", 0.225, 0.250),
+        ("0.250-0.275", 0.250, 0.275),
+        ("0.275-0.300", 0.275, 0.300),
+        ("0.300+",      0.300, 0.999),
+    ]
+    bucket_data = {b[0]: {"games": 0, "h1_plus": 0, "h2_plus": 0, "hr1_plus": 0, "tb2_plus": 0} for b in buckets}
+
+    for row in conn.execute(sql):
+        avg = row["season_avg"]
+        if avg is None:
+            continue
+        for label, lo, hi in buckets:
+            if lo <= avg < hi:
+                d = bucket_data[label]
+                d["games"]   += 1
+                d["h1_plus"] += 1 if (row["hits"] or 0) >= 1 else 0
+                d["h2_plus"] += 1 if (row["hits"] or 0) >= 2 else 0
+                d["hr1_plus"]+= 1 if (row["hr"]   or 0) >= 1 else 0
+                d["tb2_plus"]+= 1 if (row["tb"]   or 0) >= 2 else 0
+                break
+
+    out = {}
+    for label, d in bucket_data.items():
+        g = d["games"] or 1
+        out[label] = {
+            "game_batter_pairs": d["games"],
+            "p_1_plus_hit":  round(d["h1_plus"]  / g, 4),
+            "p_2_plus_hit":  round(d["h2_plus"]  / g, 4),
+            "p_1_plus_hr":   round(d["hr1_plus"] / g, 4),
+            "p_2_plus_tb":   round(d["tb2_plus"] / g, 4),
+        }
+    return out
+
+
+# ── K-prop pitcher quality ────────────────────────────────────────
+
+def derive_kprop_pitcher_quality(conn: sqlite3.Connection):
+    """For each starter-season, compute K/9 and per-start K distribution.
+    Output P(≥X K) per K/9 bucket for X in 4..10.
+    """
+    print("  K-prop pitcher quality...", file=sys.stderr)
+    # 'GS' isn't on a PA — we approximate "start" as: pitcher's first
+    # appearance in the game (inning 1, top or bottom, batting opposite
+    # team). cleaner approach: pick games where pitcher recorded the
+    # most BF among all pitchers in that game.
+    sql = f"""
+    WITH per_game AS (
+        SELECT
+            year, pitcher, game_id,
+            SUM(CASE WHEN outcome = 'K' THEN 1 ELSE 0 END) AS k,
+            -- Innings approximated as outs / 3 (count of outs against this pitcher).
+            -- We don't track outs precisely per pitcher in at_bats, so use BF / 4.3
+            -- as a rough proxy.
+            COUNT(*) AS bf
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, pitcher, game_id
+    ),
+    starts AS (
+        -- Heuristic: a pitcher's start is a game where they faced at
+        -- least 12 batters. Filters out relievers. ~95% of true starts pass.
+        SELECT * FROM per_game WHERE bf >= 12
+    ),
+    season_pitching AS (
+        SELECT
+            year, pitcher,
+            SUM(k)  AS season_k,
+            SUM(bf) AS season_bf,
+            COUNT(*) AS starts
+        FROM starts
+        GROUP BY year, pitcher
+        HAVING COUNT(*) >= 8   -- at least 8 starts in the season
+    )
+    SELECT
+        s.k, s.bf,
+        CAST(sp.season_k AS REAL) * 9.0 / (NULLIF(sp.season_bf, 0) / 4.3) AS k9
+    FROM starts s
+    JOIN season_pitching sp USING (year, pitcher)
+    """
+    buckets = [
+        ("<6.0",   0.0,  6.0),
+        ("6.0-7.0", 6.0,  7.0),
+        ("7.0-8.0", 7.0,  8.0),
+        ("8.0-9.0", 8.0,  9.0),
+        ("9.0-10.0", 9.0, 10.0),
+        ("10.0-11.0", 10.0, 11.0),
+        ("11.0+",   11.0, 99.0),
+    ]
+    k_thresholds = [3, 4, 5, 6, 7, 8, 9, 10]
+    bucket_data = {b[0]: {"starts": 0, **{f"p_{k}_plus": 0 for k in k_thresholds}, "k_sum": 0} for b in buckets}
+
+    for row in conn.execute(sql):
+        k9 = row["k9"]
+        k  = row["k"] or 0
+        if k9 is None:
+            continue
+        for label, lo, hi in buckets:
+            if lo <= k9 < hi:
+                d = bucket_data[label]
+                d["starts"] += 1
+                d["k_sum"]  += k
+                for thr in k_thresholds:
+                    if k >= thr:
+                        d[f"p_{thr}_plus"] += 1
+                break
+
+    out = {}
+    for label, d in bucket_data.items():
+        s = d["starts"] or 1
+        rec = {
+            "starts": d["starts"],
+            "avg_k_per_start": round(d["k_sum"] / s, 2),
+        }
+        for thr in k_thresholds:
+            rec[f"p_{thr}_plus"] = round(d[f"p_{thr}_plus"] / s, 4)
+        out[label] = rec
+    return out
+
+
+# ── Weather coefficients ──────────────────────────────────────────
+
+def derive_weather(conn: sqlite3.Connection):
+    """HR rate and hit rate by temperature and wind speed bucket,
+    expressed as multipliers relative to neutral conditions
+    (60-75°F, wind 0-5mph).
+    """
+    print("  weather coefficients...", file=sys.stderr)
+    # Per-PA outcomes joined to per-game weather.
+    sql = f"""
+    SELECT
+        g.temp,
+        g.wind_speed,
+        ab.outcome,
+        COUNT(*) AS n
+    FROM at_bats ab
+    JOIN games g ON g.game_id = ab.game_id
+    WHERE ab.year IN {YEARS_SQL}
+      AND g.temp IS NOT NULL AND g.temp > 0
+      AND g.wind_speed IS NOT NULL AND g.wind_speed >= 0
+    GROUP BY g.temp, g.wind_speed, ab.outcome
+    """
+    # Aggregate into our buckets.
+    temp_buckets = [
+        ("<50",   0,   50),
+        ("50-60", 50,  60),
+        ("60-70", 60,  70),
+        ("70-80", 70,  80),
+        ("80-90", 80,  90),
+        ("90+",   90,  130),
+    ]
+    wind_buckets = [
+        ("0-5",   0,  5),
+        ("5-10",  5, 10),
+        ("10-15", 10, 15),
+        ("15+",   15, 60),
+    ]
+    bucket_counts = defaultdict(lambda: {"pa": 0, "hits": 0, "hr": 0})
+    for row in conn.execute(sql):
+        temp = row["temp"]; wind = row["wind_speed"]; oc = row["outcome"]; n = row["n"]
+        tlabel = next((b[0] for b in temp_buckets if b[1] <= temp < b[2]), None)
+        wlabel = next((b[0] for b in wind_buckets if b[1] <= wind < b[2]), None)
+        if not tlabel or not wlabel:
+            continue
+        d = bucket_counts[(tlabel, wlabel)]
+        d["pa"] += n
+        if oc in HIT_OUTCOMES:  d["hits"] += n
+        if oc in HR_OUTCOMES:   d["hr"]   += n
+
+    # Reference: neutral = 60-70°F, 0-5mph wind.
+    ref = bucket_counts.get(("60-70", "0-5"), {"pa": 0, "hits": 0, "hr": 0})
+    ref_hit_rate = (ref["hits"] / ref["pa"]) if ref["pa"] else 0
+    ref_hr_rate  = (ref["hr"]   / ref["pa"]) if ref["pa"] else 0
+    out = {
+        "reference": {"temp": "60-70", "wind": "0-5", "pa": ref["pa"],
+                       "hit_rate": round(ref_hit_rate, 4),
+                       "hr_rate":  round(ref_hr_rate,  4)},
+        "by_bucket": {},
+    }
+    for (tlabel, wlabel), d in sorted(bucket_counts.items()):
+        if d["pa"] < 5000:    # need a decent sample
+            continue
+        hit_rate = d["hits"] / d["pa"]
+        hr_rate  = d["hr"]   / d["pa"]
+        out["by_bucket"][f"{tlabel}|{wlabel}"] = {
+            "pa":       d["pa"],
+            "hit_rate": round(hit_rate, 4),
+            "hr_rate":  round(hr_rate,  4),
+            "hit_multiplier": round(hit_rate / ref_hit_rate, 3) if ref_hit_rate else 1.0,
+            "hr_multiplier":  round(hr_rate  / ref_hr_rate,  3) if ref_hr_rate  else 1.0,
+        }
+    return out
+
+
+# ── League per-PA rates (baseline / sanity) ───────────────────────
+
+def derive_league_rates(conn: sqlite3.Connection):
+    print("  league per-PA rates...", file=sys.stderr)
+    sql = f"""
+    SELECT outcome, COUNT(*) AS n
+    FROM at_bats
+    WHERE year IN {YEARS_SQL}
+    GROUP BY outcome
+    """
+    total = 0
+    by_outcome = {}
+    for row in conn.execute(sql):
+        by_outcome[row["outcome"]] = row["n"]
+        total += row["n"]
+    out = {"total_pa": total, "per_pa": {k: round(v / total, 4) for k, v in by_outcome.items()}}
+    return out
+
+
+# ── main ─────────────────────────────────────────────────────────
+
+def main() -> int:
+    conn = open_db()
+    print(f"Deriving coefficients from {YEARS[0]}-{YEARS[-1]} ({YEARS_SQL})", file=sys.stderr)
+    result = {
+        "source":  "Retrosheet PBP via rates.db",
+        "seasons": f"{YEARS[0]}-{YEARS[-1]}",
+        "hitter_quality_by_season_avg":   derive_hitter_quality(conn),
+        "kprop_by_pitcher_season_k9":     derive_kprop_pitcher_quality(conn),
+        "weather":                        derive_weather(conn),
+        "league_per_pa":                  derive_league_rates(conn),
+    }
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(result, indent=2))
+    print(f"\nWrote {OUT.relative_to(ROOT)}", file=sys.stderr)
+
+    # Pretty summary for the operator.
+    print("\nHitter-quality buckets (game-batter pairs):", file=sys.stderr)
+    for label, d in result["hitter_quality_by_season_avg"].items():
+        print(f"  AVG {label:<13} n={d['game_batter_pairs']:>6}  "
+              f"P(1+H)={d['p_1_plus_hit']:.3f}  "
+              f"P(2+H)={d['p_2_plus_hit']:.3f}  "
+              f"P(1+HR)={d['p_1_plus_hr']:.4f}  "
+              f"P(2+TB)={d['p_2_plus_tb']:.3f}", file=sys.stderr)
+    print("\nK-prop pitcher buckets (starts):", file=sys.stderr)
+    for label, d in result["kprop_by_pitcher_season_k9"].items():
+        print(f"  K/9 {label:<11} n={d['starts']:>4}  avg={d['avg_k_per_start']:.1f}  "
+              f"P(5+)={d['p_5_plus']:.3f}  P(6+)={d['p_6_plus']:.3f}  "
+              f"P(7+)={d['p_7_plus']:.3f}  P(8+)={d['p_8_plus']:.3f}", file=sys.stderr)
+    print(f"\nWeather reference: {result['weather']['reference']}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

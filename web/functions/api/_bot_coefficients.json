@@ -1,0 +1,313 @@
+{
+  "source": "Retrosheet PBP via rates.db",
+  "seasons": "2018-2024",
+  "hitter_quality_by_season_avg": {
+    "0.000-0.200": {
+      "game_batter_pairs": 8236,
+      "p_1_plus_hit": 0.4353,
+      "p_2_plus_hit": 0.1061,
+      "p_1_plus_hr": 0.1032,
+      "p_2_plus_tb": 0.2413
+    },
+    "0.200-0.225": {
+      "game_batter_pairs": 29434,
+      "p_1_plus_hit": 0.5071,
+      "p_2_plus_hit": 0.1451,
+      "p_1_plus_hr": 0.1063,
+      "p_2_plus_tb": 0.2855
+    },
+    "0.225-0.250": {
+      "game_batter_pairs": 62830,
+      "p_1_plus_hit": 0.5662,
+      "p_2_plus_hit": 0.1858,
+      "p_1_plus_hr": 0.1122,
+      "p_2_plus_tb": 0.3263
+    },
+    "0.250-0.275": {
+      "game_batter_pairs": 79584,
+      "p_1_plus_hit": 0.6214,
+      "p_2_plus_hit": 0.2324,
+      "p_1_plus_hr": 0.124,
+      "p_2_plus_tb": 0.3736
+    },
+    "0.275-0.300": {
+      "game_batter_pairs": 44305,
+      "p_1_plus_hit": 0.6708,
+      "p_2_plus_hit": 0.2788,
+      "p_1_plus_hr": 0.1352,
+      "p_2_plus_tb": 0.4176
+    },
+    "0.300+": {
+      "game_batter_pairs": 18447,
+      "p_1_plus_hit": 0.7161,
+      "p_2_plus_hit": 0.3344,
+      "p_1_plus_hr": 0.153,
+      "p_2_plus_tb": 0.473
+    }
+  },
+  "kprop_by_pitcher_season_k9": {
+    "<6.0": {
+      "starts": 2161,
+      "avg_k_per_start": 3.0,
+      "p_3_plus": 0.5733,
+      "p_4_plus": 0.3577,
+      "p_5_plus": 0.1971,
+      "p_6_plus": 0.0893,
+      "p_7_plus": 0.0333,
+      "p_8_plus": 0.0106,
+      "p_9_plus": 0.0023,
+      "p_10_plus": 0.0005
+    },
+    "6.0-7.0": {
+      "starts": 4113,
+      "avg_k_per_start": 3.75,
+      "p_3_plus": 0.7209,
+      "p_4_plus": 0.5176,
+      "p_5_plus": 0.3304,
+      "p_6_plus": 0.1872,
+      "p_7_plus": 0.0875,
+      "p_8_plus": 0.0367,
+      "p_9_plus": 0.0122,
+      "p_10_plus": 0.0041
+    },
+    "7.0-8.0": {
+      "starts": 6263,
+      "avg_k_per_start": 4.36,
+      "p_3_plus": 0.8033,
+      "p_4_plus": 0.6342,
+      "p_5_plus": 0.4487,
+      "p_6_plus": 0.2769,
+      "p_7_plus": 0.153,
+      "p_8_plus": 0.0698,
+      "p_9_plus": 0.0323,
+      "p_10_plus": 0.0147
+    },
+    "8.0-9.0": {
+      "starts": 5202,
+      "avg_k_per_start": 4.98,
+      "p_3_plus": 0.8681,
+      "p_4_plus": 0.7311,
+      "p_5_plus": 0.5715,
+      "p_6_plus": 0.3937,
+      "p_7_plus": 0.2388,
+      "p_8_plus": 0.1273,
+      "p_9_plus": 0.0598,
+      "p_10_plus": 0.0267
+    },
+    "9.0-10.0": {
+      "starts": 4744,
+      "avg_k_per_start": 5.58,
+      "p_3_plus": 0.9127,
+      "p_4_plus": 0.8035,
+      "p_5_plus": 0.6678,
+      "p_6_plus": 0.4935,
+      "p_7_plus": 0.3347,
+      "p_8_plus": 0.1981,
+      "p_9_plus": 0.113,
+      "p_10_plus": 0.0514
+    },
+    "10.0-11.0": {
+      "starts": 3024,
+      "avg_k_per_start": 6.19,
+      "p_3_plus": 0.9441,
+      "p_4_plus": 0.8611,
+      "p_5_plus": 0.7533,
+      "p_6_plus": 0.6002,
+      "p_7_plus": 0.4378,
+      "p_8_plus": 0.2933,
+      "p_9_plus": 0.1644,
+      "p_10_plus": 0.0916
+    },
+    "11.0+": {
+      "starts": 3165,
+      "avg_k_per_start": 7.38,
+      "p_3_plus": 0.9731,
+      "p_4_plus": 0.9286,
+      "p_5_plus": 0.8512,
+      "p_6_plus": 0.751,
+      "p_7_plus": 0.6148,
+      "p_8_plus": 0.4746,
+      "p_9_plus": 0.3333,
+      "p_10_plus": 0.2161
+    }
+  },
+  "weather": {
+    "reference": {
+      "temp": "60-70",
+      "wind": "0-5",
+      "pa": 56330,
+      "hit_rate": 0.214,
+      "hr_rate": 0.0327
+    },
+    "by_bucket": {
+      "50-60|0-5": {
+        "pa": 14204,
+        "hit_rate": 0.2116,
+        "hr_rate": 0.0283,
+        "hit_multiplier": 0.989,
+        "hr_multiplier": 0.866
+      },
+      "50-60|10-15": {
+        "pa": 21537,
+        "hit_rate": 0.2106,
+        "hr_rate": 0.0254,
+        "hit_multiplier": 0.984,
+        "hr_multiplier": 0.779
+      },
+      "50-60|15+": {
+        "pa": 15361,
+        "hit_rate": 0.2139,
+        "hr_rate": 0.0258,
+        "hit_multiplier": 1.0,
+        "hr_multiplier": 0.789
+      },
+      "50-60|5-10": {
+        "pa": 27153,
+        "hit_rate": 0.2149,
+        "hr_rate": 0.0282,
+        "hit_multiplier": 1.004,
+        "hr_multiplier": 0.862
+      },
+      "60-70|0-5": {
+        "pa": 56330,
+        "hit_rate": 0.214,
+        "hr_rate": 0.0327,
+        "hit_multiplier": 1.0,
+        "hr_multiplier": 1.0
+      },
+      "60-70|10-15": {
+        "pa": 60163,
+        "hit_rate": 0.215,
+        "hr_rate": 0.0292,
+        "hit_multiplier": 1.005,
+        "hr_multiplier": 0.895
+      },
+      "60-70|15+": {
+        "pa": 28617,
+        "hit_rate": 0.2152,
+        "hr_rate": 0.0272,
+        "hit_multiplier": 1.006,
+        "hr_multiplier": 0.832
+      },
+      "60-70|5-10": {
+        "pa": 85561,
+        "hit_rate": 0.2127,
+        "hr_rate": 0.0298,
+        "hit_multiplier": 0.994,
+        "hr_multiplier": 0.91
+      },
+      "70-80|0-5": {
+        "pa": 220676,
+        "hit_rate": 0.2183,
+        "hr_rate": 0.0308,
+        "hit_multiplier": 1.02,
+        "hr_multiplier": 0.943
+      },
+      "70-80|10-15": {
+        "pa": 84218,
+        "hit_rate": 0.2202,
+        "hr_rate": 0.032,
+        "hit_multiplier": 1.029,
+        "hr_multiplier": 0.978
+      },
+      "70-80|15+": {
+        "pa": 21408,
+        "hit_rate": 0.2261,
+        "hr_rate": 0.0308,
+        "hit_multiplier": 1.057,
+        "hr_multiplier": 0.943
+      },
+      "70-80|5-10": {
+        "pa": 175057,
+        "hit_rate": 0.2177,
+        "hr_rate": 0.0321,
+        "hit_multiplier": 1.018,
+        "hr_multiplier": 0.982
+      },
+      "80-90|0-5": {
+        "pa": 48955,
+        "hit_rate": 0.2283,
+        "hr_rate": 0.0342,
+        "hit_multiplier": 1.067,
+        "hr_multiplier": 1.047
+      },
+      "80-90|10-15": {
+        "pa": 60227,
+        "hit_rate": 0.229,
+        "hr_rate": 0.0362,
+        "hit_multiplier": 1.07,
+        "hr_multiplier": 1.109
+      },
+      "80-90|15+": {
+        "pa": 12314,
+        "hit_rate": 0.2273,
+        "hr_rate": 0.0373,
+        "hit_multiplier": 1.062,
+        "hr_multiplier": 1.141
+      },
+      "80-90|5-10": {
+        "pa": 148416,
+        "hit_rate": 0.2275,
+        "hr_rate": 0.0349,
+        "hit_multiplier": 1.064,
+        "hr_multiplier": 1.067
+      },
+      "90+|0-5": {
+        "pa": 9192,
+        "hit_rate": 0.2383,
+        "hr_rate": 0.0354,
+        "hit_multiplier": 1.114,
+        "hr_multiplier": 1.082
+      },
+      "90+|10-15": {
+        "pa": 15801,
+        "hit_rate": 0.2369,
+        "hr_rate": 0.0364,
+        "hit_multiplier": 1.107,
+        "hr_multiplier": 1.113
+      },
+      "90+|5-10": {
+        "pa": 29909,
+        "hit_rate": 0.2368,
+        "hr_rate": 0.0365,
+        "hit_multiplier": 1.107,
+        "hr_multiplier": 1.117
+      },
+      "<50|10-15": {
+        "pa": 9959,
+        "hit_rate": 0.2063,
+        "hr_rate": 0.0232,
+        "hit_multiplier": 0.964,
+        "hr_multiplier": 0.71
+      },
+      "<50|15+": {
+        "pa": 6439,
+        "hit_rate": 0.2,
+        "hr_rate": 0.0213,
+        "hit_multiplier": 0.935,
+        "hr_multiplier": 0.651
+      },
+      "<50|5-10": {
+        "pa": 9452,
+        "hit_rate": 0.2158,
+        "hr_rate": 0.0267,
+        "hit_multiplier": 1.009,
+        "hr_multiplier": 0.816
+      }
+    }
+  },
+  "league_per_pa": {
+    "total_pa": 1168585,
+    "per_pa": {
+      "1B": 0.1405,
+      "2B": 0.044,
+      "3B": 0.0039,
+      "BB": 0.0848,
+      "HBP": 0.0111,
+      "HR": 0.0318,
+      "K": 0.2273,
+      "OTHER": 0.0107,
+      "OUT": 0.4459
+    }
+  }
+}

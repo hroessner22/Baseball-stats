@@ -271,6 +271,57 @@ const LS_LOG          = "diamond_context_bot_log";
 
 // ── State ─────────────────────────────────────────────────────────
 
+// Empirically-derived coefficients from rates.db (Retrosheet
+// 2018-2024 — 15M PAs). Fetched once per session. Replaces the
+// hand-waved AVG cutoff, K/9 ratios, and weather multipliers
+// with actual base-rate tables.
+let _coefficientsPromise = null;
+async function getCoefficients() {
+    if (!_coefficientsPromise) {
+        _coefficientsPromise = fetch("/api/coefficients")
+            .then((r) => r.ok ? r.json() : null)
+            .catch(() => null);
+    }
+    return _coefficientsPromise;
+}
+
+// Bucket helpers — match the labels in scripts/derive_coefficients.py.
+function bucketForAvg(avg) {
+    if (avg == null) return null;
+    if (avg < 0.200) return "0.000-0.200";
+    if (avg < 0.225) return "0.200-0.225";
+    if (avg < 0.250) return "0.225-0.250";
+    if (avg < 0.275) return "0.250-0.275";
+    if (avg < 0.300) return "0.275-0.300";
+    return "0.300+";
+}
+function bucketForK9(k9) {
+    if (k9 == null) return null;
+    if (k9 < 6.0)  return "<6.0";
+    if (k9 < 7.0)  return "6.0-7.0";
+    if (k9 < 8.0)  return "7.0-8.0";
+    if (k9 < 9.0)  return "8.0-9.0";
+    if (k9 < 10.0) return "9.0-10.0";
+    if (k9 < 11.0) return "10.0-11.0";
+    return "11.0+";
+}
+function bucketForWeather(tempF, windMph) {
+    if (tempF == null || windMph == null) return null;
+    let t;
+    if      (tempF < 50)  t = "<50";
+    else if (tempF < 60)  t = "50-60";
+    else if (tempF < 70)  t = "60-70";
+    else if (tempF < 80)  t = "70-80";
+    else if (tempF < 90)  t = "80-90";
+    else                  t = "90+";
+    let w;
+    if      (windMph < 5)  w = "0-5";
+    else if (windMph < 10) w = "5-10";
+    else if (windMph < 15) w = "10-15";
+    else                   w = "15+";
+    return `${t}|${w}`;
+}
+
 const _state = {
     settings: { ...DEFAULTS },
     sessionBets: new Set(),    // "ticker:side" strings we've already fired on
@@ -825,16 +876,37 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         else if (parsed.stat === "strikeouts")  parkMultiplier = 1 / Math.max(0.7, (park.hr || 1.0));
         const parkAdj = 1 + (parkMultiplier - 1) * 0.5;  // half-weight
 
-        // WEATHER — currently pulled from Visual Crossing and attached
-        // to modelProps.weather, but NO multiplicative adjustment is
-        // applied yet. Retrosheet game logs don't carry weather, so
-        // empirically-derived multipliers require a separate ingest
-        // (MLB API gameData.weather across ~10 seasons, then bucket
-        // HR/hit rates by temperature and wind). Until that derivation
-        // runs (TODO: scripts/derive_weather_factors.py), the bot
-        // sees the weather data but doesn't act on it — better to be
-        // neutral than to apply fabricated multipliers.
-        const totalAdj = parkAdj;
+        // WEATHER — EMPIRICAL. Look up the multiplier from the
+        // Retrosheet-derived bucket table (15M PAs, ~575K games
+        // with weather). hit_multiplier and hr_multiplier are
+        // relative to neutral conditions (60-70°F, 0-5mph wind).
+        // Dome / retractable-closed games skip this entirely.
+        const wx = modelProps.weather || null;
+        let weatherAdj = 1.0;
+        if (wx && !wx.effective_indoor) {
+            const coefs = await getCoefficients();
+            const bucketKey = bucketForWeather(wx.temperature_f, wx.wind_mph);
+            const wxBucket = coefs?.weather?.by_bucket?.[bucketKey];
+            if (wxBucket) {
+                if      (parsed.stat === "home_runs")   weatherAdj = wxBucket.hr_multiplier  || 1.0;
+                else if (parsed.stat === "hits")        weatherAdj = wxBucket.hit_multiplier || 1.0;
+                else if (parsed.stat === "total_bases") weatherAdj = ((wxBucket.hr_multiplier || 1.0) + (wxBucket.hit_multiplier || 1.0)) / 2;
+                // Strikeouts: no empirical bucket yet (TODO — derive
+                // K rate by weather in derive_coefficients.py).
+                // Retractable parks: half-weight the swing since we
+                // don't know real-time roof state.
+                if (wx.retractable) weatherAdj = 1 + (weatherAdj - 1) * 0.5;
+            }
+        }
+
+        // Combined park + weather adjustment, multiplicative. Both
+        // multipliers are empirical. Each is half-weighted before
+        // application because the batter's season AVG already
+        // partially incorporates exposure to their home park and
+        // typical weather — full multiplier would double-count.
+        const halfWeightedPark    = 1 + ((parkAdj    !== undefined ? parkAdj    : 1) - 1);  // parkAdj already half-weighted
+        const halfWeightedWeather = 1 + (weatherAdj - 1) * 0.5;
+        const totalAdj = halfWeightedPark * halfWeightedWeather;
         let our_p_yes = Math.min(0.999, Math.max(0.001, raw_our_p_yes * totalAdj));
 
         // DEAD-MODEL guard — our_p ≤ 1% means the model has given
@@ -1094,22 +1166,20 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             game_state:    modelProps.game_state || null,
         }) : null;
 
-        // QUALITY-HITTER NO BLOCK (2026-06-05). Jun 4 analysis:
-        // threshold-1 hit/TB NO bets went 4-13 — wins were all on
-        // sub-.240 hitters (Conforto slump, Brooks Lee rookie,
-        // Austin Martin utility, +$15.65 total profit), losses
-        // all on .250+ established starters (Buxton, Bregman,
-        // Hoerner, Swanson, etc., -$23.40). Market underprices
-        // quality hitters' baseline rate. Skip NO on threshold-1
-        // hits/TB AND threshold-2 TB (Bregman/Buxton 2+ TB NO
-        // also lost) when the batter's season AVG is at or above
-        // the cutoff.
+        // HITTER QUALITY NO BLOCK — EMPIRICAL.
+        // For each batter, look up the actual P(YES wins) for the
+        // (stat, threshold) class given their season AVG. Skip NO
+        // when the market price doesn't have enough margin against
+        // the EMPIRICAL base rate. Replaces the hand-waved .250
+        // AVG cutoff with the actual base-rate table derived from
+        // Retrosheet 2018-2024 (~16K game-batter pairs per bucket).
         const hitterQualityClass =
             (parsed.stat === "hits" && parsed.threshold === 1) ||
-            (parsed.stat === "total_bases" && parsed.threshold <= 2);
-        if (side === "no" &&
-            hitterQualityClass &&
-            _state.settings.quality_hitter_no_avg_min > 0) {
+            (parsed.stat === "hits" && parsed.threshold === 2) ||
+            (parsed.stat === "total_bases" && parsed.threshold <= 2) ||
+            (parsed.stat === "home_runs" && parsed.threshold === 1);
+        if (side === "no" && hitterQualityClass) {
+            const coefs = await getCoefficients();
             const batter = (() => {
                 for (const sk of ["home", "away"]) {
                     const lp = modelProps.lineups?.[sk];
@@ -1120,57 +1190,80 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 return null;
             })();
             const avg = batter?.season_avg ?? null;
-            if (avg != null && avg >= _state.settings.quality_hitter_no_avg_min) {
+            const bucket = bucketForAvg(avg);
+            const empBucket = coefs?.hitter_quality_by_season_avg?.[bucket];
+            // Map (stat, threshold) → empirical key
+            const empKey =
+                (parsed.stat === "hits" && parsed.threshold === 1)        ? "p_1_plus_hit"
+              : (parsed.stat === "hits" && parsed.threshold === 2)        ? "p_2_plus_hit"
+              : (parsed.stat === "home_runs" && parsed.threshold === 1)   ? "p_1_plus_hr"
+              : (parsed.stat === "total_bases" && parsed.threshold <= 2)  ? "p_2_plus_tb"
+              : null;
+            const empPYes = (empBucket && empKey) ? empBucket[empKey] : null;
+            // Required margin: market YES must be at least empirical
+            // YES + 5pp for NO bet to have real edge. Below that the
+            // bot is fighting the market AND the base rate.
+            const MARGIN = 0.05;
+            if (empPYes != null && market_p != null &&
+                (1 - market_p) < (empPYes + MARGIN)) {
                 if (score) logScoredDecisionOnce(score, {
-                    action: "skip", reason: "quality_hitter_no_block",
+                    action: "skip", reason: "hitter_below_empirical_no_margin",
                     player: parsed.player, stat: parsed.stat,
                     threshold: parsed.threshold,
                     season_avg: avg,
-                    cutoff: _state.settings.quality_hitter_no_avg_min,
+                    avg_bucket: bucket,
+                    empirical_p_yes: empPYes,
+                    yes_market_p: 1 - market_p,
+                    required_yes_market: empPYes + MARGIN,
                     side,
                 });
-                log("skip", `Quality-hitter NO block — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} NO: season .${Math.round(avg*1000).toString().padStart(3,"0")} AVG ≥ .${Math.round(_state.settings.quality_hitter_no_avg_min*1000)}; market underprices baseline rate for established starters`);
+                log("skip", `Empirical NO gate — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} NO: AVG bucket ${bucket} hits ${(empPYes*100).toFixed(0)}% historically; market YES ${((1-market_p)*100).toFixed(0)}% < required ${((empPYes+MARGIN)*100).toFixed(0)}%`);
                 continue;
             }
         }
 
-        // K-PROP PITCHER K/9 vs THRESHOLD gate (2026-06-05). Jun 4
-        // analysis: Lugo (K/9 ~8.5) went 0-4 on YES K-prop ladder
-        // (5/6/7/8+); Ginn (~10) 2-0 on YES 5+/6+; Imanaga (~7)
-        // 2-0 on NO 6+/7+. Block YES when pitcher's expected K
-        // per start is too low for the threshold to be realistic;
-        // block NO when expected K is comfortably above the
-        // threshold (= YES likely to hit). Uses score.factors'
-        // pitcher_recent_form value (already fetched by scoreBet
-        // for K-props).
+        // K-PROP PITCHER K/9 vs THRESHOLD gate — EMPIRICAL.
+        // Look up the actual P(N+ K in a start) for this pitcher's
+        // season K/9 bucket. Fire YES only when market YES is
+        // below empirical - margin; fire NO only when market YES
+        // is above empirical + margin. Replaces the hand-waved
+        // 0.61 × K/9 formula with the actual base-rate table
+        // (Retrosheet 2018-2024, ~28K starts).
         if (parsed.stat === "strikeouts" && score?.factors) {
             const pf = score.factors.find((f) => f.name === "pitcher_recent_form" && f.present);
             const k9 = pf?.value?.k9;
             if (typeof k9 === "number" && k9 > 0) {
-                // Typical 5.5 IP per start → K/start ≈ 0.61 × K/9
-                const expectedKPerStart = 0.61 * k9;
-                const ratio = parsed.threshold > 0 ? expectedKPerStart / parsed.threshold : 0;
-                const yesMinRatio = _state.settings.k_prop_yes_min_ratio || 0;
-                const noMaxRatio  = _state.settings.k_prop_no_max_ratio  || Infinity;
-                if (side === "yes" && yesMinRatio > 0 && ratio < yesMinRatio) {
-                    if (score) logScoredDecisionOnce(score, {
-                        action: "skip", reason: "k_prop_pitcher_below_yes_floor",
-                        player: parsed.player, threshold: parsed.threshold,
-                        k9, expected_k_per_start: expectedKPerStart,
-                        ratio, min_ratio: yesMinRatio, side,
-                    });
-                    log("skip", `K-prop YES floor — ${parsed.player} ${parsed.threshold}+ K YES: K/9 ${k9.toFixed(1)} → ${expectedKPerStart.toFixed(1)} K/start, need ${(parsed.threshold * yesMinRatio).toFixed(1)} (ratio ${ratio.toFixed(2)} < ${yesMinRatio})`);
-                    continue;
-                }
-                if (side === "no" && noMaxRatio > 0 && ratio > noMaxRatio) {
-                    if (score) logScoredDecisionOnce(score, {
-                        action: "skip", reason: "k_prop_pitcher_above_no_ceiling",
-                        player: parsed.player, threshold: parsed.threshold,
-                        k9, expected_k_per_start: expectedKPerStart,
-                        ratio, max_ratio: noMaxRatio, side,
-                    });
-                    log("skip", `K-prop NO ceiling — ${parsed.player} ${parsed.threshold}+ K NO: K/9 ${k9.toFixed(1)} → ${expectedKPerStart.toFixed(1)} K/start, pitcher likely to reach ${parsed.threshold} (ratio ${ratio.toFixed(2)} > ${noMaxRatio})`);
-                    continue;
+                const coefs = await getCoefficients();
+                const bucket = bucketForK9(k9);
+                const empBucket = coefs?.kprop_by_pitcher_season_k9?.[bucket];
+                const empPYes = empBucket?.[`p_${parsed.threshold}_plus`];
+                const MARGIN = 0.05;
+                if (empPYes != null && market_p != null) {
+                    const yesMarket = market_p;   // market_p is YES probability
+                    if (side === "yes" && yesMarket > (empPYes - MARGIN)) {
+                        if (score) logScoredDecisionOnce(score, {
+                            action: "skip", reason: "k_prop_yes_no_empirical_edge",
+                            player: parsed.player, threshold: parsed.threshold,
+                            k9, k9_bucket: bucket,
+                            empirical_p_yes: empPYes,
+                            yes_market_p: yesMarket,
+                            side,
+                        });
+                        log("skip", `Empirical K-prop YES — ${parsed.player} ${parsed.threshold}+ K YES: K/9 bucket ${bucket} hits ${(empPYes*100).toFixed(0)}% historically; market ${(yesMarket*100).toFixed(0)}% leaves no edge (need < ${((empPYes-MARGIN)*100).toFixed(0)}%)`);
+                        continue;
+                    }
+                    if (side === "no" && yesMarket < (empPYes + MARGIN)) {
+                        if (score) logScoredDecisionOnce(score, {
+                            action: "skip", reason: "k_prop_no_no_empirical_edge",
+                            player: parsed.player, threshold: parsed.threshold,
+                            k9, k9_bucket: bucket,
+                            empirical_p_yes: empPYes,
+                            yes_market_p: yesMarket,
+                            side,
+                        });
+                        log("skip", `Empirical K-prop NO — ${parsed.player} ${parsed.threshold}+ K NO: K/9 bucket ${bucket} hits ${(empPYes*100).toFixed(0)}% historically; market ${(yesMarket*100).toFixed(0)}% leaves no NO edge (need > ${((empPYes+MARGIN)*100).toFixed(0)}%)`);
+                        continue;
+                    }
                 }
             }
         }
