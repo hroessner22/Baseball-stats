@@ -2324,6 +2324,33 @@ async function runCashoutCheck() {
             && captureFraction >= _state.settings.live_ev_take_pct
             && profitPerContract > 0;
 
+        // EMPIRICAL EV VETO. If the conditional probability table
+        // says our hold value still exceeds the current bid by a
+        // meaningful margin, override the profit-take + EV-capture
+        // triggers. These heuristics often sell winners too early
+        // when the position still has real upside (e.g. pitcher
+        // at 4 K through 12 BF has 84.5% P(5+) → hold value 84¢
+        // even if market bid is only 65¢). Currently K-props only;
+        // hit-prop conditional table not yet derived.
+        let empiricalEdgePp = null;
+        let empiricalVeto = false;
+        if (fire?.stat === "strikeouts" && heldSide === "yes") {
+            const emp = await getEmpiricalKpropPYes(fire);
+            if (emp != null) {
+                empiricalEdgePp = emp.p_yes_cents - yesBidCents;
+                if (empiricalEdgePp >= 5) empiricalVeto = true;
+            }
+        }
+        if (fire?.stat === "strikeouts" && heldSide === "no") {
+            const emp = await getEmpiricalKpropPYes(fire);
+            if (emp != null) {
+                // Our side is NO; hold value for NO = 100 - YES prob.
+                const noHoldCents = 100 - emp.p_yes_cents;
+                empiricalEdgePp = noHoldCents - yesBidCents;
+                if (empiricalEdgePp >= 5) empiricalVeto = true;
+            }
+        }
+
         // THIRD trigger — LIVE EV. The previous two use the model
         // probability at FIRE TIME (fire.our_p). That's stale once
         // the game has moved on: a "Chourio 5+ TB" bet that was a
@@ -2338,19 +2365,30 @@ async function runCashoutCheck() {
         let hitLiveEv = false;
         let liveEvDetail = "";
         if (fire?.kind === "player_prop" && fire.game_pk && fire.player && fire.stat && fire.threshold) {
-            // getLivePlayerPropPCents returns the YES-side tail
-            // probability. For a NO holding, our side's fair value
-            // is (100 - YES). Previous code compared YES-fair to
-            // the NO-bid which fired premature sells on every NO
-            // position. Side-aware now.
-            const livePCentsYes = await getLivePlayerPropPCents(fire);
-            const livePCents = livePCentsYes == null ? null
-                             : (heldSide === "no" ? 100 - livePCentsYes : livePCentsYes);
+            // EMPIRICAL preference: for K-props, look up the actual
+            // P(reach threshold | current state) from Retrosheet
+            // 2018-2024 instead of the bot's live model. That's the
+            // direct EV-optimal signal.
+            let livePCents = null;
+            let source = "model";
+            if (fire.stat === "strikeouts") {
+                const emp = await getEmpiricalKpropPYes(fire);
+                if (emp != null) {
+                    const yesP = emp.p_yes_cents;
+                    livePCents = heldSide === "no" ? (100 - yesP) : yesP;
+                    source = `empirical n=${emp.sample_n}`;
+                }
+            }
+            if (livePCents == null) {
+                const livePCentsYes = await getLivePlayerPropPCents(fire);
+                livePCents = livePCentsYes == null ? null
+                           : (heldSide === "no" ? 100 - livePCentsYes : livePCentsYes);
+            }
             if (livePCents != null && profitPerContract > 0) {
                 const liveEdgeRemaining = livePCents - yesBidCents;
                 if (liveEdgeRemaining <= 3) {
                     hitLiveEv = true;
-                    liveEvDetail = `live ${livePCents}¢ vs mkt ${yesBidCents}¢ (${heldSide.toUpperCase()}), only ${liveEdgeRemaining}¢ left`;
+                    liveEvDetail = `live ${livePCents}¢ (${source}) vs mkt ${yesBidCents}¢ (${heldSide.toUpperCase()}), only ${liveEdgeRemaining}¢ left`;
                 }
             }
         }
@@ -2464,6 +2502,17 @@ async function runCashoutCheck() {
         }
 
         if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell) continue;
+
+        // EMPIRICAL VETO: if the conditional table says we still
+        // have ≥5pp edge against the current bid, override the
+        // heuristic profit-take / EV-capture triggers. live-EV /
+        // pitch-count / hitter-sell triggers still fire because
+        // they incorporate the same game-state signal directly.
+        if (empiricalVeto && (hitAbsolute || hitEvCapture)
+            && !hitLiveEv && !hitPitchCount && !hitHitterSell) {
+            log("hold", `Empirical veto on ${p.ticker} (${fire?.player} ${fire?.threshold}+ ${fire?.stat} ${heldSide.toUpperCase()}): hold value beats bid by ${empiricalEdgePp.toFixed(1)}pp — overriding heuristic profit-take`);
+            continue;
+        }
         // Compute the parallel score so EOD can analyze cash-out
         // timing alongside the imperative-trigger decisions. The
         // imperative triggers still drive the actual sells; this
@@ -2988,14 +3037,75 @@ async function getLivePitcherInfo(gamePk, playerName) {
         if (normName(name) !== target) continue;
         const pid = side.pitcher_id;
         const profile = pid && data.model_props?.[pid]?._meta?.pitch_profile || null;
+        // Season K/9 estimate: season_so / season_gs ≈ K per start.
+        // Convert to K/9 ≈ K_per_start × 9 / 5.5 (typical IP/start).
+        const seasonGs = side.pitcher_season_gs || 0;
+        const seasonSo = side.pitcher_season_so || 0;
+        const seasonK9 = (seasonGs > 0)
+            ? (seasonSo / seasonGs) * 9 / 5.5
+            : null;
         return {
-            pitchesThrown: side.pitcher_pitches || 0,
-            battersFaced:  side.pitcher_bf || 0,
+            pitchesThrown:     side.pitcher_pitches    || 0,
+            battersFaced:      side.pitcher_bf         || 0,
+            currentStrikeouts: side.pitcher_strikeouts || 0,
+            seasonK9,
             profile,
         };
     }
     return null;
 }
+// ── Empirical EV cashout ──────────────────────────────────────────
+// Returns the EV-optimal hold value (cents) for a K-prop position
+// using the empirical conditional probability table derived from
+// Retrosheet 2018-2024. The bot compares this to the current YES
+// bid: sell when bid > hold + margin; hold otherwise.
+//
+// Bucket helpers MUST match scripts/derive_coefficients.py.
+function _bfBucketForCashout(bf) {
+    if (bf < 6)  return "0-6";
+    if (bf < 9)  return "6-9";
+    if (bf < 12) return "9-12";
+    if (bf < 15) return "12-15";
+    if (bf < 18) return "15-18";
+    if (bf < 21) return "18-21";
+    if (bf < 24) return "21-24";
+    if (bf < 27) return "24-27";
+    if (bf < 30) return "27-30";
+    return "30+";
+}
+function _k9CashoutBucket(k9) {
+    if (k9 == null) return "7.5-9.0";   // average fallback
+    if (k9 < 7.5) return "<7.5";
+    if (k9 < 9.0) return "7.5-9.0";
+    if (k9 < 10.5) return "9.0-10.5";
+    return "10.5+";
+}
+async function getEmpiricalKpropPYes(fire) {
+    if (fire?.stat !== "strikeouts") return null;
+    if (!fire.game_pk || !fire.player || fire.threshold == null) return null;
+    const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
+    if (!pInfo) return null;
+    const coefs = await getCoefficients();
+    const table = coefs?.kprop_conditional;
+    if (!table) return null;
+    const bf = pInfo.battersFaced;
+    const k  = Math.min(10, pInfo.currentStrikeouts || 0);
+    const k9b = _k9CashoutBucket(pInfo.seasonK9);
+    const key = `${_bfBucketForCashout(bf)}|k${k}|${k9b}`;
+    const rec = table[key];
+    if (!rec) return null;
+    const empPYes = rec[`p_${fire.threshold}_plus`];
+    if (empPYes == null) return null;
+    return {
+        p_yes:          empPYes,
+        p_yes_cents:    Math.round(empPYes * 100),
+        sample_n:       rec.n,
+        state_key:      key,
+        bf, current_k:  k,
+        season_k9:      pInfo.seasonK9,
+    };
+}
+
 async function getLivePlayerPropPCents(fire) {
     if (!fire || !fire.game_pk || !fire.player || !fire.stat || !fire.threshold) return null;
     let data = null;
