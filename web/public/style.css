@@ -4555,6 +4555,36 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-size: 11px;
     line-height: 1.4;
 }
+
+/* Live pitch sequence for the current PA — same row shape as the
+   gamecast pitch rows, sized down to fit the narrow Live-View rail. */
+.this-inning .ti-pitches {
+    margin: 6px 0 4px;
+    padding: 6px 0 2px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.this-inning .ti-pitches-head {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+.this-inning .ti-pitches .pa-pitch-row {
+    grid-template-columns: 18px minmax(0, 1fr) minmax(0, max-content) minmax(0, 1.6fr) 24px;
+    font-size: 11px;
+    padding: 3px 0;
+}
+.this-inning .ti-pitches .pa-pitch-velo,
+.this-inning .ti-pitches .pa-pitch-result,
+.this-inning .ti-pitches .pa-pitch-type {
+    font-size: 11px;
+}
+.this-inning .ti-pitches .pa-pitch-num {
+    font-size: 10px;
+}
 .this-inning .ti-now {
     background: rgba(59, 130, 246, 0.06);
     margin: 4px -12px -10px;

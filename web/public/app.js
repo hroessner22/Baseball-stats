@@ -4680,10 +4680,22 @@ function renderThisInning(g) {
               <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
            </div>`
         : "";
+    // Live pitch sequence for the current at-bat. User direction
+    // (2026-06-04): 'I want to be able to see the pitches from
+    // this screen.' Reuses the gamecast pitch-row markup so the
+    // visual is consistent. Updates every game-poll tick (5s)
+    // as new pitches land.
+    const livePitches = (g.current_pitches && g.current_pitches.length)
+        ? `<div class="ti-pitches">
+             <div class="ti-pitches-head">Pitches (${g.current_pitches.length})</div>
+             ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).join("")}
+           </div>`
+        : "";
     return `
       <div class="this-inning">
         <div class="ti-head">${innLabel}</div>
         ${currentRow}
+        ${livePitches}
         ${rows}
       </div>
     `;
