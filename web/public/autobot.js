@@ -2641,21 +2641,18 @@ async function runCashoutCheck() {
         }
 
         // SIXTH trigger — DEAD POSITION FORCE SELL. Every previous
-        // trigger gates on profitPerContract > 0 (profit-take, EV-
-        // capture, live-EV, pitch-count-lock-in, hitter-sell), so a
-        // position trading at 3¢ when our own empirical model says
-        // 2% YES just bleeds to settlement. User direction
-        // (2026-06-05): 'should also cashout in the instance that a
-        // pitcher is going to get pulled and missed his line like
-        // Robbie Ray will right now' — Ray was at 4 Ks on a 7+ YES
-        // with the bullpen warming, and the bot held to zero.
+        // trigger gates on profitPerContract > 0, so an underwater
+        // position with no real chance just bleeds to settlement.
+        // Two independent dead-position signals; either fires the sell:
         //
-        // The empirical conditional table already encodes K state +
-        // pitches thrown + remaining-batter outlook, so a low p_yes
-        // here is the natural 'unreachable threshold' signal. No
-        // separate pitcher-pull rule needed; the same trigger covers
-        // hit / TB / HR props and moneylines (e.g. ML down 5 runs
-        // bottom of the 8th).
+        //   A) MODEL signal — empirical p_yes < 8% for our side.
+        //   B) STARTER-DONE signal — K-prop YES where the starter is
+        //      gone, at p80+10 pitches, OR near p80 in a blowout
+        //      (5+ run margin). The empirical table says ~70% on
+        //      'needs 1 K' but doesn't know the manager isn't
+        //      sending him back out. User direction (2026-06-05):
+        //      'they're up 13 runs and he's at 90 pitches. He's not
+        //      going back out.'
         let hitDeadPosition = false;
         let deadPositionDetail = "";
         if (fire?.kind === "player_prop" || fire?.kind === "moneyline") {
@@ -2671,14 +2668,26 @@ async function runCashoutCheck() {
                 }
             } else if (fire.kind === "moneyline") {
                 const emp = await getEmpiricalMlPYes(fire);
-                // ML position is always YES on bet_team.
                 if (emp != null) empOurSideCents = emp.p_yes_cents;
             }
-            // Threshold: 8¢ (under ~8% to resolve in our favor). Bid
-            // floor of 1¢ — at literal 0¢ there's nothing to recover.
+            // A) Empirical p_yes is essentially zero.
             if (empOurSideCents != null && empOurSideCents < 8 && yesBidCents >= 1) {
                 hitDeadPosition = true;
                 deadPositionDetail = `model p=${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${yesBidCents}¢ — exit dead position`;
+            }
+            // B) Starter K-prop YES: pull-probable check.
+            if (!hitDeadPosition
+                && fire.kind === "player_prop"
+                && fire.stat === "strikeouts"
+                && heldSide === "yes"
+                && fire.game_pk
+                && fire.player
+                && yesBidCents >= 1) {
+                const pullReason = await starterPullProbableReason(fire);
+                if (pullReason) {
+                    hitDeadPosition = true;
+                    deadPositionDetail = `${pullReason} (YES, bid ${yesBidCents}¢) — exit dead position`;
+                }
             }
         }
 
@@ -2809,6 +2818,50 @@ async function runCashoutCheck() {
     }
 }
 
+// Detects whether a K-prop YES position is essentially dead because
+// the starter won't pitch again before the threshold is reached.
+// Returns a human-readable reason string when true, null otherwise.
+// Used by both runCashoutCheck (real positions) and
+// runPracticeCashoutCheck (practice fires) to override the empirical
+// table's optimistic 'needs 1 more K = 70%' on starters who aren't
+// coming back out.
+async function starterPullProbableReason(fire) {
+    if (!fire || !fire.game_pk || !fire.player) return null;
+    const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
+    // getLivePitcherInfo returns null when the named pitcher is no
+    // longer the current mound pitcher — i.e. he's been replaced.
+    // That's the strongest 'pull' signal possible.
+    if (!pInfo) return `pitcher already replaced (live lineup no longer lists ${fire.player})`;
+    const pitches  = pInfo.pitchesThrown || 0;
+    const currentK = pInfo.currentStrikeouts || 0;
+    const threshold = fire.threshold || 0;
+    // Threshold already met → not a dead position, just waiting for
+    // settle. Let T1/T2 (profit-take) handle it.
+    if (currentK >= threshold) return null;
+    const p80 = pInfo.profile?.p80_pitches || 95;
+    if (pitches >= p80 + 10) {
+        return `${pitches} pitches (p80+10=${p80 + 10}), ${currentK}/${threshold} K — pull imminent`;
+    }
+    // Blowout near p80: manager pulls a starter early when game is
+    // out of hand. 5-run margin is the conventional save-rule line.
+    if (pitches >= p80 - 5) {
+        try {
+            const boxMap = await fetchBoxscoreForGames([fire.game_pk]);
+            const d = boxMap.get(fire.game_pk);
+            const totals = d?.line_score?.totals;
+            if (totals) {
+                const home = totals.home?.runs ?? 0;
+                const away = totals.away?.runs ?? 0;
+                const margin = Math.abs(home - away);
+                if (margin >= 5) {
+                    return `${pitches} pitches (p80=${p80}), ${margin}-run game, ${currentK}/${threshold} K — manager won't send him back out`;
+                }
+            }
+        } catch {}
+    }
+    return null;
+}
+
 // Practice-mode auto-cashout. Mirrors the dead-position trigger from
 // runCashoutCheck but operates on practice fires in localStorage —
 // no Kalshi positions to sell, instead the fire is marked settled
@@ -2844,9 +2897,16 @@ async function runPracticeCashoutCheck() {
                 if (emp != null) empOurSideCents = emp.p_yes_cents;
             }
         } catch { continue; }
-        if (empOurSideCents == null) continue;
-        // Only trigger when the position is effectively dead.
-        if (empOurSideCents >= 8) continue;
+        // Decide: empirical-dead OR starter-done. Either fires the sell.
+        const empDead = (empOurSideCents != null && empOurSideCents < 8);
+        let pullReason = null;
+        if (!empDead
+            && fire.kind === "player_prop"
+            && fire.stat === "strikeouts"
+            && heldSide === "yes") {
+            pullReason = await starterPullProbableReason(fire);
+        }
+        if (!empDead && !pullReason) continue;
         // Get the live bid for our side.
         let ob = null;
         try { ob = await root.Kalshi.getOrderbook(fire.ticker); } catch { ob = null; }
@@ -2862,18 +2922,21 @@ async function runPracticeCashoutCheck() {
         const proceeds   = contracts * liveBidCents;
         const cost       = contracts * entryCents;
         const profit     = proceeds - cost;
+        const reasonText = pullReason
+            ? pullReason
+            : `dead position — model ${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${liveBidCents}¢`;
         fire.settled = {
             won: profit > 0,
             profit_cents: profit,
             settled_at: new Date().toISOString(),
             cashed_out: true,
             sell_price_cents: liveBidCents,
-            cashout_reason: `dead position — model ${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${liveBidCents}¢`,
+            cashout_reason: reasonText,
         };
         mutated = true;
         log("sell-practice", `[PRACTICE] auto-cashout ${contracts}× ${fire.ticker} ${heldSide.toUpperCase()} @ ${liveBidCents}¢ ` +
-            `(entry ${entryCents}¢, ${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)}, reason: ${fire.settled.cashout_reason})`,
-            { ticker: fire.ticker, profit_cents: profit });
+            `(entry ${entryCents}¢, ${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)}, reason: ${reasonText})`,
+            { ticker: fire.ticker, profit_cents: profit, reason: reasonText });
         toast(`Practice: cashed out ${contracts}× ${fire.player || fire.bet_team || fire.ticker} (${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)})`,
             profit >= 0 ? "ok" : "err");
     }
