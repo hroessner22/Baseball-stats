@@ -1138,13 +1138,28 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             }
         }
 
-        // 6) PA-EXHAUSTION guard (hitter props). If there are <0.5
-        //    turns remaining for the lineup, the batter is unlikely
-        //    to get another PA. Mark terminal — the market settles
-        //    quickly from here and re-checking adds nothing.
+        // 6) PA-EXHAUSTION guard (hitter props) — EMPIRICAL.
+        //    Look up actual P(≥1 more PA from this game state)
+        //    from Retrosheet 2018-2024 (~65K samples per
+        //    inning/half state). Skip hitter props once this
+        //    drops below 40% (= roughly 7th-bottom and later
+        //    for the typical lineup position).
         if (parsed.stat !== "strikeouts") {
-            const turnsLeft = modelProps?.game_state?.turns_remaining;
-            if (typeof turnsLeft === "number" && turnsLeft < 0.5) {
+            const gs = modelProps?.game_state || {};
+            const inning = gs.inning;
+            const half   = gs.half;
+            const coefsRef = await getCoefficients();
+            const paStates = coefsRef?.pa_exhaustion_by_state;
+            const stateKey = (inning && half) ? `${inning}|${half}` : null;
+            const empState = stateKey ? paStates?.[stateKey] : null;
+            if (empState && empState.p_at_least_1_more_pa < 0.40) {
+                _state.deadProps.add(propKey);
+                log("skip", `Empirical PA-exhaustion — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: only ${(empState.p_at_least_1_more_pa*100).toFixed(0)}% of batters at ${stateKey} get another PA historically (mean ${empState.mean_remaining_pa.toFixed(2)})`);
+                continue;
+            }
+            // Fallback if empirical lookup unavailable.
+            const turnsLeft = gs.turns_remaining;
+            if (!empState && typeof turnsLeft === "number" && turnsLeft < 0.5) {
                 _state.deadProps.add(propKey);
                 log("skip", `PA-exhaustion guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: only ${turnsLeft.toFixed(2)} turns left — marked terminal for this session`);
                 continue;

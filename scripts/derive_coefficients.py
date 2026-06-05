@@ -449,6 +449,67 @@ def derive_pitcher_recent_form(conn: sqlite3.Connection):
     return out
 
 
+# ── PA-exhaustion (game state → remaining PA distribution) ──
+
+def derive_pa_exhaustion(conn: sqlite3.Connection):
+    """For each (inning, half) game state where a batter has a PA,
+    compute the empirical distribution of PAs the SAME batter has
+    REMAINING in that game from that state forward.
+
+    Replaces the hand-waved 'turns_remaining < 0.5 → skip' threshold
+    with actual lookup: at game state S, what fraction of batters
+    get N more PAs?
+    """
+    print("  PA-exhaustion (game-state → remaining PAs)...", file=sys.stderr)
+    sql = f"""
+    WITH pa_seq AS (
+        SELECT
+            game_id, batter, inning, half,
+            ROW_NUMBER() OVER (
+                PARTITION BY game_id, batter
+                ORDER BY inning,
+                         CASE WHEN half = 'top' THEN 0 ELSE 1 END,
+                         outs
+            ) AS pa_num,
+            COUNT(*) OVER (PARTITION BY game_id, batter) AS total_pa
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+    )
+    SELECT
+        inning, half,
+        (total_pa - pa_num) AS pas_remaining,
+        COUNT(*) AS n
+    FROM pa_seq
+    GROUP BY inning, half, (total_pa - pa_num)
+    """
+    by_state = {}
+    for row in conn.execute(sql):
+        inning = row["inning"]; half = row["half"]
+        if inning is None or half is None or inning < 1 or inning > 12:
+            continue
+        key = f"{inning}|{half}"
+        if key not in by_state:
+            by_state[key] = {"n": 0, "remaining": {}}
+        rec = by_state[key]
+        rec["n"] += row["n"]
+        r = row["pas_remaining"]
+        rec["remaining"][r] = rec["remaining"].get(r, 0) + row["n"]
+    # Compute summaries per state: mean remaining PAs + P(at least 1 more).
+    out = {}
+    for key, rec in by_state.items():
+        total = rec["n"] or 1
+        weighted = sum(r * n for r, n in rec["remaining"].items())
+        mean_remaining = weighted / total
+        n_zero    = rec["remaining"].get(0, 0)
+        p_at_least_1 = 1 - (n_zero / total)
+        out[key] = {
+            "sample": total,
+            "mean_remaining_pa": round(mean_remaining, 3),
+            "p_at_least_1_more_pa": round(p_at_least_1, 4),
+        }
+    return out
+
+
 # ── Pitcher pull point (BF distribution at final batter) ──
 
 def derive_pitcher_pull_point(conn: sqlite3.Connection):
@@ -534,6 +595,7 @@ def main() -> int:
         "batter_recent_form_15g":         derive_batter_recent_form(conn),
         "pitcher_recent_form_5gs":        derive_pitcher_recent_form(conn),
         "pitcher_pull_point":             derive_pitcher_pull_point(conn),
+        "pa_exhaustion_by_state":         derive_pa_exhaustion(conn),
         "league_per_pa":                  derive_league_rates(conn),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
