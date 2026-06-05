@@ -666,12 +666,16 @@ async function fetchLiveGames() {
 }
 
 async function scanOneGame(g) {
-    // Pull markets (for moneyline + player_prop Kalshi quotes) and
-    // model-props (player-level probabilities) in parallel.
-    const [marketsRes, modelPropsRes] = await Promise.all([
+    // Pull markets (for moneyline + player_prop Kalshi quotes),
+    // model-props (player-level probabilities), and weather (for
+    // wind/temp adjustments on prop scoring) in parallel.
+    const [marketsRes, modelPropsRes, weatherRes] = await Promise.all([
         fetch(`/api/game/${g.game_pk}/markets`),
         _state.settings.bet_player_props
             ? fetch(`/api/game/${g.game_pk}/model-props`).catch(() => null)
+            : Promise.resolve(null),
+        _state.settings.bet_player_props
+            ? fetch(`/api/game/${g.game_pk}/weather`).catch(() => null)
             : Promise.resolve(null),
     ]);
     if (!marketsRes.ok) throw new Error(`markets HTTP ${marketsRes.status}`);
@@ -709,7 +713,17 @@ async function scanOneGame(g) {
     if (_state.settings.bet_player_props && modelPropsRes && modelPropsRes.ok) {
         try {
             const mp = await modelPropsRes.json();
+            let weather = null;
+            if (weatherRes && weatherRes.ok) {
+                try {
+                    const w = await weatherRes.json();
+                    if (w.available !== false) weather = w;
+                } catch { /* keep weather null */ }
+            }
             if (mp.available !== false) {
+                // Attach weather to the model-props payload so the
+                // prop scanner can read it without a second pass.
+                if (weather) mp.weather = weather;
                 await scanPlayerProps(g, d, mp);
             }
         } catch (e) {
@@ -802,21 +816,56 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         }
         // PARK-FACTOR ADJUSTMENT. Bandbox parks (Coors, Citizens Bank,
         // Cincy) boost batter outcomes; pitcher-friendly parks (Oracle,
-        // Petco, Coliseum) suppress them. Apply the relevant factor
-        // before scoring so our_p reflects the venue.
+        // Petco, Coliseum) suppress them.
         const park = modelProps.park_factors || {};
         let parkMultiplier = 1.0;
         if (parsed.stat === "home_runs")        parkMultiplier = park.hr   || 1.0;
         else if (parsed.stat === "total_bases") parkMultiplier = ((park.hr || 1.0) + (park.hits || 1.0)) / 2;
         else if (parsed.stat === "hits")        parkMultiplier = park.hits || 1.0;
-        // Strikeouts: park has small inverse effect (more HR-friendly
-        // parks slightly reduce strikeouts as hitters swing harder).
         else if (parsed.stat === "strikeouts")  parkMultiplier = 1 / Math.max(0.7, (park.hr || 1.0));
-        // Cap the swing so a single factor can't move our_p by more
-        // than ±10pp on its own (Coors at 1.28 HR factor would
-        // otherwise apply 28% multiplicative which clobbers tail props).
-        const adjustedMultiplier = 1 + (parkMultiplier - 1) * 0.5;  // half-weight the factor
-        let our_p_yes = Math.min(0.999, Math.max(0.001, raw_our_p_yes * adjustedMultiplier));
+        const parkAdj = 1 + (parkMultiplier - 1) * 0.5;  // half-weight
+
+        // WEATHER ADJUSTMENT. Outdoor games only. Multiplicative
+        // effects on top of the park factor:
+        //   - cold (<55°F): -hits, -TB, +slight K
+        //   - hot (>85°F): +HR (warm air carries), +slight hits
+        //   - high wind (>12 mph): +HR variance (we boost since wind-out
+        //     happens about 50% of the time and effect on outs is small)
+        //   - heavy precip prob (>60%): treat as game uncertainty,
+        //     suppress all batter outcomes slightly
+        // Retractable-roof venues: half-weight everything (roof may
+        // be closed). Dome: handled upstream (effective_indoor:true
+        // returns neutral defaults).
+        const wx = modelProps.weather || null;
+        let weatherMultiplier = 1.0;
+        if (wx && !wx.effective_indoor) {
+            const temp = wx.temperature_f ?? 72;
+            const wind = wx.wind_mph ?? 0;
+            const precip = wx.precip_probability ?? 0;
+            let m = 1.0;
+            if (parsed.stat === "home_runs") {
+                if (temp > 85) m *= 1.06;
+                else if (temp < 55) m *= 0.94;
+                if (wind > 12) m *= 1.04;     // out-blowing days boost HR
+                if (precip > 60) m *= 0.92;
+            } else if (parsed.stat === "hits" || parsed.stat === "total_bases") {
+                if (temp < 55) m *= 0.95;
+                if (precip > 60) m *= 0.93;
+            } else if (parsed.stat === "strikeouts") {
+                if (temp < 50) m *= 1.03;     // cold hitters chase less effectively
+            }
+            // Retractable venues — half-weight the swing since we don't
+            // know the actual roof state.
+            const retractScale = wx.retractable ? 0.5 : 1.0;
+            weatherMultiplier = 1 + (m - 1) * retractScale;
+        }
+        const weatherAdj = 1 + (weatherMultiplier - 1) * 0.5;  // half-weight
+
+        // Combined adjustment, capped so a single venue/weather can't
+        // move our_p_yes by more than ~20% in either direction (Coors
+        // 1.14 park × 1.06 weather = 1.21, then half-weighted = 1.10).
+        const totalAdj = parkAdj * weatherAdj;
+        let our_p_yes = Math.min(0.999, Math.max(0.001, raw_our_p_yes * totalAdj));
 
         // DEAD-MODEL guard — our_p ≤ 1% means the model has given
         // up on this prop entirely (player out of PAs, threshold
