@@ -3470,6 +3470,32 @@ function bindPracticePaneHandlers(overlay) {
     overlay.querySelectorAll("[data-game-jump]").forEach((a) => {
         a.addEventListener("click", () => { closeDrawer(); });
     });
+    // Day-section expand/collapse. Toggles which baseball-day
+    // sections are folded shut and persists the choice.
+    overlay.querySelectorAll("[data-day-toggle]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const dk = btn.getAttribute("data-day-toggle");
+            let set;
+            try { set = new Set(JSON.parse(localStorage.getItem("diamond_context_practice_collapsed_days") || "[]")); }
+            catch { set = new Set(); }
+            if (set.has(dk)) set.delete(dk);
+            else set.add(dk);
+            try { localStorage.setItem("diamond_context_practice_collapsed_days", JSON.stringify(Array.from(set))); } catch {}
+            // Inline toggle without a full re-render — avoid the
+            // boxscore + orderbook refetches.
+            const section = btn.closest(".bot-day-section");
+            const body    = section?.querySelector(".bot-day-rows");
+            const chev    = btn.querySelector(".bot-day-chevron");
+            const isOpen  = !!body && !body.hasAttribute("hidden");
+            if (body) {
+                if (isOpen) body.setAttribute("hidden", "");
+                else        body.removeAttribute("hidden");
+            }
+            section?.classList.toggle("is-collapsed", isOpen);
+            if (chev) chev.textContent = isOpen ? "▸" : "▾";
+            btn.setAttribute("aria-expanded", String(!isOpen));
+        });
+    });
     // Per-row expand/collapse — click a bet to reveal the full
     // rationale (factors, edge math, score) AND live tracking
     // (current bid/ask, mark-to-market, Kalshi link). State is
@@ -3845,6 +3871,17 @@ async function renderPracticeBetsPane() {
                 data-practice-kind="player_prop">Props <span class="bot-filter-pill-count">${baseSet.filter((f) => f.kind === "player_prop").length}</span></button>
       </div>
     `;
+    // Day-group state. Each baseball-day (6am-to-6am local) becomes
+    // a collapsible section so the user can scrub by slate. Today's
+    // group defaults open; older groups default closed. User
+    // direction (2026-06-05): set by day in the Bets pane.
+    const collapsedDays = (() => {
+        try { return new Set(JSON.parse(localStorage.getItem("diamond_context_practice_collapsed_days") || "[]")); }
+        catch { return new Set(); }
+    })();
+    const todayKey      = currentBaseballDayKey();
+    const yesterdayKey  = baseballDayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
     // Settlement is already persisted onto each fire by the
     // settleFinishedPracticeFires() call at the top — just read it.
     let totalCost = 0, totalLive = 0;
@@ -3859,7 +3896,9 @@ async function renderPracticeBetsPane() {
     })();
     const fireId = (f) => `${f.ticker || ""}|${f.placed_at || ""}`;
 
-    const rows = visibleFires.slice(0, 100).map((f) => {
+    const rowsByDay = new Map();      // dayKey → array of row HTML strings
+    const dayAggregates = new Map();  // dayKey → { count, won, lost, openCount, settledNet, openCost, openLive }
+    visibleFires.slice(0, 200).forEach((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const result = f.settled
             ? { settled: true, won: f.settled.won, profit_cents: f.settled.profit_cents }
@@ -3937,7 +3976,7 @@ async function renderPracticeBetsPane() {
             ? `<a class="bot-recent-jump" href="#game/${f.game_pk}" title="Open game view" aria-label="Open game view" data-game-jump>↗</a>`
             : "";
         const progressHtml = renderBetProgress(f, progressBoxscoreMap.get(f.game_pk));
-        return `
+        const rowHtml = `
           <div class="bot-recent-row ${isOpen ? "is-open" : ""}">
             <div class="bot-recent-row-head-wrap">
               <button class="bot-recent-row-head" data-fire-toggle="${escapeText(id)}" aria-expanded="${isOpen}">
@@ -3959,6 +3998,63 @@ async function renderPracticeBetsPane() {
               ${renderPracticeReasoning(f)}
             </div>
           </div>
+        `;
+        const dayKey = baseballDayKey(f.placed_at) || "unknown";
+        if (!rowsByDay.has(dayKey)) rowsByDay.set(dayKey, []);
+        rowsByDay.get(dayKey).push(rowHtml);
+        if (!dayAggregates.has(dayKey)) {
+            dayAggregates.set(dayKey, { count: 0, won: 0, lost: 0, openCount: 0, settledNet: 0, openCost: 0, openLive: 0 });
+        }
+        const agg = dayAggregates.get(dayKey);
+        agg.count++;
+        if (result?.settled) {
+            if (result.won) agg.won++; else agg.lost++;
+            agg.settledNet += result.profit_cents;
+        } else {
+            agg.openCount++;
+            agg.openCost += cost;
+            if (liveBid != null) agg.openLive += (f.contracts || 1) * liveBid;
+        }
+    });
+    // Assemble day sections — newest first.
+    const sortedDays = Array.from(rowsByDay.keys()).sort().reverse();
+    const formatBaseballDayLabel = (key) => {
+        if (key === todayKey) return "Today";
+        if (key === yesterdayKey) return "Yesterday";
+        if (key === "unknown") return "Undated";
+        const [y, m, d] = key.split("-").map(Number);
+        if (!Number.isFinite(y)) return key;
+        const date = new Date(y, m - 1, d);
+        const wd  = date.toLocaleDateString(undefined, { weekday: "long" });
+        const mon = date.toLocaleDateString(undefined, { month: "short" });
+        return `${wd}, ${mon} ${d}`;
+    };
+    const rows = sortedDays.map((dk) => {
+        const agg = dayAggregates.get(dk);
+        const sectionRows = rowsByDay.get(dk).join("");
+        const isCollapsed = collapsedDays.has(dk);
+        const dayLabel = formatBaseballDayLabel(dk);
+        const recordTxt = (agg.won + agg.lost) > 0
+            ? `${agg.won}–${agg.lost}`
+            : "";
+        const netCls = agg.settledNet >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+        const netTxt = (agg.won + agg.lost) > 0
+            ? `<span class="${netCls}">${agg.settledNet >= 0 ? "+" : ""}$${(agg.settledNet/100).toFixed(2)}</span>`
+            : "";
+        const openHint = agg.openCount > 0 ? `${agg.openCount} open` : "";
+        const summaryBits = [openHint, recordTxt && `${recordTxt} settled`, netTxt].filter(Boolean).join(" · ");
+        return `
+          <section class="bot-day-section ${isCollapsed ? "is-collapsed" : ""}">
+            <button class="bot-day-head" data-day-toggle="${escapeText(dk)}" aria-expanded="${!isCollapsed}">
+              <span class="bot-day-chevron">${isCollapsed ? "▸" : "▾"}</span>
+              <span class="bot-day-label">${dayLabel}</span>
+              <span class="bot-day-count">${agg.count} bet${agg.count === 1 ? "" : "s"}</span>
+              <span class="bot-day-summary">${summaryBits}</span>
+            </button>
+            <div class="bot-day-rows" ${isCollapsed ? "hidden" : ""}>
+              ${sectionRows}
+            </div>
+          </section>
         `;
     }).join("");
     const openPnl = totalLive - totalCost;

@@ -9856,6 +9856,63 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .bot-recent-detail[hidden] { display: none; }
 
+/* Baseball-day section header — collapsible group of bets from
+   the same slate. Today defaults open; older days default closed
+   so the user can scrub by day without scrolling through
+   hundreds of rows. */
+.bot-day-section {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+.bot-day-section:last-child {
+    border-bottom: none;
+}
+.bot-day-head {
+    appearance: none;
+    background: rgba(15, 23, 42, 0.55);
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    width: 100%;
+    text-align: left;
+    padding: 10px 14px;
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 12px auto auto 1fr;
+    gap: 10px;
+    align-items: baseline;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    transition: background 100ms;
+}
+.bot-day-head:hover {
+    background: rgba(56, 189, 248, 0.06);
+}
+.bot-day-chevron {
+    color: var(--text-dim);
+    font-size: 10px;
+}
+.bot-day-label {
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+}
+.bot-day-count {
+    color: var(--text-dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.bot-day-summary {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.bot-day-rows {
+    padding: 0 6px;
+}
+.bot-day-rows[hidden] {
+    display: none;
+}
+
 /* Inline progress strip on each open bet row. Mimics the live
    progress sportsbooks show on pending wagers: 'K: 3 / 5 — 2 more
    to win' plus a thin bar that fills as the player accumulates
