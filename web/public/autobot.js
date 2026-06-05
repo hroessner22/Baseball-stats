@@ -216,13 +216,25 @@ const DEFAULTS = {
     // many wins.
     //
     // 2026-06-04: introduced +4pp at 55% threshold.
-    // 2026-06-05: bumped +4 → +8pp AND lowered threshold 0.55 →
-    // 0.45 after Jun 4 review. Threshold-1 hitter NO bets ('Buxton
-    // 1+ hit NO', etc.) went 4-13 on Jun 4 = ~24% hit rate, single-
-    // handedly accounting for the night's negative P/L. Doubling
-    // the penalty + lowering the trigger threshold catches the
-    // marginally-favored cases the prior 55% bar missed.
-    favored_no_extra_pp:   8,
+    // 2026-06-05 (PM): bumped +4 → +8 and threshold 55% → 45%
+    // after Jun 4 1+ hit NOs went 4-13.
+    // 2026-06-05 (later): user pushback — 'keep in mind that you
+    // did hit on some of the bets, its just hard.' The 4 wins
+    // were Conforto +\$3.25 / Brooks Lee +\$5.11 / Austin Martin
+    // ×2, all at very low NO prices (= high-ROI when they hit,
+    // 170-270%). Killing the whole class kills those too. Dialed
+    // back to +6pp at 50% threshold — moderate tightening that
+    // still raises the bar from the original but leaves room for
+    // high-conviction NOs.
+    favored_no_extra_pp:   6,
+    // QUALITY-HITTER NO BLOCK — Jun 4 analysis found that NO bets
+    // on 1+ hit / 1+ TB lost 13/17 specifically against established
+    // starters (.250+ AVG), but won 4/4 against sub-.240 hitters
+    // (Conforto slump, Brooks Lee rookie, Austin Martin utility).
+    // Market underprices quality hitters' baseline rate. Block NO
+    // on threshold-1 hits/TB when the batter's season AVG is at
+    // or above this cutoff. Set to 0 to disable.
+    quality_hitter_no_avg_min: 0.250,
     // CORRELATED-LADDER GATE — prop ladders (Cole over 6/7/8/9/10 K)
     // are perfectly correlated. Stacking fires across a ladder
     // sizes the same underlying bet Nx. BUT: a higher threshold
@@ -307,14 +319,21 @@ function loadState() {
             try { localStorage.setItem(ML_AND_PROPS_FLAG, "1"); } catch {}
         }
         // ONE-SHOT MIGRATION 2026-06-05 (PM): bump favored-YES NO
-        // penalty 4 → 8 after Jun 4 1+ hit NO bets went 4-13. Push
-        // the new value to anyone with the old default persisted.
-        const FAVORED_NO_BUMP_FLAG = "diamond_context_favored_no_bump_2026_06_05";
-        if (!localStorage.getItem(FAVORED_NO_BUMP_FLAG)) {
-            if (typeof s.favored_no_extra_pp !== "number" || s.favored_no_extra_pp < 8) {
-                s.favored_no_extra_pp = 8;
+        // penalty 4 → 6 + add quality-hitter NO block (.250 AVG
+        // cutoff) after Jun 4 1+ hit NO bets went 4-13. The 4 wins
+        // were all sub-.240 hitters (Conforto/Brooks Lee/Austin
+        // Martin paying 170-270% ROI), so the quality-hitter block
+        // catches the structural losers while preserving the
+        // high-EV plays.
+        const NO_TUNING_FLAG = "diamond_context_no_tuning_2026_06_05";
+        if (!localStorage.getItem(NO_TUNING_FLAG)) {
+            if (typeof s.favored_no_extra_pp !== "number" || s.favored_no_extra_pp < 6) {
+                s.favored_no_extra_pp = 6;
             }
-            try { localStorage.setItem(FAVORED_NO_BUMP_FLAG, "1"); } catch {}
+            if (typeof s.quality_hitter_no_avg_min !== "number" || s.quality_hitter_no_avg_min === 0) {
+                s.quality_hitter_no_avg_min = 0.250;
+            }
+            try { localStorage.setItem(NO_TUNING_FLAG, "1"); } catch {}
         }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
@@ -374,6 +393,7 @@ function clampSettings(s) {
         practice_starting_bankroll_cents: clampInt(s.practice_starting_bankroll_cents, 100, 1_000_00),
         ladder_min_edge_increase_pp: clampFloat(s.ladder_min_edge_increase_pp, 0, 10),
         favored_no_extra_pp:        clampFloat(s.favored_no_extra_pp, 0, 15),
+        quality_hitter_no_avg_min:  clampFloat(s.quality_hitter_no_avg_min, 0, 0.400),
     };
 }
 function clampFloat(n, lo, hi) {
@@ -1013,6 +1033,43 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             game_state:    modelProps.game_state || null,
         }) : null;
 
+        // QUALITY-HITTER NO BLOCK (2026-06-05). Jun 4 analysis:
+        // threshold-1 hit/TB NO bets went 4-13 — wins were all on
+        // sub-.240 hitters (Conforto slump, Brooks Lee rookie,
+        // Austin Martin utility, +$15.65 total profit), losses
+        // all on .250+ established starters (Buxton, Bregman,
+        // Hoerner, Swanson, etc., -$23.40). Market underprices
+        // quality hitters' baseline 1+ hit rate. Skip NO on
+        // threshold-1 hit/TB props when the batter's season AVG
+        // is at or above the cutoff so we keep firing the
+        // sub-.240 wins but stop bleeding on the All-Star NOs.
+        if (side === "no" &&
+            (parsed.stat === "hits" || parsed.stat === "total_bases") &&
+            parsed.threshold === 1 &&
+            _state.settings.quality_hitter_no_avg_min > 0) {
+            const batter = (() => {
+                for (const sk of ["home", "away"]) {
+                    const lp = modelProps.lineups?.[sk];
+                    if (!lp?.batters) continue;
+                    const b = lp.batters.find((x) => String(x.mlbam) === String(mlbam));
+                    if (b) return b;
+                }
+                return null;
+            })();
+            const avg = batter?.season_avg ?? null;
+            if (avg != null && avg >= _state.settings.quality_hitter_no_avg_min) {
+                if (score) logScoredDecisionOnce(score, {
+                    action: "skip", reason: "quality_hitter_no_block",
+                    player: parsed.player, stat: parsed.stat,
+                    season_avg: avg,
+                    cutoff: _state.settings.quality_hitter_no_avg_min,
+                    side,
+                });
+                log("skip", `Quality-hitter NO block — ${parsed.player} 1+ ${parsed.stat} NO: season .${Math.round(avg*1000).toString().padStart(3,"0")} AVG ≥ .${Math.round(_state.settings.quality_hitter_no_avg_min*1000)}; market underprices baseline hit rate for established starters`);
+                continue;
+            }
+        }
+
         // No Savant signal for player props, no maturity track record
         // — use the SEPARATE prop threshold (default 7pp, higher than
         // the 5pp moneyline bar) until we've earned confidence.
@@ -1038,11 +1095,11 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const yesMarketProb = market_p != null
             ? (side === "no" ? 1 - market_p : market_p)
             : null;
-        // 2026-06-05: threshold lowered 0.55 → 0.45 so even
-        // marginally-favored YES triggers the extra NO penalty.
-        // Many Jun 4 1+ hit NO fires had yes_market_p around
-        // 50-65% but slipped past the old 55% gate.
-        const favoredYesPenalty = (side === "no" && yesMarketProb != null && yesMarketProb >= 0.45)
+        // 2026-06-05 (later): threshold settled at 0.50 — wide
+        // enough to catch most favored-YES NO bets without killing
+        // the high-conviction wins (Brooks Lee +\$5.11 etc) the
+        // class can still produce.
+        const favoredYesPenalty = (side === "no" && yesMarketProb != null && yesMarketProb >= 0.50)
             ? (_state.settings.favored_no_extra_pp || 0)
             : 0;
         const noPenalty = side === "no" ? 4 : 0;
@@ -5395,6 +5452,13 @@ function renderBotPane() {
                    value="${s.ladder_min_edge_increase_pp}"
                    data-bot-setting-float="ladder_min_edge_increase_pp">
             <small>Correlated-ladder gate — each higher-threshold prop on the same player+stat must clear the prior fire's adjusted edge by N pp. Stops blind ladder-stacking but allows fires when conviction is genuinely climbing. 0 = allow any non-decreasing edge · 2 = small but meaningful climb required (default)</small>
+          </label>
+          <label>
+            <span>Quality-hitter NO block AVG cutoff</span>
+            <input type="number" min="0" max="0.400" step="0.005"
+                   value="${s.quality_hitter_no_avg_min.toFixed(3)}"
+                   data-bot-setting-float="quality_hitter_no_avg_min">
+            <small>Skip NO bets on 1+ hit / 1+ TB when batter's season AVG ≥ this cutoff. Jun 4 analysis: NO on .250+ hitters went 0-13 (Buxton, Bregman, Hoerner class). Wins came from sub-.240 hitters (Conforto slump, Brooks Lee rookie, Austin Martin utility). 0 = disable.</small>
           </label>
           <label>
             <span>Favored-YES extra bar on NO bets (pp)</span>

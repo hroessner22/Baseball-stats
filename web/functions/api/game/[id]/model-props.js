@@ -450,6 +450,13 @@ function shapeSide(side, probable) {
             season_doubles:     Number(ss.doubles)     || 0,
             season_triples:     Number(ss.triples)     || 0,
             season_strikeouts:  Number(ss.strikeOuts)  || 0,
+            // Season slash line for quality-of-hitter gates in the
+            // bot (e.g. block 1+ hit NO bets on .250+ AVG hitters
+            // since the market underprices their hit probability).
+            season_avg:         parseFloat(ss.avg) || 0,
+            season_obp:         parseFloat(ss.obp) || 0,
+            season_slg:         parseFloat(ss.slg) || 0,
+            season_ops:         parseFloat(ss.ops) || 0,
         });
     }
     // Keep just one player per lineup spot — the starter. Pinch hitters
