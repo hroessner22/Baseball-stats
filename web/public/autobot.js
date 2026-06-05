@@ -1095,27 +1095,45 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
 
-        // 5) PITCHER-PULLED guard (K-props only). Generalizes the
-        //    Wenceel principle: if the K-prop market re-priced
-        //    because the starter is out, our K-rate model is using
-        //    a pitcher who isn't on the mound. Same 'odds great for
-        //    a reason we don't see' failure mode.
-        //
-        //    Detection: starter's pitch count past p80 + 10 = pull
-        //    imminent or already happened. Cross-checked against
-        //    the live pitcher feed (getLivePitcherInfo). NO K bets
-        //    are extra dangerous here — they look incredibly cheap
-        //    because the over-N-K bet is essentially settled.
+        // 5) PITCHER-PULLED guard (K-props only) — EMPIRICAL.
+        //    Uses the actual pull-rate by BF from Retrosheet
+        //    2018-2024 (~32K starts): BF15 = 2%, BF20 = 9%,
+        //    BF24 = 26%, BF28 = 49%, BF32 = 57%. Skip K-props
+        //    once pull rate exceeds 60% — pitcher likely already
+        //    done, so YES upside is gone and NO is settled.
         if (parsed.stat === "strikeouts") {
             const pInfo = await getLivePitcherInfo(g.game_pk, parsed.player);
             if (pInfo) {
-                const { pitchesThrown, profile } = pInfo;
-                const p80     = profile?.p80_pitches || 95;
-                const limit   = p80 + 10;
-                if (pitchesThrown >= limit) {
+                const { battersFaced, pitchesThrown } = pInfo;
+                const coefs = await getCoefficients();
+                const pullByBf = coefs?.pitcher_pull_point?.by_bf;
+                let pullRate = null;
+                if (pullByBf && battersFaced != null) {
+                    // Look up nearest BF bucket (data is integer-keyed).
+                    const bfRec = pullByBf[String(battersFaced)];
+                    pullRate = bfRec?.pull_rate ?? null;
+                    // Fall back to nearest lower BF if exact missing.
+                    if (pullRate == null) {
+                        for (let bf = battersFaced; bf >= 12; bf--) {
+                            const rec = pullByBf[String(bf)];
+                            if (rec) { pullRate = rec.pull_rate; break; }
+                        }
+                    }
+                }
+                if (pullRate != null && pullRate >= 0.60) {
                     _state.deadProps.add(propKey);
-                    log("skip", `Pitcher-pulled guard — ${parsed.player} at ${pitchesThrown} pitches (p80+10 = ${limit}) — marked terminal for this session`);
+                    log("skip", `Empirical pitcher-pulled — ${parsed.player} at ${battersFaced} BF (${pitchesThrown}p): empirical pull rate ${(pullRate*100).toFixed(0)}% ≥ 60%`);
                     continue;
+                }
+                // Fallback to pitch-count heuristic if empirical
+                // data unavailable (rookie pitchers, off-window).
+                if (pullRate == null && pitchesThrown != null) {
+                    const profileP80 = pInfo.profile?.p80_pitches || 95;
+                    if (pitchesThrown >= profileP80 + 10) {
+                        _state.deadProps.add(propKey);
+                        log("skip", `Pitch-count fallback — ${parsed.player} at ${pitchesThrown} pitches (p80+10=${profileP80+10}, empirical lookup unavailable)`);
+                        continue;
+                    }
                 }
             }
         }
@@ -1647,17 +1665,53 @@ function normName(s) {
 // Returns 0 when even 1 contract exceeds the cap. Caller logs
 // the skip — silent 'contracts < 1' returns were the bug that
 // hid the old $0.10 unit blocking every ML fire.
-function sizeContractsByConviction(askCents, score, unitCents) {
+// Half-Kelly sizing — replaces the hand-waved 2/4/6/10 contract
+// tiers. The Kelly criterion for a binary bet at price p_market
+// with our subjective probability p_ours is:
+//   f* = (b·p - q) / b,  where b = (1 - p_mkt) / p_mkt,
+//                              p = p_ours, q = 1 - p_ours
+//
+// Full Kelly is the theoretically optimal fraction of bankroll
+// per bet, but it's extremely volatile (variance scales with the
+// edge). Industry standard is half-Kelly (f*/2) which retains
+// most of the long-run growth with much smaller drawdowns. We
+// further cap at the user's `unit_cents` per fire so a single
+// big-edge bet can't blow the bankroll cap.
+//
+// When the score isn't available (no adjusted_p) we fall back
+// to 2-contract flat.
+function sizeContractsByKelly(askCents, score, unitCents, bankrollCents) {
     if (!Number.isFinite(askCents) || askCents <= 0) return 0;
     if (askCents > unitCents) return 0;
-    const adjEdge = Math.abs(Number(score && score.edge_pp) || 0);
-    let contracts;
-    if      (adjEdge >= 12) contracts = 10;
-    else if (adjEdge >=  8) contracts =  6;
-    else if (adjEdge >=  5) contracts =  4;
-    else                     contracts =  2;
+    if (!score || score.adjusted_p == null) {
+        // Fallback: 2 contracts if affordable.
+        const fallback = Math.floor(unitCents / askCents);
+        return Math.max(0, Math.min(2, fallback));
+    }
+    const marketP = askCents / 100;
+    const ourP    = Math.max(0.001, Math.min(0.999, Number(score.adjusted_p)));
+    if (ourP <= marketP) return 0;             // no edge → no bet
+    const b = (1 - marketP) / marketP;
+    const fullKelly = (b * ourP - (1 - ourP)) / b;
+    if (fullKelly <= 0) return 0;
+    const halfKelly = fullKelly * 0.5;
+    // Target spend = half-Kelly fraction of bankroll, capped at unit.
+    const bankroll = (bankrollCents && bankrollCents > 0) ? bankrollCents : (unitCents * 50);
+    const targetCents = halfKelly * bankroll;
+    const cappedCents = Math.min(targetCents, unitCents);
+    let contracts = Math.floor(cappedCents / askCents);
+    if (contracts < 1) contracts = 1;          // always at least 1 if affordable
+    // Final guard: total cost must fit unit cap.
     while (contracts > 1 && contracts * askCents > unitCents) contracts--;
     return contracts;
+}
+// Back-compat shim — old call sites used sizeContractsByConviction.
+function sizeContractsByConviction(askCents, score, unitCents) {
+    // Read practice bankroll if available so Kelly scales properly.
+    const bk = _state.settings.practice_mode
+        ? _state.settings.practice_starting_bankroll_cents
+        : _state.settings.open_exposure_max;
+    return sizeContractsByKelly(askCents, score, unitCents, bk);
 }
 
 async function checkAndMaybeFire(g, market, ourHome, savantHome) {
