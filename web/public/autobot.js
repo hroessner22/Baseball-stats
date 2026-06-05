@@ -2738,54 +2738,25 @@ async function runCashoutCheck() {
         //      sending him back out. User direction (2026-06-05):
         //      'they're up 13 runs and he's at 90 pitches. He's not
         //      going back out.'
+        // SIXTH trigger — now Ray-only. User direction (2026-06-05):
+        // 'Stop cashing out on bets that are low unless they are
+        // Robbie Ray like. NEVER EVER OTHERWISE.' The generic
+        // empirical p < 8% trigger is GONE — it was firing on hitter
+        // props, MLs, etc. where the market still had real chance.
+        // The only loss-sale path remaining is the K-prop pitcher-
+        // pull signal, which is the Ray case explicitly.
         let hitDeadPosition = false;
         let deadPositionDetail = "";
-        if (fire?.kind === "player_prop" || fire?.kind === "moneyline") {
-            let empOurSideCents = null;
-            if (fire.kind === "player_prop") {
-                const emp = (fire.stat === "strikeouts")
-                    ? await getEmpiricalKpropPYes(fire)
-                    : await getEmpiricalHitPropPYes(fire);
-                if (emp != null) {
-                    empOurSideCents = (heldSide === "no")
-                        ? (100 - emp.p_yes_cents)
-                        : emp.p_yes_cents;
-                }
-            } else if (fire.kind === "moneyline") {
-                const emp = await getEmpiricalMlPYes(fire);
-                if (emp != null) empOurSideCents = emp.p_yes_cents;
-            }
-            // 'World disagrees' gate (2026-06-05). User: 'Only cashout
-            // down when we have an edge saying it wont hit while the
-            // rest of the world thinks it might.' Translation: only
-            // sell at a loss when the market is still PAYING for the
-            // chance. If the bid has already collapsed to ≤5¢ the
-            // world agrees with us — there's no edge to realizing
-            // the loss now, just hold to settlement.
-            const lossSale = (yesBidCents - entryCents) < 0;
-            const worldAgrees = yesBidCents <= 5;
-            const skipBecauseWorldAgrees = lossSale && worldAgrees;
-
-            // A) Empirical p_yes is essentially zero.
-            if (empOurSideCents != null && empOurSideCents < 8 && yesBidCents >= 1
-                && !skipBecauseWorldAgrees) {
+        if (fire?.kind === "player_prop"
+            && fire.stat === "strikeouts"
+            && heldSide === "yes"
+            && fire.game_pk
+            && fire.player
+            && yesBidCents >= 6) {  // world-still-paying gate
+            const pullReason = await starterPullProbableReason(fire);
+            if (pullReason) {
                 hitDeadPosition = true;
-                deadPositionDetail = `model p=${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${yesBidCents}¢ — exit dead position`;
-            }
-            // B) Starter K-prop YES: pull-probable check.
-            if (!hitDeadPosition
-                && fire.kind === "player_prop"
-                && fire.stat === "strikeouts"
-                && heldSide === "yes"
-                && fire.game_pk
-                && fire.player
-                && yesBidCents >= 1
-                && !skipBecauseWorldAgrees) {
-                const pullReason = await starterPullProbableReason(fire);
-                if (pullReason) {
-                    hitDeadPosition = true;
-                    deadPositionDetail = `${pullReason} (YES, bid ${yesBidCents}¢) — exit dead position`;
-                }
+                deadPositionDetail = `${pullReason} (YES, bid ${yesBidCents}¢) — Ray-case sell`;
             }
         }
 
@@ -3135,30 +3106,14 @@ async function runPracticeCashoutCheck() {
             toast(`Practice: ${fire.player || fire.ticker} — ${deadReason}`, "err");
             continue;
         }
-        // Look up empirical p_yes from the same conditional tables
-        // the buy-side and the regular cashout use. Skip when we
-        // can't compute one (no table coverage).
-        let empOurSideCents = null;
-        try {
-            if (fire.kind === "player_prop") {
-                const emp = (fire.stat === "strikeouts")
-                    ? await getEmpiricalKpropPYes(fire)
-                    : await getEmpiricalHitPropPYes(fire);
-                if (emp != null) {
-                    empOurSideCents = (heldSide === "no")
-                        ? (100 - emp.p_yes_cents)
-                        : emp.p_yes_cents;
-                }
-            } else if (fire.kind === "moneyline") {
-                const emp = await getEmpiricalMlPYes(fire);
-                if (emp != null) empOurSideCents = emp.p_yes_cents;
-            }
-        } catch { continue; }
         // ── DECISION TIME ──
-        const empDead = (empOurSideCents != null && empOurSideCents < 8);
+        // User direction (2026-06-05): 'Only situations like Robbie
+        // Ray. Stop cashing out on bets that are low unless they are
+        // Robbie Ray like. NEVER EVER OTHERWISE.' The generic
+        // empirical p < 8% trigger is gone — only the pitcher-pull
+        // signal can produce a loss sale, and only for K-prop YES.
         let pullReason = null;
-        if (!empDead
-            && fire.kind === "player_prop"
+        if (fire.kind === "player_prop"
             && fire.stat === "strikeouts"
             && heldSide === "yes") {
             pullReason = await starterPullProbableReason(fire);
@@ -3197,18 +3152,14 @@ async function runPracticeCashoutCheck() {
         // bet is dead, and realizing it at near-zero adds no edge.
         const wouldBeLoss = profitPerContract < 0;
         const worldAgrees = liveBidCents <= 5;
-        if ((empDead || pullReason) && wouldBeLoss && worldAgrees) {
+        if (pullReason && wouldBeLoss && worldAgrees) {
             continue;
         }
-        if (!empDead && !pullReason && !lockReason) continue;
+        if (!pullReason && !lockReason) continue;
         const proceeds = contracts * liveBidCents;
         const cost     = contracts * entryCents;
         const profit   = proceeds - cost;
-        const reasonText = pullReason
-            ? pullReason
-            : lockReason
-                ? lockReason
-                : `dead position — model ${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${liveBidCents}¢`;
+        const reasonText = pullReason || lockReason;
         fire.settled = {
             won: profit > 0,
             profit_cents: profit,
@@ -3427,7 +3378,22 @@ function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
             const gs = lp.pitcher_season_gs || 0;
             const so = lp.pitcher_season_so || 0;
             if (gs < 3) return null;
-            return Math.max(1, Math.ceil((so / gs) * 2));
+            const kPerStart = so / gs;
+            // User direction (2026-06-05): 'Sonny Gray has 41 ks in
+            // 50 innings and you just took 9+. Why?' — Gray is at
+            // 4.56 K/start so 2× ceiling = 10 was letting 9+ through.
+            // Tighten to 1.5× ceiling AND require a 6 K/start floor
+            // before allowing thresholds >= 8.
+            //   1.5× for Gray (4.56)  → ceil 7  → 8+/9+ blocked
+            //   1.5× for Cole (8.75)  → ceil 14 → 9+/10+ allowed
+            const softCeiling = Math.max(1, Math.ceil(kPerStart * 1.5));
+            if (kPerStart < 6) {
+                // Cap at the soft ceiling AND no higher than 7. A
+                // pitcher who averages 4 K/start doesn't reach 8+ in
+                // a real start.
+                return Math.min(softCeiling, 7);
+            }
+            return softCeiling;
         }
         return null;
     }
