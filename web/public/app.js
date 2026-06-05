@@ -4142,7 +4142,7 @@ function renderGame(g) {
     return `
       <a class="back-link" href="#">← BOARD</a>
       ${renderTicker(g.game_pk, scheduleCache?.games || [])}
-      ${renderGameBetsSection(g.game_pk)}
+      ${renderGameBetsSection(g)}
       <div class="game-mode-toggle">
         <button class="${mode === 'live'     ? 'active' : ''}" data-mode="live">Live View</button>
         <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
@@ -4170,7 +4170,8 @@ function renderGame(g) {
 const LS_GAME_BETS_FIRES          = "diamond_context_bot_fires";
 const LS_GAME_BETS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
 const LS_GAME_BETS_SETTINGS       = "diamond_context_bot_settings";
-function renderGameBetsSection(gamePk) {
+function renderGameBetsSection(g) {
+    const gamePk = g && g.game_pk;
     if (!gamePk) return "";
     let real = [], practice = [], practiceMode = false;
     try { real     = JSON.parse(localStorage.getItem(LS_GAME_BETS_FIRES) || "[]"); } catch {}
@@ -4184,6 +4185,35 @@ function renderGameBetsSection(gamePk) {
     const source = practiceMode ? practice : real;
     const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
     if (!onGame.length) return "";
+
+    // Per-PA filter. Only show:
+    //   - Bets on the CURRENT batter (he's at the plate now)
+    //   - Bets on the CURRENT pitcher (his K-props are live)
+    //   - Moneylines (always relevant)
+    // The rest are hidden behind a "Show all N" button.
+    // User direction (2026-06-05): 'I want to see bets that are
+    // relevant to each at-bat, not necessarily all of them at once.
+    // Its just too big and bulky here.'
+    const nameMatches = (a, b) => {
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        return norm(a) === norm(b);
+    };
+    const batterName  = g.batter?.name  || null;
+    const pitcherName = g.pitcher?.name || null;
+    const isRelevant  = (f) => {
+        if (f.kind === "moneyline") return true;
+        if (!f.player) return false;
+        if (batterName  && nameMatches(f.player, batterName))  return true;
+        if (pitcherName && nameMatches(f.player, pitcherName)) return true;
+        return false;
+    };
+    // Sessionstorage so the user can keep "show all" open across
+    // pitch refreshes.
+    let showAll = false;
+    try { showAll = sessionStorage.getItem(`gbets_show_all_${gamePk}`) === "1"; } catch {}
+    const relevant   = onGame.filter(isRelevant);
+    const hidden     = onGame.length - relevant.length;
+    const displayed  = showAll ? onGame : relevant;
     // Use Kalshi's native 'N+ stat' market notation. The YES/NO
     // chip carries the bet direction (in the strip, the (YES)/(NO)
     // suffix on each label since we don't render chips here).
@@ -4211,12 +4241,9 @@ function renderGameBetsSection(gamePk) {
     const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
     const realizedCls = realized >= 0 ? "game-bets-pos" : "game-bets-neg";
     const realizedTxt = (won + lost) > 0
-        ? ` · settled ${won}–${lost} <strong class="${realizedCls}">${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</strong>`
+        ? ` · ${won}–${lost} <strong class="${realizedCls}">${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</strong>`
         : "";
-    // Show every bet — user direction (2026-06-04): 'Show the
-    // three more, and so you dont need the dots.' No overflow
-    // truncation; labels wrap to a new line instead of ellipsing.
-    const rows = onGame.map((f) => {
+    const rows = displayed.map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const settled = f.settled;
         const badge = settled
@@ -4233,18 +4260,55 @@ function renderGameBetsSection(gamePk) {
           </li>
         `;
     }).join("");
-    const overflow = "";
+    // Title depends on what's showing.
+    let title;
+    if (showAll) {
+        title = `All bets on this game`;
+    } else if (relevant.length > 0) {
+        const atBatLabel = batterName && pitcherName
+            ? `${shortName(batterName)} vs ${shortName(pitcherName)}`
+            : "current PA";
+        title = `Relevant to ${atBatLabel}`;
+    } else {
+        title = `No bets on the current PA`;
+    }
+    // Toggle button: "Show 12 more" / "Hide" depending on state.
+    const toggleHtml = onGame.length > relevant.length
+        ? `<button class="game-bets-toggle" data-gbets-toggle="${gamePk}">
+             ${showAll ? `Show only PA` : `Show all ${onGame.length}`}
+           </button>`
+        : "";
+
     return `
-      <section class="game-bets-strip" data-practice="${practiceMode ? 'true' : 'false'}">
+      <section class="game-bets-strip game-bets-compact" data-practice="${practiceMode ? 'true' : 'false'}">
         <header class="game-bets-head">
           <span class="game-bets-tag">${practiceMode ? "PRACTICE" : "LIVE"}</span>
-          <span class="game-bets-title">Your bets on this game</span>
-          <span class="game-bets-summary">${onGame.length} bet${onGame.length === 1 ? "" : "s"} · $${(totalCost/100).toFixed(2)} staked${realizedTxt}</span>
+          <span class="game-bets-title">${escapeHtml(title)}</span>
+          <span class="game-bets-summary">${onGame.length} on game · $${(totalCost/100).toFixed(2)}${realizedTxt}</span>
+          ${toggleHtml}
         </header>
-        <ul class="game-bets-list">${rows}${overflow}</ul>
+        ${displayed.length > 0
+          ? `<ul class="game-bets-list">${rows}</ul>`
+          : `<p class="game-bets-empty">${hidden} bet${hidden === 1 ? "" : "s"} on other players in this game — tap "Show all" to see them.</p>`}
       </section>
     `;
 }
+
+// Click handler for the toggle button. Lives at document level
+// since the game view re-renders frequently.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-gbets-toggle]");
+    if (!btn) return;
+    e.preventDefault();
+    const pk = btn.getAttribute("data-gbets-toggle");
+    try {
+        const k = `gbets_show_all_${pk}`;
+        const cur = sessionStorage.getItem(k) === "1";
+        sessionStorage.setItem(k, cur ? "0" : "1");
+    } catch {}
+    // Trigger a re-render. activeGameId is the simplest hook.
+    if (activeGameId) refreshGame(activeGameId);
+});
 function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"]/g, (c) => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
