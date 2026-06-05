@@ -291,6 +291,17 @@ function loadState() {
             s.moneyline_reserve_pct = 0.95;
             try { localStorage.setItem(ML_ONLY_FLAG, "1"); } catch {}
         }
+        // ONE-SHOT MIGRATION 2026-06-05: user direction — 'If we
+        // can mix in live moneylines as well (these are our biggest
+        // advantage) I reckon we can win some money.' Reverse the
+        // ML-only mode: bring props back, restore 50/50 split.
+        // Tracked separately so user changes via UI still stick.
+        const ML_AND_PROPS_FLAG = "diamond_context_ml_and_props_2026_06_05";
+        if (!localStorage.getItem(ML_AND_PROPS_FLAG)) {
+            s.bet_player_props = true;
+            s.moneyline_reserve_pct = 0.50;
+            try { localStorage.setItem(ML_AND_PROPS_FLAG, "1"); } catch {}
+        }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
     } catch { _state.settings = { ...DEFAULTS }; }
