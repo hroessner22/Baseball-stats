@@ -4239,13 +4239,17 @@ async function hydrateRailLiveData(gamePk) {
     const key = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
     let fires = [];
     try { fires = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
-    const onGame = fires.filter((f) => String(f.game_pk) === String(gamePk) && !f.settled && f.ticker);
+    // Any open bet on this game — orderbook lookup requires a ticker,
+    // boxscore lookup does not.
+    const onGame = fires.filter((f) => String(f.game_pk) === String(gamePk) && !f.settled);
     if (!onGame.length) return false;
+    const tickerFires = onGame.filter((f) => f.ticker);
     const now = Date.now();
-    const tickers = [...new Set(onGame.map((f) => ({ t: f.ticker, side: f.side || "yes" })).map(JSON.stringify))]
+    const tickers = [...new Set(tickerFires.map((f) => ({ t: f.ticker, side: f.side || "yes" })).map(JSON.stringify))]
         .map((s) => JSON.parse(s));
     let any = false;
-    // Fetch boxscore + orderbooks in parallel.
+    // Always hydrate the boxscore — it's what the progress meter
+    // reads. Orderbooks only run for fires with tickers.
     await Promise.all([
         hydrateRailBoxscore(gamePk).then((d) => { if (d) any = true; }),
         ...tickers.map(async ({ t, side }) => {
@@ -4506,12 +4510,12 @@ function renderGameBetsCardRail(g) {
     // that the drawer's 'All bets' pane uses. User direction
     // (2026-06-05): 'Look at how you do it in "all bets".' The drawer
     // path is the source of truth — same boxscore-lookup function,
-    // same bar shape, same status text.
+    // same bar shape, same status text. Accessed via window.AutoBot
+    // because autobot.js wraps its scope in an IIFE.
     const railProgress = (f) => {
         if (f.settled) return "";
-        if (typeof renderBetProgress === "function") {
-            return renderBetProgress(f, boxscore);
-        }
+        const r = window.AutoBot?.renderBetProgress;
+        if (typeof r === "function") return r(f, boxscore);
         return "";
     };
 

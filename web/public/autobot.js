@@ -6843,6 +6843,14 @@ root.AutoBot = {
     getLog,
     runScan,
     runCashoutCheck,
+    // Progress / boxscore helpers — needed by app.js's rail bets
+    // card so the meter renders with the same shape and same name-
+    // resolution path the drawer's All Bets pane uses. Without
+    // these exports, app.js was hitting `typeof renderBetProgress`
+    // === "undefined" and silently rendering empty bars.
+    renderBetProgress,
+    boxscoreStatForProp,
+    findPlayerLine,
 };
 
 })(typeof window !== "undefined" ? window : globalThis);
