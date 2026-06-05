@@ -4746,14 +4746,35 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .this-inning .ti-row {
     display: grid;
-    /* Chevron · outcome chip · avatar · batter name · description. */
-    grid-template-columns: 10px 40px 28px minmax(0, max-content) minmax(0, 1fr);
-    gap: 8px;
+    /* Two-row layout: top row is chevron · outcome · avatar · batter.
+       Description wraps onto its own line UNDER the batter name so
+       narrow rails don't push the desc into a tall thin column.
+       User direction (2026-06-05): 'Put this under his name. … clean
+       this up so no words overlap.' */
+    grid-template-columns: 10px 40px 28px minmax(0, 1fr);
+    grid-template-areas:
+        "chev outcome avatar batter"
+        ".    .       desc   desc";
+    gap: 2px 8px;
     align-items: center;
     padding: 4px 0;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.4;
 }
+.this-inning .ti-row-chev   { grid-area: chev; }
+.this-inning .ti-outcome    { grid-area: outcome; }
+.this-inning .ti-photo,
+.this-inning .ti-photo-empty { grid-area: avatar; }
+.this-inning .ti-batter     { grid-area: batter; min-width: 0; }
+.this-inning .ti-desc {
+    grid-area: desc;
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1.35;
+    padding-top: 1px;
+    /* Empty descs collapse so the row stays single-line. */
+}
+.this-inning .ti-desc:empty { display: none; }
 .ti-row-chev {
     color: var(--text-dim);
     font-size: 9px;
@@ -9040,6 +9061,12 @@ body.bot-drawer-open {
    open the drawer, which is already open); slide any active-bets
    pill that's anchored to the right edge over by the drawer width. */
 body.bot-drawer-open .bot-launcher { display: none; }
+
+/* Bottom active-bets pill is redundant inside a game view — the rail
+   bets card already shows every position on this game with progress
+   bars. User feedback (2026-06-05): it was overlapping the rail's
+   past-PA list. Hide it whenever the game view is on screen. */
+body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important; }
 
 /* Mobile: fall back to the old full-cover behavior, since a 560px
    docked panel + the page content won't both fit. */

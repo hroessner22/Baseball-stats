@@ -5447,7 +5447,12 @@ function trimLeadingBatterName(desc, fullName) {
             break;
         }
     }
-    return d.replace(/\.+$/, "").trim();
+    d = d.replace(/\.+$/, "").trim();
+    // Capitalize the first letter — once the leading name is stripped
+    // we're left with 'doubles (14) on...' which reads better as
+    // 'Doubles (14) on...'.
+    if (d) d = d[0].toUpperCase() + d.slice(1);
+    return d;
 }
 
 // "This inning" play-by-play strip — every completed PA in the
@@ -5515,6 +5520,7 @@ function renderThisInning(g) {
     }).join("");
     const currentRow = g.batter
         ? `<div class="ti-row ti-now">
+              <span class="ti-row-chev ti-row-chev-blank"></span>
               <span class="ti-outcome ti-now-chip">NOW</span>
               ${inlineAvatar(g.batter.id, { size: 30, class: "ti-photo", alt: g.batter.name })}
               <span class="ti-batter">${shortName(g.batter.name)}</span>
