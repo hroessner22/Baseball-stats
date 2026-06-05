@@ -3436,6 +3436,12 @@ function openDrawer(initialTab = "performance") {
     overlay.className = "bot-drawer-overlay";
     overlay.innerHTML = drawerHtml(initialTab);
     document.body.appendChild(overlay);
+    // Docked side-panel mode (user direction 2026-06-05: 'doesnt blur
+    // the rest of the screen, but rather takes the place of the right
+    // side of the screen'). The body class lets CSS reflow the page
+    // by adding padding-right so content shifts left rather than
+    // being covered.
+    document.body.classList.add("bot-drawer-open");
     bindDrawer(overlay);
     refreshDrawerContent();
     // Periodic pull while open — without this, a placed bet won't
@@ -3448,6 +3454,7 @@ function openDrawer(initialTab = "performance") {
 
 function closeDrawer() {
     document.querySelector(".bot-drawer-overlay")?.remove();
+    document.body.classList.remove("bot-drawer-open");
     _drawerOpen = false;
     if (_drawerRefreshTimer) { clearInterval(_drawerRefreshTimer); _drawerRefreshTimer = null; }
 }
@@ -3498,9 +3505,10 @@ function drawerHtml(initialTab) {
 
 function bindDrawer(overlay) {
     overlay.querySelector(".bot-drawer-close").addEventListener("click", closeDrawer);
-    overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) closeDrawer();
-    });
+    // Side-panel mode (2026-06-05): outside-click-to-close removed.
+    // The overlay no longer covers the page, so a click outside the
+    // drawer lands on real page content the user wants to interact
+    // with. Close via the X button or Escape.
     overlay.querySelectorAll("[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => {
             const tab = btn.dataset.tab;

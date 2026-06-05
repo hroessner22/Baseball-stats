@@ -4386,6 +4386,87 @@ function renderGameBetsCardRail(g) {
     const lost     = settled.filter((f) => !f.settled.won).length;
     const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
 
+    // Per-bet progress meter — always render something for open
+    // bets. When the boxscore hasn't landed yet (first paint after
+    // navigation), draw the meter with 0 current and a "..." note
+    // so the user sees the meter shape immediately; next 5s tick
+    // fills it in.
+    const railProgress = (f) => {
+        if (f.settled) return "";
+        const isYes = (f.side || "yes") === "yes";
+        const fillCls = isYes ? "rail-meter-fill-yes" : "rail-meter-fill-no";
+        if (f.kind === "player_prop") {
+            const threshold = f.threshold || 0;
+            const haveBoxscore = !!boxscore;
+            const lookupCurrent = haveBoxscore && typeof boxscoreStatForProp === "function"
+                ? boxscoreStatForProp(boxscore, f.player, f.stat)
+                : null;
+            const current = lookupCurrent == null ? 0 : lookupCurrent;
+            const pct = threshold > 0
+                ? Math.min(100, (current / threshold) * 100)
+                : 0;
+            const statShort = String(f.stat || "").replace(/_/g, " ").slice(0, 1).toUpperCase();
+            const statusTxt = !haveBoxscore
+                ? "..."
+                : isYes
+                    ? (current >= threshold ? "✓ HIT" : `${threshold - current} to win`)
+                    : (current >= threshold ? "✗ HIT" : `${Math.max(0, threshold - 1 - current)} room`);
+            const statusCls = isYes
+                ? (current >= threshold ? "rail-bet-won"  : "")
+                : (current >= threshold ? "rail-bet-lost" : "");
+            return `
+              <div class="rail-meter">
+                <div class="rail-meter-row">
+                  <span class="rail-meter-stat">${statShort}: <strong>${current}</strong> / ${threshold}</span>
+                  <span class="rail-meter-status ${statusCls}">${statusTxt}</span>
+                </div>
+                <div class="rail-meter-track">
+                  <span class="rail-meter-fill ${fillCls}" style="width:${pct.toFixed(0)}%"></span>
+                </div>
+              </div>
+            `;
+        }
+        if (f.kind === "moneyline") {
+            if (!boxscore) {
+                return `
+                  <div class="rail-meter">
+                    <div class="rail-meter-row">
+                      <span class="rail-meter-stat">Score</span>
+                      <span class="rail-meter-status">...</span>
+                    </div>
+                    <div class="rail-meter-track"><span class="rail-meter-fill ${fillCls}" style="width:0%"></span></div>
+                  </div>
+                `;
+            }
+            const totals = boxscore.line_score?.totals || {};
+            const home = totals.home?.runs ?? 0;
+            const away = totals.away?.runs ?? 0;
+            const homeAbbr = boxscore.teams?.home?.abbr || "HOME";
+            const awayAbbr = boxscore.teams?.away?.abbr || "AWAY";
+            const betTeam  = String(f.bet_team || "").toUpperCase();
+            const betHome  = betTeam === String(homeAbbr).toUpperCase();
+            const ourScore = betHome ? home : away;
+            const oppScore = betHome ? away : home;
+            const ourAbbr  = betHome ? homeAbbr : awayAbbr;
+            const oppAbbr  = betHome ? awayAbbr : homeAbbr;
+            const lead = ourScore - oppScore;
+            const statusTxt = lead > 0 ? `up ${lead}` : lead < 0 ? `down ${-lead}` : "tied";
+            const statusCls = lead > 0 ? "rail-bet-won" : lead < 0 ? "rail-bet-lost" : "";
+            const total = Math.max(1, ourScore + oppScore);
+            const pct = (ourScore / total) * 100;
+            return `
+              <div class="rail-meter">
+                <div class="rail-meter-row">
+                  <span class="rail-meter-stat">${ourAbbr} <strong>${ourScore}</strong> · ${oppAbbr} ${oppScore}</span>
+                  <span class="rail-meter-status ${statusCls}">${statusTxt}</span>
+                </div>
+                <div class="rail-meter-track"><span class="rail-meter-fill ${fillCls}" style="width:${pct.toFixed(0)}%"></span></div>
+              </div>
+            `;
+        }
+        return "";
+    };
+
     const rows = displayed.map((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const sideCls = (f.side || "yes") === "no" ? "rail-bet-side-no" : "rail-bet-side-yes";
@@ -4397,9 +4478,6 @@ function renderGameBetsCardRail(g) {
         } else {
             stateHtml = `<span class="rail-bet-state rail-bet-open">$${(cost/100).toFixed(2)}</span>`;
         }
-        const progressHtml = (typeof renderBetProgress === "function" && boxscore && !f.settled)
-            ? renderBetProgress(f, boxscore)
-            : "";
         return `
           <li class="rail-bet-row">
             <div class="rail-bet-head">
@@ -4407,7 +4485,7 @@ function renderGameBetsCardRail(g) {
               <span class="rail-bet-label">${escapeHtml(compactLabel(f))}</span>
               ${stateHtml}
             </div>
-            ${progressHtml}
+            ${railProgress(f)}
           </li>
         `;
     }).join("");

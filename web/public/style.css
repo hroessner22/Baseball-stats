@@ -4672,6 +4672,47 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .rail-bet-row .bot-progress-row {
     font-size: 10px;
 }
+/* Inline meter — always rendered for open bets so the user sees the
+   bar shape even before the first boxscore tick lands. */
+.rail-meter {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.rail-meter-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+.rail-meter-stat strong {
+    color: var(--text);
+    font-weight: 600;
+}
+.rail-meter-status {
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+}
+.rail-meter-track {
+    position: relative;
+    height: 4px;
+    background: rgba(148, 163, 184, 0.14);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.rail-meter-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: 2px;
+    transition: width 250ms;
+}
+.rail-meter-fill-yes { background: #22C55E; }
+.rail-meter-fill-no  { background: #F59E0B; }
 .rail-bets-empty {
     margin: 4px 0 0;
     font-size: 10.5px;
@@ -8918,14 +8959,28 @@ button.md-game-outcome:active { transform: translateY(1px); }
     50%     { opacity: 0.4; }
 }
 
+/* Docked side-panel mode — user direction (2026-06-05): drawer
+   shouldn't blur the rest of the screen, it should take the right
+   side of the page and let the rest of the content stay interactive.
+   Container is now anchored to the right edge with no backdrop;
+   pointer-events pass through anywhere except the drawer itself, so
+   the page underneath stays clickable. body.bot-drawer-open adds
+   padding-right so the page reflows left of the panel instead of
+   being hidden behind it. */
 .bot-drawer-overlay {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(4px);
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 560px;
+    max-width: 100vw;
     z-index: 9500;
+    pointer-events: none;
     display: flex;
     justify-content: flex-end;
+}
+body.bot-drawer-open {
+    padding-right: 560px;
 }
 .bot-drawer {
     width: 560px;
@@ -8934,9 +8989,29 @@ button.md-game-outcome:active { transform: translateY(1px); }
     background: var(--surface);
     border-left: 1px solid var(--border);
     overflow-y: auto;
-    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
+    pointer-events: auto;
+}
+/* Fixed bottom-right widgets: when the drawer is docked they would
+   otherwise hide behind the panel. Hide the launcher (its job is to
+   open the drawer, which is already open); slide any active-bets
+   pill that's anchored to the right edge over by the drawer width. */
+body.bot-drawer-open .bot-launcher { display: none; }
+
+/* Mobile: fall back to the old full-cover behavior, since a 560px
+   docked panel + the page content won't both fit. */
+@media (max-width: 980px) {
+    body.bot-drawer-open { padding-right: 0; }
+    .bot-drawer-overlay {
+        top: 0; right: 0; bottom: 0; left: 0;
+        width: 100%;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(4px);
+        pointer-events: auto;
+    }
+    body.bot-drawer-open .bot-launcher { display: inline-flex; }
 }
 .bot-drawer-head {
     display: flex;
