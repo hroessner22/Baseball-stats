@@ -1397,7 +1397,19 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             ? (_state.settings.favored_no_extra_pp || 0)
             : 0;
         const noPenalty = side === "no" ? 4 : 0;
-        const effectivePropThreshold = propThreshold + noPenalty + favoredYesPenalty;
+        // NO TOTAL_BASES 2+ AT HIGH ENTRY (2026-06-05). Observed
+        // bucket: 0-4 settled, -$6.90 net on 2026-06-05 night. The
+        // empirical conditional table understates the 2+ TB tail
+        // (XBH + walk + single all stack to 2 TB easily). NO @ 80¢+
+        // looks like a 5pp edge but is closer to flat. Require an
+        // additional 5pp before firing.
+        const noTbHighEntryPenalty = (
+            side === "no"
+            && parsed.stat === "total_bases"
+            && (parsed.threshold || 0) >= 2
+            && askCents > 70
+        ) ? 5 : 0;
+        const effectivePropThreshold = propThreshold + noPenalty + favoredYesPenalty + noTbHighEntryPenalty;
         if (edgePP < effectivePropThreshold) {
             if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "edge_below_threshold",
@@ -1423,7 +1435,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             const adjEdge = Number(score.edge_pp) || 0;
             const conf    = Number(score.confidence) || 0;
             const minConf = _state.settings.min_conviction;
-            const adjBar  = propThreshold + favoredYesPenalty;
+            const adjBar  = propThreshold + favoredYesPenalty + noTbHighEntryPenalty;
             if (adjEdge < adjBar) {
                 logScoredDecisionOnce(score, {
                     action: "skip", reason: "adjusted_edge_below_threshold",
