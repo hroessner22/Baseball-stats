@@ -2031,6 +2031,8 @@ function recordFiredBet(payload) {
     arr.unshift(payload);
     if (arr.length > FIRES_MAX) arr.length = FIRES_MAX;
     try { localStorage.setItem(LS_FIRES, JSON.stringify(arr)); } catch {}
+    // Also persist to Supabase (best-effort, only when signed in)
+    persistFireToSupabase({ ...payload, practice: false });
 }
 function getFires() {
     try { return JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
@@ -2053,6 +2055,70 @@ function recordPracticeFire(payload) {
     // Live-refresh the drawer so the Practice tab updates the second
     // a fire lands instead of waiting for the next render cycle.
     refreshDrawerIfOpen();
+    // Also persist to Supabase (best-effort, only when signed in)
+    persistFireToSupabase({ ...payload, practice: true });
+}
+
+// Best-effort Supabase persistence. Silent if user not signed in.
+// Returns the inserted row id (passed back so settlement can target it).
+async function persistFireToSupabase(payload) {
+    try {
+        if (!root.Auth || !root.Auth.supabase) return null;
+        const supabase = root.Auth.supabase();
+        const user = root.Auth.getUser && root.Auth.getUser();
+        if (!user || !user.id) return null;
+        const row = {
+            user_id:      user.id,
+            placed_at:    payload.placed_at || new Date().toISOString(),
+            kind:         payload.kind || "player_prop",
+            game_pk:      payload.game_pk || null,
+            matchup:      payload.matchup || null,
+            bet_team:     payload.bet_team || null,
+            player:       payload.player || null,
+            stat:         payload.stat || null,
+            threshold:    payload.threshold != null ? payload.threshold : null,
+            side:         payload.side || "yes",
+            ticker:       payload.ticker || "",
+            contracts:    payload.contracts || 1,
+            price_cents:  payload.price_cents || 1,
+            our_p:        payload.our_p ?? null,
+            market_p:     payload.market_p ?? null,
+            edge_pp:      payload.edge_pp ?? null,
+            savant_p:     payload.savant_p ?? null,
+            savant_stance: payload.savant_stance ?? null,
+            reasoning:    payload.reasoning ?? null,
+            practice:     !!payload.practice,
+        };
+        const { data, error } = await supabase
+            .from("bot_fires")
+            .insert(row)
+            .select("id")
+            .single();
+        if (error) { console.warn("[bot_fires insert]", error.message || error); return null; }
+        return data?.id || null;
+    } catch (e) { console.warn("[bot_fires insert err]", e?.message || e); return null; }
+}
+
+// Mark a fire settled in Supabase. Looks up by (ticker + placed_at)
+// so we don't need to track the inserted row id locally.
+async function persistSettlementToSupabase(fire, settled) {
+    try {
+        if (!root.Auth || !root.Auth.supabase) return;
+        const supabase = root.Auth.supabase();
+        const user = root.Auth.getUser && root.Auth.getUser();
+        if (!user || !user.id || !fire.ticker || !fire.placed_at) return;
+        await supabase
+            .from("bot_fires")
+            .update({
+                settled:      true,
+                won:          !!settled.won,
+                profit_cents: settled.profit_cents ?? null,
+                settled_at:   settled.settled_at || new Date().toISOString(),
+            })
+            .eq("user_id", user.id)
+            .eq("ticker", fire.ticker)
+            .eq("placed_at", fire.placed_at);
+    } catch (e) { console.warn("[bot_fires settle err]", e?.message || e); }
 }
 function getPracticeFires() {
     try { return JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
@@ -2226,6 +2292,8 @@ async function settleFinishedPracticeFires() {
             };
             newlySettled++;
             mutated = true;
+            // Best-effort settlement persistence to Supabase.
+            persistSettlementToSupabase(f, f.settled);
         }
     }
     if (mutated) {

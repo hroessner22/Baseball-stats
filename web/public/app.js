@@ -2456,15 +2456,42 @@ function showTrackRecord() {
 async function refreshTrackRecord() {
     if (trackRecordView.hidden) return;
     trackRecordView.innerHTML = renderTrackRecordShell();
+    // Prefer the public Supabase aggregate (multi-user audit) when
+    // we can reach it; fall back to localStorage only when offline.
+    let publicFires = null;
+    try {
+        if (window.Auth && window.Auth.supabase) {
+            const sb = window.Auth.supabase();
+            const { data, error } = await sb
+                .from("bot_fires")
+                .select("kind, stat, threshold, side, bet_team, ticker, contracts, price_cents, our_p, market_p, edge_pp, placed_at, practice, settled, won, profit_cents, player")
+                .order("placed_at", { ascending: false })
+                .limit(5000);
+            if (!error && Array.isArray(data)) publicFires = data;
+        }
+    } catch {}
+
+    if (publicFires && publicFires.length > 0) {
+        // Use the public aggregate. Already settled rows carry won/
+        // profit_cents directly.
+        const all = publicFires.map((r) => ({
+            ...r,
+            _graded: r.settled ? { won: !!r.won, profit_cents: r.profit_cents || 0 } : null,
+        }));
+        // Grade any still-open fires against the boxscore.
+        const graded = await gradeFires(all);
+        trackRecordView.innerHTML = renderTrackRecord(graded, graded, /*public*/ true);
+        return;
+    }
+
+    // Fallback: local-only view.
     let practice = [];
     let real     = [];
     try { practice = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES_TR) || "[]"); } catch {}
     try { real     = JSON.parse(localStorage.getItem(LS_REAL_FIRES) || "[]"); } catch {}
     const all = [...practice, ...real];
-    // Pull boxscores for each unique Final game so we can grade fires
-    // server-free. Caches at the browser level via the boxscore endpoint.
     const settled = await gradeFires(all);
-    trackRecordView.innerHTML = renderTrackRecord(all, settled);
+    trackRecordView.innerHTML = renderTrackRecord(all, settled, /*public*/ false);
 }
 
 function renderTrackRecordShell() {
@@ -2553,7 +2580,7 @@ function normName(s) {
     return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function renderTrackRecord(fires, graded) {
+function renderTrackRecord(fires, graded, isPublic) {
     const settled = graded.filter((f) => f._graded);
     const wins    = settled.filter((f) => f._graded.won);
     const losses  = settled.filter((f) => !f._graded.won);
@@ -2612,7 +2639,7 @@ function renderTrackRecord(fires, graded) {
       <a class="back-link" href="#">← BOARD</a>
       <header class="page-head">
         <h1>TRACK RECORD</h1>
-        <p class="page-sub">${fires.length} fires placed · ${settled.length} settled · ${open.length} open or unresolvable</p>
+        <p class="page-sub">${isPublic ? "Live multi-user record from every signed-in bot operator. " : "Local view (sign in to contribute to the public audit). "}${fires.length} fires placed · ${settled.length} settled · ${open.length} open or unresolvable</p>
       </header>
 
       <section class="tr-hero">

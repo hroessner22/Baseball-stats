@@ -549,6 +549,10 @@ window.Auth = {
     getUser,
     isSignedIn,
     onChange,
+    // Expose the supabase client so the bot can persist fires to
+    // a multi-user table. RLS enforces ownership; anon clients can
+    // still SELECT for the public /track-record page.
+    supabase: () => supabase,
 };
 
 // First paint — render the header widget immediately (anonymous
