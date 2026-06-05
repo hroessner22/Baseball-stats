@@ -210,6 +210,15 @@ const DEFAULTS = {
     // AND confidence are well above normal.
     huge_edge_pp:          12,     // adjusted edge ≥ 12pp = 'huge'
     huge_edge_cap_pct:     0.60,   // cap moves 50% → 60% on those
+    // FAVORED-YES NO-BET extra barrier. When the market itself
+    // prices YES as the likely outcome (yes_market_p ≥ 0.55), the
+    // NO side is structurally swimming upstream — even small
+    // negative variance wipes out many wins. Default +4pp on top
+    // of the regular NO bar = 9pp+4pp = 13pp adjusted edge needed
+    // for NO bets where YES is already favored. User direction
+    // 2026-06-04: 'baseball is very tough to say not one hit.
+    // increase the barriers for that.' Set to 0 to disable.
+    favored_no_extra_pp:   4,
     // CORRELATED-LADDER GATE — prop ladders (Cole over 6/7/8/9/10 K)
     // are perfectly correlated. Stacking fires across a ladder
     // sizes the same underlying bet Nx. BUT: a higher threshold
@@ -328,6 +337,7 @@ function clampSettings(s) {
         practice_mode:              s.practice_mode === true,               // default OFF (real-money)
         practice_starting_bankroll_cents: clampInt(s.practice_starting_bankroll_cents, 100, 1_000_00),
         ladder_min_edge_increase_pp: clampFloat(s.ladder_min_edge_increase_pp, 0, 10),
+        favored_no_extra_pp:        clampFloat(s.favored_no_extra_pp, 0, 15),
     };
 }
 function clampFloat(n, lo, hi) {
@@ -956,15 +966,31 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // when they win and lose 89¢ when they lose — high variance,
         // tiny edge, and easily ruined by a single stale-model fire.
         // Require an EXTRA 4pp of edge for NO bets to compensate.
+        //
+        // FAVORED-YES EXTRA BARRIER (2026-06-04). When the market
+        // itself prices YES as the favorite (≥55%), a NO bet is
+        // structurally swimming upstream — even a small negative
+        // variance wipes out many wins. User direction: 'Baseball
+        // is very tough to say not one hit. Increase the barriers
+        // for that.' Add favored_no_extra_pp on top of the regular
+        // NO bar in those cases. Buxton 1+ hits: YES priced ~62%,
+        // NO finds 5pp edge, one miss = -38¢ per contract.
         const propThreshold = _state.settings.player_prop_edge_threshold_pp;
-        const effectivePropThreshold = side === "no"
-            ? propThreshold + 4
-            : propThreshold;
+        const yesMarketProb = market_p != null
+            ? (side === "no" ? 1 - market_p : market_p)
+            : null;
+        const favoredYesPenalty = (side === "no" && yesMarketProb != null && yesMarketProb >= 0.55)
+            ? (_state.settings.favored_no_extra_pp || 0)
+            : 0;
+        const noPenalty = side === "no" ? 4 : 0;
+        const effectivePropThreshold = propThreshold + noPenalty + favoredYesPenalty;
         if (edgePP < effectivePropThreshold) {
             if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "edge_below_threshold",
                 threshold_pp: effectivePropThreshold,
                 no_bias_penalty_applied: side === "no",
+                favored_yes_penalty_applied: favoredYesPenalty > 0,
+                yes_market_p: yesMarketProb,
                 side,
             });
             continue;
@@ -977,14 +1003,19 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // those factors point the same direction as the model, the
         // adjusted edge is stronger than the raw 7pp; when they
         // disagree the bot would be guessing — refuse the trade.
+        // The favored-YES penalty applies to adjusted edge too, so
+        // factor-adjusted edge must ALSO clear the higher bar.
         if (score) {
             const adjEdge = Number(score.edge_pp) || 0;
             const conf    = Number(score.confidence) || 0;
             const minConf = _state.settings.min_conviction;
-            if (adjEdge < propThreshold) {
+            const adjBar  = propThreshold + favoredYesPenalty;
+            if (adjEdge < adjBar) {
                 logScoredDecisionOnce(score, {
                     action: "skip", reason: "adjusted_edge_below_threshold",
-                    threshold_pp: propThreshold, raw_edge_pp: edgePP, side,
+                    threshold_pp: adjBar, raw_edge_pp: edgePP,
+                    favored_yes_penalty_applied: favoredYesPenalty > 0,
+                    side,
                 });
                 continue;
             }
@@ -5205,6 +5236,13 @@ function renderBotPane() {
                    value="${s.ladder_min_edge_increase_pp}"
                    data-bot-setting-float="ladder_min_edge_increase_pp">
             <small>Correlated-ladder gate — each higher-threshold prop on the same player+stat must clear the prior fire's adjusted edge by N pp. Stops blind ladder-stacking but allows fires when conviction is genuinely climbing. 0 = allow any non-decreasing edge · 2 = small but meaningful climb required (default)</small>
+          </label>
+          <label>
+            <span>Favored-YES extra bar on NO bets (pp)</span>
+            <input type="number" min="0" max="15" step="0.5"
+                   value="${s.favored_no_extra_pp}"
+                   data-bot-setting-float="favored_no_extra_pp">
+            <small>When the market itself prices YES as the favorite (≥55%), NO bets need this many extra pp of edge on top of the regular NO bar. Baseball example: most hitters get 1+ hit in ~70% of games, so 'under 1 hit' is structurally tough even with a small model edge. Default +4pp (= 13pp adjusted edge minimum for favored-YES NO bets). 0 = disable.</small>
           </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.require_savant_agree ? "checked" : ""}
