@@ -1397,18 +1397,20 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             ? (_state.settings.favored_no_extra_pp || 0)
             : 0;
         const noPenalty = side === "no" ? 4 : 0;
-        // NO TOTAL_BASES 2+ AT HIGH ENTRY (2026-06-05). Observed
-        // bucket: 0-4 settled, -$6.90 net on 2026-06-05 night. The
-        // empirical conditional table understates the 2+ TB tail
-        // (XBH + walk + single all stack to 2 TB easily). NO @ 80¢+
-        // looks like a 5pp edge but is closer to flat. Require an
-        // additional 5pp before firing.
+        // NO TOTAL_BASES 2+ AT HIGH ENTRY (2026-06-05, revised at
+        // game end). Final bucket record: 2-4 settled, but four of
+        // four LOSSES sit at askCents >= 82, and the two WINS sit
+        // at askCents 81-84. Set the threshold at 85¢ — catches the
+        // Lee (87) and Arraez (90) clear losers without touching the
+        // Bregman (84) / PCA (81) winners. Suzuki (85.5) and Devers
+        // (82.5) are still on the boundary; this is calibration data
+        // not a fortress, expect to retune after another night.
         const noTbHighEntryPenalty = (
             side === "no"
             && parsed.stat === "total_bases"
             && (parsed.threshold || 0) >= 2
-            && askCents > 70
-        ) ? 5 : 0;
+            && askCents >= 85
+        ) ? 4 : 0;
         const effectivePropThreshold = propThreshold + noPenalty + favoredYesPenalty + noTbHighEntryPenalty;
         if (edgePP < effectivePropThreshold) {
             if (score) logScoredDecisionOnce(score, {
