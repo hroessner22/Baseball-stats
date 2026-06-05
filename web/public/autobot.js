@@ -2755,8 +2755,20 @@ async function runCashoutCheck() {
                 const emp = await getEmpiricalMlPYes(fire);
                 if (emp != null) empOurSideCents = emp.p_yes_cents;
             }
+            // 'World disagrees' gate (2026-06-05). User: 'Only cashout
+            // down when we have an edge saying it wont hit while the
+            // rest of the world thinks it might.' Translation: only
+            // sell at a loss when the market is still PAYING for the
+            // chance. If the bid has already collapsed to ≤5¢ the
+            // world agrees with us — there's no edge to realizing
+            // the loss now, just hold to settlement.
+            const lossSale = (yesBidCents - entryCents) < 0;
+            const worldAgrees = yesBidCents <= 5;
+            const skipBecauseWorldAgrees = lossSale && worldAgrees;
+
             // A) Empirical p_yes is essentially zero.
-            if (empOurSideCents != null && empOurSideCents < 8 && yesBidCents >= 1) {
+            if (empOurSideCents != null && empOurSideCents < 8 && yesBidCents >= 1
+                && !skipBecauseWorldAgrees) {
                 hitDeadPosition = true;
                 deadPositionDetail = `model p=${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${yesBidCents}¢ — exit dead position`;
             }
@@ -2767,7 +2779,8 @@ async function runCashoutCheck() {
                 && heldSide === "yes"
                 && fire.game_pk
                 && fire.player
-                && yesBidCents >= 1) {
+                && yesBidCents >= 1
+                && !skipBecauseWorldAgrees) {
                 const pullReason = await starterPullProbableReason(fire);
                 if (pullReason) {
                     hitDeadPosition = true;
@@ -3022,37 +3035,51 @@ async function starterPullProbableReason(fire) {
     // Let T1/T2 (profit-take) handle it.
     if (currentK >= threshold) return null;
     const p80 = pInfo.profile?.p80_pitches || 95;
-    // TIER 1: clearly past pull (p80+5). Old threshold was +10
-    // which let positions bleed for 5 more pitches than needed.
+    // TIER 1: clearly past pull (p80+5). Pitcher is being pulled
+    // within the next batter or two; no remaining K capacity.
     if (pitches >= p80 + 5) {
         return `${pitches} pitches (past p80=${p80}), ${currentK}/${threshold} K — pull imminent`;
     }
-    // TIER 2: at p80, in ANY game state. League-wide pull rate at
-    // p80 is >50% and our position is underwater — risk/reward is
-    // gone. Old rule required a 5-run margin which missed close
-    // games where the manager pulls anyway.
+    // TIER 2: at p80 in a real game-state context. Plain pitches>=p80
+    // alone fires WAY too often — Woo at 95 pitches in a 1-run game
+    // with 4 K threw the pull signal and we sold at a loss while our
+    // own model still said 21% reachable. User direction (2026-06-05):
+    // 'Only cashout down when we have an edge saying it wont hit
+    // while the rest of the world thinks it might.' Require BOTH the
+    // pitch count AND a confirming signal — run margin OR our own
+    // empirical agreeing the position is dead.
     if (pitches >= p80) {
-        return `${pitches} pitches (at p80=${p80}), ${currentK}/${threshold} K — past typical pull point`;
+        const margin = await getRunMargin(fire.game_pk);
+        if (margin != null && margin >= 4) {
+            return `${pitches} pitches (at p80=${p80}), ${margin}-run game, ${currentK}/${threshold} K — manager won't push him`;
+        }
+        const emp = await getEmpiricalKpropPYes(fire);
+        if (emp != null && emp.p_yes_cents < 15) {
+            return `${pitches} pitches (at p80=${p80}), empirical p=${emp.p_yes_cents}¢, ${currentK}/${threshold} K — model and pitch count agree`;
+        }
+        return null;
     }
-    // TIER 3: approaching p80 in a real lead. Save-rule margin is
-    // 5, but managers protect starters with even a 3-run cushion
-    // once the pitch count is up there.
+    // TIER 3: approaching p80 with a real lead. Managers protect
+    // starters with a 3-run cushion once pitch count is up there.
     if (pitches >= p80 - 10) {
-        try {
-            const boxMap = await fetchBoxscoreForGames([fire.game_pk]);
-            const d = boxMap.get(fire.game_pk);
-            const totals = d?.line_score?.totals;
-            if (totals) {
-                const home = totals.home?.runs ?? 0;
-                const away = totals.away?.runs ?? 0;
-                const margin = Math.abs(home - away);
-                if (margin >= 3) {
-                    return `${pitches} pitches (near p80=${p80}), ${margin}-run game, ${currentK}/${threshold} K — manager won't push him`;
-                }
-            }
-        } catch {}
+        const margin = await getRunMargin(fire.game_pk);
+        if (margin != null && margin >= 5) {
+            return `${pitches} pitches (near p80=${p80}), ${margin}-run game, ${currentK}/${threshold} K — manager won't push him`;
+        }
     }
     return null;
+}
+
+// Helper for the pull-signal — pulls the absolute run margin from
+// the boxscore line-score totals. Returns null when we can't see it.
+async function getRunMargin(gamePk) {
+    try {
+        const boxMap = await fetchBoxscoreForGames([gamePk]);
+        const d = boxMap.get(gamePk);
+        const totals = d?.line_score?.totals;
+        if (!totals) return null;
+        return Math.abs((totals.home?.runs ?? 0) - (totals.away?.runs ?? 0));
+    } catch { return null; }
 }
 
 // Practice-mode auto-cashout. Mirrors the dead-position trigger from
@@ -3136,6 +3163,10 @@ async function runPracticeCashoutCheck() {
             && heldSide === "yes") {
             pullReason = await starterPullProbableReason(fire);
         }
+        // 'World disagrees' gate — bot only sells at a loss when the
+        // market is still paying meaningfully. If the bid is already
+        // ≤ 5¢, the world agrees the bet is dead; no edge in
+        // realizing the loss now.
         // Always need the live bid to make any sell decision.
         let ob = null;
         try { ob = await root.Kalshi.getOrderbook(fire.ticker); } catch { ob = null; }
@@ -3160,6 +3191,14 @@ async function runPracticeCashoutCheck() {
                 const pctGain = Math.round((profitPerContract / entryCents) * 100);
                 lockReason = `+${pctGain}% gain (${heldSide.toUpperCase()} entry ${entryCents}¢, bid ${liveBidCents}¢, bar ${Math.round(gainBar*100)}%) — lock`;
             }
+        }
+        // 'World disagrees' gate. If we'd be selling at a loss AND
+        // the bid is already ≤5¢, hold instead — the world agrees the
+        // bet is dead, and realizing it at near-zero adds no edge.
+        const wouldBeLoss = profitPerContract < 0;
+        const worldAgrees = liveBidCents <= 5;
+        if ((empDead || pullReason) && wouldBeLoss && worldAgrees) {
+            continue;
         }
         if (!empDead && !pullReason && !lockReason) continue;
         const proceeds = contracts * liveBidCents;
