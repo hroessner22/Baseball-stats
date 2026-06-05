@@ -2692,7 +2692,33 @@ async function runCashoutCheck() {
             }
         }
 
-        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition) continue;
+        // SEVENTH trigger — LOCK-IN PROFIT when upside compresses.
+        // User direction (2026-06-05): 'If were up a lot and the risk
+        // reward is no longer there, cashout. BE DECISIVE.' The
+        // existing profit-take is 20¢/contract absolute, which is a
+        // big edge to wait for. This adds two faster locks:
+        //
+        //   A) Tail compression — heldSide bid >= 85¢. Only 15¢ of
+        //      upside left, residual settle risk eats more than that
+        //      in EV terms (cancel risk, suspension, freak event).
+        //   B) Percentage gain — profitPerContract >= entry × 0.5
+        //      (we're up 50% on what we paid). For low-entry bets
+        //      (30-50¢) this fires at +15-25¢, well before the
+        //      absolute 20¢ floor.
+        let hitLockIn = false;
+        let lockInDetail = "";
+        if (profitPerContract > 0) {
+            if (yesBidCents >= 85) {
+                hitLockIn = true;
+                lockInDetail = `bid ${yesBidCents}¢ — only ${100 - yesBidCents}¢ upside left, lock in +${profitPerContract}¢`;
+            } else if (entryCents > 0 && profitPerContract >= entryCents * 0.5) {
+                hitLockIn = true;
+                const pctGain = Math.round((profitPerContract / entryCents) * 100);
+                lockInDetail = `+${pctGain}% gain (entry ${entryCents}¢, bid ${yesBidCents}¢) — lock`;
+            }
+        }
+
+        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn) continue;
 
         // EMPIRICAL VETO: if the conditional table says we still
         // have ≥5pp edge against the current bid, override the
@@ -2700,7 +2726,7 @@ async function runCashoutCheck() {
         // pitch-count / hitter-sell triggers still fire because
         // they incorporate the same game-state signal directly.
         if (empiricalVeto && (hitAbsolute || hitEvCapture)
-            && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition) {
+            && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn) {
             log("hold", `Empirical veto on ${p.ticker} (${fire?.player} ${fire?.threshold}+ ${fire?.stat} ${heldSide.toUpperCase()}): hold value beats bid by ${empiricalEdgePp.toFixed(1)}pp — overriding heuristic profit-take`);
             continue;
         }
@@ -2755,6 +2781,8 @@ async function runCashoutCheck() {
             if (hitLiveEv)       triggerParts.push(`+live (${liveEvDetail})`);
             if (hitPitchCount)   triggerParts.push(`+pitch (${pitchCountDetail})`);
             if (hitHitterSell)   triggerParts.push(`+hit (${hitterSellDetail})`);
+            if (hitDeadPosition) triggerParts.push(`+dead (${deadPositionDetail})`);
+            if (hitLockIn)       triggerParts.push(`+lock (${lockInDetail})`);
             const triggerTag = triggerParts.join(" / ");
             // Log the cash-out decision for EOD review — pairs with
             // the BUY scoreBet at fire time, so we can see whether
@@ -2830,22 +2858,32 @@ async function starterPullProbableReason(fire) {
     if (!fire || !fire.game_pk || !fire.player) return null;
     const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
     // getLivePitcherInfo returns null when the named pitcher is no
-    // longer the current mound pitcher — i.e. he's been replaced.
-    // That's the strongest 'pull' signal possible.
+    // longer the current mound pitcher — strongest possible pull
+    // signal.
     if (!pInfo) return `pitcher already replaced (live lineup no longer lists ${fire.player})`;
-    const pitches  = pInfo.pitchesThrown || 0;
-    const currentK = pInfo.currentStrikeouts || 0;
+    const pitches   = pInfo.pitchesThrown || 0;
+    const currentK  = pInfo.currentStrikeouts || 0;
     const threshold = fire.threshold || 0;
-    // Threshold already met → not a dead position, just waiting for
-    // settle. Let T1/T2 (profit-take) handle it.
+    // Threshold already met → not dead, just waiting for settle.
+    // Let T1/T2 (profit-take) handle it.
     if (currentK >= threshold) return null;
     const p80 = pInfo.profile?.p80_pitches || 95;
-    if (pitches >= p80 + 10) {
-        return `${pitches} pitches (p80+10=${p80 + 10}), ${currentK}/${threshold} K — pull imminent`;
+    // TIER 1: clearly past pull (p80+5). Old threshold was +10
+    // which let positions bleed for 5 more pitches than needed.
+    if (pitches >= p80 + 5) {
+        return `${pitches} pitches (past p80=${p80}), ${currentK}/${threshold} K — pull imminent`;
     }
-    // Blowout near p80: manager pulls a starter early when game is
-    // out of hand. 5-run margin is the conventional save-rule line.
-    if (pitches >= p80 - 5) {
+    // TIER 2: at p80, in ANY game state. League-wide pull rate at
+    // p80 is >50% and our position is underwater — risk/reward is
+    // gone. Old rule required a 5-run margin which missed close
+    // games where the manager pulls anyway.
+    if (pitches >= p80) {
+        return `${pitches} pitches (at p80=${p80}), ${currentK}/${threshold} K — past typical pull point`;
+    }
+    // TIER 3: approaching p80 in a real lead. Save-rule margin is
+    // 5, but managers protect starters with even a 3-run cushion
+    // once the pitch count is up there.
+    if (pitches >= p80 - 10) {
         try {
             const boxMap = await fetchBoxscoreForGames([fire.game_pk]);
             const d = boxMap.get(fire.game_pk);
@@ -2854,8 +2892,8 @@ async function starterPullProbableReason(fire) {
                 const home = totals.home?.runs ?? 0;
                 const away = totals.away?.runs ?? 0;
                 const margin = Math.abs(home - away);
-                if (margin >= 5) {
-                    return `${pitches} pitches (p80=${p80}), ${margin}-run game, ${currentK}/${threshold} K — manager won't send him back out`;
+                if (margin >= 3) {
+                    return `${pitches} pitches (near p80=${p80}), ${margin}-run game, ${currentK}/${threshold} K — manager won't push him`;
                 }
             }
         } catch {}
@@ -2900,7 +2938,7 @@ async function runPracticeCashoutCheck() {
                 if (emp != null) empOurSideCents = emp.p_yes_cents;
             }
         } catch { continue; }
-        // Decide: empirical-dead OR starter-done. Either fires the sell.
+        // ── DECISION TIME ──
         const empDead = (empOurSideCents != null && empOurSideCents < 8);
         let pullReason = null;
         if (!empDead
@@ -2909,8 +2947,7 @@ async function runPracticeCashoutCheck() {
             && heldSide === "yes") {
             pullReason = await starterPullProbableReason(fire);
         }
-        if (!empDead && !pullReason) continue;
-        // Get the live bid for our side.
+        // Always need the live bid to make any sell decision.
         let ob = null;
         try { ob = await root.Kalshi.getOrderbook(fire.ticker); } catch { ob = null; }
         if (!ob) continue;
@@ -2918,16 +2955,31 @@ async function runPracticeCashoutCheck() {
             ? orderbookYesBidCents(ob)
             : orderbookNoBidCents(ob);
         if (liveBidCents == null || liveBidCents < 1) continue;
-        // Mark settled at the live bid. Same shape the rail's manual
-        // Sell button writes, so History treats them identically.
         const contracts  = fire.contracts || 1;
         const entryCents = fire.price_cents || 0;
-        const proceeds   = contracts * liveBidCents;
-        const cost       = contracts * entryCents;
-        const profit     = proceeds - cost;
+        const profitPerContract = liveBidCents - entryCents;
+        // Lock-in trigger — same logic as runCashoutCheck's T7. Up
+        // a lot with little upside left? Sell. User direction
+        // (2026-06-05): 'If were up a lot and the risk reward is no
+        // longer there, cashout.'
+        let lockReason = null;
+        if (profitPerContract > 0) {
+            if (liveBidCents >= 85) {
+                lockReason = `bid ${liveBidCents}¢ — only ${100 - liveBidCents}¢ upside left, +${profitPerContract}¢/contract`;
+            } else if (entryCents > 0 && profitPerContract >= entryCents * 0.5) {
+                const pctGain = Math.round((profitPerContract / entryCents) * 100);
+                lockReason = `+${pctGain}% gain (entry ${entryCents}¢, bid ${liveBidCents}¢) — lock`;
+            }
+        }
+        if (!empDead && !pullReason && !lockReason) continue;
+        const proceeds = contracts * liveBidCents;
+        const cost     = contracts * entryCents;
+        const profit   = proceeds - cost;
         const reasonText = pullReason
             ? pullReason
-            : `dead position — model ${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${liveBidCents}¢`;
+            : lockReason
+                ? lockReason
+                : `dead position — model ${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${liveBidCents}¢`;
         fire.settled = {
             won: profit > 0,
             profit_cents: profit,
