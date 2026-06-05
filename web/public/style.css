@@ -4531,6 +4531,153 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     border: 1px solid var(--border);
     border-radius: var(--radius);
 }
+
+/* Rail bets card — left-rail companion to AT BAT / PITCHING that
+   shows positions on the current at-bat with per-bet progress bars.
+   Same surface treatment as .this-inning so it visually belongs in
+   the rail stack. Progress markup is shared with the drawer rows
+   (.bot-progress*) so styling stays consistent. */
+.rail-bets-card {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.rail-bets-card[data-practice="true"] {
+    background: rgba(34, 197, 94, 0.05);
+    border-color: rgba(34, 197, 94, 0.28);
+}
+.rail-bets-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.rail-bets-tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(56, 189, 248, 0.16);
+    color: var(--accent-action, #38BDF8);
+}
+.rail-bets-card[data-practice="true"] .rail-bets-tag {
+    background: rgba(34, 197, 94, 0.18);
+    color: #4ADE80;
+}
+.rail-bets-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    flex: 1;
+    min-width: 0;
+}
+.rail-bets-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 10.5px;
+    color: var(--text-dim);
+}
+.rail-bets-count {
+    font-variant-numeric: tabular-nums;
+}
+.rail-bets-cost {
+    font-variant-numeric: tabular-nums;
+}
+.rail-bets-toggle {
+    appearance: none;
+    margin-left: auto;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: var(--accent-action, #38BDF8);
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+.rail-bets-toggle:hover {
+    background: rgba(56, 189, 248, 0.22);
+}
+.rail-bet-pos { color: #4ADE80; font-variant-numeric: tabular-nums; }
+.rail-bet-neg { color: #F87171; font-variant-numeric: tabular-nums; }
+.rail-bets-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.rail-bet-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 6px;
+}
+.rail-bet-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+.rail-bet-side {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+.rail-bet-side-yes {
+    background: rgba(34, 197, 94, 0.18);
+    color: #4ADE80;
+}
+.rail-bet-side-no {
+    background: rgba(248, 113, 113, 0.18);
+    color: #F87171;
+}
+.rail-bet-label {
+    flex: 1;
+    min-width: 0;
+    color: var(--text);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rail-bet-state {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+.rail-bet-open  { color: var(--text-dim); }
+.rail-bet-won   { color: #4ADE80; font-weight: 600; }
+.rail-bet-lost  { color: #F87171; font-weight: 600; }
+.rail-bet-row .bot-progress {
+    margin: 0;
+    padding: 0;
+    border-top: none;
+}
+.rail-bet-row .bot-progress-row {
+    font-size: 10px;
+}
+.rail-bets-empty {
+    margin: 4px 0 0;
+    font-size: 10.5px;
+    color: var(--text-dim);
+    font-style: italic;
+}
 .this-inning .ti-head {
     font-size: 10px;
     font-weight: 700;

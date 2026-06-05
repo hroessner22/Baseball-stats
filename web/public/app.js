@@ -4073,6 +4073,11 @@ async function refreshGame(id) {
         }
         if (gameViewMode === "boxscore") {
             hydrateBoxscore(id, g.status);
+        } else if (gameViewMode === "live" && hasGameBets(id)) {
+            // Live View also needs the boxscore — it's what feeds the
+            // per-bet progress bars in the rail card. Edge-cached, so
+            // the refetch on the 5s tick is essentially free.
+            hydrateBoxscore(id, g.status);
         }
         if (gameViewMode === "markets") {
             hydrateMarkets(id);
@@ -4142,7 +4147,6 @@ function renderGame(g) {
     return `
       <a class="back-link" href="#">← BOARD</a>
       ${renderTicker(g.game_pk, scheduleCache?.games || [])}
-      ${renderGameBetsSection(g)}
       <div class="game-mode-toggle">
         <button class="${mode === 'live'     ? 'active' : ''}" data-mode="live">Live View</button>
         <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
@@ -4170,6 +4174,23 @@ function renderGame(g) {
 const LS_GAME_BETS_FIRES          = "diamond_context_bot_fires";
 const LS_GAME_BETS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
 const LS_GAME_BETS_SETTINGS       = "diamond_context_bot_settings";
+
+// Quick check used by refreshGame to decide whether to also pull the
+// boxscore on Live View — the rail bets card needs it for progress bars.
+function hasGameBets(gamePk) {
+    if (!gamePk) return false;
+    try {
+        let practiceMode = false;
+        try {
+            const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+            practiceMode = s.practice_mode === true;
+        } catch {}
+        const key = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
+        const arr = JSON.parse(localStorage.getItem(key) || "[]");
+        return arr.some((f) => String(f.game_pk) === String(gamePk));
+    } catch { return false; }
+}
+
 function renderGameBetsSection(g) {
     const gamePk = g && g.game_pk;
     if (!gamePk) return "";
@@ -4290,6 +4311,142 @@ function renderGameBetsSection(g) {
         ${displayed.length > 0
           ? `<ul class="game-bets-list">${rows}</ul>`
           : `<p class="game-bets-empty">${hidden} bet${hidden === 1 ? "" : "s"} on other players in this game — tap "Show all" to see them.</p>`}
+      </section>
+    `;
+}
+
+// Rail variant of the bets section — sits in the LIVE VIEW left rail
+// next to AT BAT / PITCHING / 3RD SO FAR, with progress bars per bet.
+// User direction (2026-06-05): 'Lets put this somewhere else all
+// together. Its weird there. I want to be able to see their progress
+// on the bets as well.' Moved out of the game-view header into the
+// rail and given DraftKings-style progress per row (uses the same
+// renderBetProgress() helper the drawer uses).
+function renderGameBetsCardRail(g) {
+    const gamePk = g && g.game_pk;
+    if (!gamePk) return "";
+    let real = [], practice = [], practiceMode = false;
+    try { real     = JSON.parse(localStorage.getItem(LS_GAME_BETS_FIRES) || "[]"); } catch {}
+    try { practice = JSON.parse(localStorage.getItem(LS_GAME_BETS_PRACTICE_FIRES) || "[]"); } catch {}
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    const source = practiceMode ? practice : real;
+    const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
+    if (!onGame.length) return "";
+
+    const nameMatches = (a, b) => {
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        return norm(a) === norm(b);
+    };
+    const batterName  = g.batter?.name  || null;
+    const pitcherName = g.pitcher?.name || null;
+    const isRelevant  = (f) => {
+        if (f.kind === "moneyline") return true;
+        if (!f.player) return false;
+        if (batterName  && nameMatches(f.player, batterName))  return true;
+        if (pitcherName && nameMatches(f.player, pitcherName)) return true;
+        return false;
+    };
+    let showAll = false;
+    try { showAll = sessionStorage.getItem(`gbets_show_all_${gamePk}`) === "1"; } catch {}
+    const relevant   = onGame.filter(isRelevant);
+    const hidden     = onGame.length - relevant.length;
+    const displayed  = showAll ? onGame : relevant;
+
+    // Boxscore is the source of truth for live per-player stats —
+    // K count, hits, total bases — which renderBetProgress needs to
+    // draw the bar. Use the in-memory cache populated by
+    // hydrateBoxscore. When pk doesn't match (first paint on this
+    // game) we skip the bar; next refresh cycle fills it in.
+    const boxscore = (cachedBoxscoreData && String(cachedBoxscorePk) === String(gamePk))
+        ? cachedBoxscoreData
+        : null;
+
+    const statPluralName = (stat, threshold) => {
+        const plural = threshold !== 1;
+        switch (stat) {
+            case "home_runs":   return plural ? "home runs"   : "home run";
+            case "hits":        return plural ? "hits"        : "hit";
+            case "total_bases": return plural ? "total bases" : "total base";
+            case "strikeouts":  return plural ? "strikeouts"  : "strikeout";
+            default:            return String(stat || "").replace(/_/g, " ");
+        }
+    };
+    const compactLabel = (f) => {
+        if (f.kind === "moneyline") return `${f.bet_team || ""} ML`;
+        const stat = statPluralName(f.stat, f.threshold || 0);
+        return `${shortName(f.player || "")} ${f.threshold || ""}+ ${stat}`;
+    };
+
+    const totalCost = onGame.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
+    const settled  = onGame.filter((f) => f.settled);
+    const won      = settled.filter((f) => f.settled.won).length;
+    const lost     = settled.filter((f) => !f.settled.won).length;
+    const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
+
+    const rows = displayed.map((f) => {
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const sideCls = (f.side || "yes") === "no" ? "rail-bet-side-no" : "rail-bet-side-yes";
+        const sideTag = (f.side || "yes") === "no" ? "NO" : "YES";
+        let stateHtml;
+        if (f.settled) {
+            const wonCls = f.settled.won ? "rail-bet-won" : "rail-bet-lost";
+            stateHtml = `<span class="rail-bet-state ${wonCls}">${f.settled.won ? "WON " : "LOST "}${f.settled.won ? "+" : ""}$${(f.settled.profit_cents/100).toFixed(2)}</span>`;
+        } else {
+            stateHtml = `<span class="rail-bet-state rail-bet-open">$${(cost/100).toFixed(2)}</span>`;
+        }
+        const progressHtml = (typeof renderBetProgress === "function" && boxscore && !f.settled)
+            ? renderBetProgress(f, boxscore)
+            : "";
+        return `
+          <li class="rail-bet-row">
+            <div class="rail-bet-head">
+              <span class="rail-bet-side ${sideCls}">${sideTag}</span>
+              <span class="rail-bet-label">${escapeHtml(compactLabel(f))}</span>
+              ${stateHtml}
+            </div>
+            ${progressHtml}
+          </li>
+        `;
+    }).join("");
+
+    let title;
+    if (showAll) {
+        title = `All on this game`;
+    } else if (relevant.length > 0) {
+        title = batterName && pitcherName
+            ? `Current PA · ${shortName(batterName)} vs ${shortName(pitcherName)}`
+            : `Current PA`;
+    } else {
+        title = `Nothing on the current PA`;
+    }
+    const toggleHtml = onGame.length > relevant.length
+        ? `<button class="rail-bets-toggle" data-gbets-toggle="${gamePk}">
+             ${showAll ? "Show only PA" : `+${hidden} more`}
+           </button>`
+        : "";
+    const realizedCls = realized >= 0 ? "rail-bet-pos" : "rail-bet-neg";
+    const realizedTxt = (won + lost) > 0
+        ? `<span class="${realizedCls}">${won}–${lost} · ${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</span>`
+        : `<span class="rail-bets-cost">$${(totalCost/100).toFixed(2)} at risk</span>`;
+    const modeTag = practiceMode ? "PRACTICE" : "LIVE";
+
+    return `
+      <section class="rail-bets-card" data-practice="${practiceMode ? "true" : "false"}">
+        <header class="rail-bets-head">
+          <span class="rail-bets-tag">${modeTag}</span>
+          <span class="rail-bets-title">${escapeHtml(title)}</span>
+        </header>
+        <div class="rail-bets-meta">
+          <span class="rail-bets-count">${onGame.length} on game</span>
+          ${realizedTxt}
+          ${toggleHtml}
+        </div>
+        ${displayed.length > 0
+          ? `<ul class="rail-bets-list">${rows}</ul>`
+          : `<p class="rail-bets-empty">${hidden} on other players — tap "+${hidden} more" to view.</p>`}
       </section>
     `;
 }
@@ -4896,7 +5053,8 @@ function fieldPane(g) {
              ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
            </div>`
         : "";
-    const railContent = matchupCompact + inningStrip;
+    const betsRail = renderGameBetsCardRail(g);
+    const railContent = matchupCompact + betsRail + inningStrip;
     return `
       <div class="field-pane ${railContent ? "has-narrative" : ""}" style="--we-intensity:${intensity}">
         ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
