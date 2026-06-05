@@ -825,46 +825,16 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         else if (parsed.stat === "strikeouts")  parkMultiplier = 1 / Math.max(0.7, (park.hr || 1.0));
         const parkAdj = 1 + (parkMultiplier - 1) * 0.5;  // half-weight
 
-        // WEATHER ADJUSTMENT. Outdoor games only. Multiplicative
-        // effects on top of the park factor:
-        //   - cold (<55°F): -hits, -TB, +slight K
-        //   - hot (>85°F): +HR (warm air carries), +slight hits
-        //   - high wind (>12 mph): +HR variance (we boost since wind-out
-        //     happens about 50% of the time and effect on outs is small)
-        //   - heavy precip prob (>60%): treat as game uncertainty,
-        //     suppress all batter outcomes slightly
-        // Retractable-roof venues: half-weight everything (roof may
-        // be closed). Dome: handled upstream (effective_indoor:true
-        // returns neutral defaults).
-        const wx = modelProps.weather || null;
-        let weatherMultiplier = 1.0;
-        if (wx && !wx.effective_indoor) {
-            const temp = wx.temperature_f ?? 72;
-            const wind = wx.wind_mph ?? 0;
-            const precip = wx.precip_probability ?? 0;
-            let m = 1.0;
-            if (parsed.stat === "home_runs") {
-                if (temp > 85) m *= 1.06;
-                else if (temp < 55) m *= 0.94;
-                if (wind > 12) m *= 1.04;     // out-blowing days boost HR
-                if (precip > 60) m *= 0.92;
-            } else if (parsed.stat === "hits" || parsed.stat === "total_bases") {
-                if (temp < 55) m *= 0.95;
-                if (precip > 60) m *= 0.93;
-            } else if (parsed.stat === "strikeouts") {
-                if (temp < 50) m *= 1.03;     // cold hitters chase less effectively
-            }
-            // Retractable venues — half-weight the swing since we don't
-            // know the actual roof state.
-            const retractScale = wx.retractable ? 0.5 : 1.0;
-            weatherMultiplier = 1 + (m - 1) * retractScale;
-        }
-        const weatherAdj = 1 + (weatherMultiplier - 1) * 0.5;  // half-weight
-
-        // Combined adjustment, capped so a single venue/weather can't
-        // move our_p_yes by more than ~20% in either direction (Coors
-        // 1.14 park × 1.06 weather = 1.21, then half-weighted = 1.10).
-        const totalAdj = parkAdj * weatherAdj;
+        // WEATHER — currently pulled from Visual Crossing and attached
+        // to modelProps.weather, but NO multiplicative adjustment is
+        // applied yet. Retrosheet game logs don't carry weather, so
+        // empirically-derived multipliers require a separate ingest
+        // (MLB API gameData.weather across ~10 seasons, then bucket
+        // HR/hit rates by temperature and wind). Until that derivation
+        // runs (TODO: scripts/derive_weather_factors.py), the bot
+        // sees the weather data but doesn't act on it — better to be
+        // neutral than to apply fabricated multipliers.
+        const totalAdj = parkAdj;
         let our_p_yes = Math.min(0.999, Math.max(0.001, raw_our_p_yes * totalAdj));
 
         // DEAD-MODEL guard — our_p ≤ 1% means the model has given
