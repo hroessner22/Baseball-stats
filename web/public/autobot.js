@@ -599,7 +599,13 @@ function disable() {
 function startTimers() {
     stopTimers();
     _state.scanTimer = setInterval(runScan, SCAN_INTERVAL_MS);
-    _state.cashoutTimer = setInterval(runCashoutCheck, CASHOUT_INTERVAL_MS);
+    _state.cashoutTimer = setInterval(() => {
+        runCashoutCheck();
+        runPracticeCashoutCheck();
+    }, CASHOUT_INTERVAL_MS);
+    // Kick once immediately so the user doesn't wait a full interval
+    // after enabling.
+    runPracticeCashoutCheck();
 }
 function stopTimers() {
     if (_state.scanTimer)    { clearInterval(_state.scanTimer);    _state.scanTimer = null; }
@@ -2634,7 +2640,49 @@ async function runCashoutCheck() {
             }
         }
 
-        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell) continue;
+        // SIXTH trigger — DEAD POSITION FORCE SELL. Every previous
+        // trigger gates on profitPerContract > 0 (profit-take, EV-
+        // capture, live-EV, pitch-count-lock-in, hitter-sell), so a
+        // position trading at 3¢ when our own empirical model says
+        // 2% YES just bleeds to settlement. User direction
+        // (2026-06-05): 'should also cashout in the instance that a
+        // pitcher is going to get pulled and missed his line like
+        // Robbie Ray will right now' — Ray was at 4 Ks on a 7+ YES
+        // with the bullpen warming, and the bot held to zero.
+        //
+        // The empirical conditional table already encodes K state +
+        // pitches thrown + remaining-batter outlook, so a low p_yes
+        // here is the natural 'unreachable threshold' signal. No
+        // separate pitcher-pull rule needed; the same trigger covers
+        // hit / TB / HR props and moneylines (e.g. ML down 5 runs
+        // bottom of the 8th).
+        let hitDeadPosition = false;
+        let deadPositionDetail = "";
+        if (fire?.kind === "player_prop" || fire?.kind === "moneyline") {
+            let empOurSideCents = null;
+            if (fire.kind === "player_prop") {
+                const emp = (fire.stat === "strikeouts")
+                    ? await getEmpiricalKpropPYes(fire)
+                    : await getEmpiricalHitPropPYes(fire);
+                if (emp != null) {
+                    empOurSideCents = (heldSide === "no")
+                        ? (100 - emp.p_yes_cents)
+                        : emp.p_yes_cents;
+                }
+            } else if (fire.kind === "moneyline") {
+                const emp = await getEmpiricalMlPYes(fire);
+                // ML position is always YES on bet_team.
+                if (emp != null) empOurSideCents = emp.p_yes_cents;
+            }
+            // Threshold: 8¢ (under ~8% to resolve in our favor). Bid
+            // floor of 1¢ — at literal 0¢ there's nothing to recover.
+            if (empOurSideCents != null && empOurSideCents < 8 && yesBidCents >= 1) {
+                hitDeadPosition = true;
+                deadPositionDetail = `model p=${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${yesBidCents}¢ — exit dead position`;
+            }
+        }
+
+        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition) continue;
 
         // EMPIRICAL VETO: if the conditional table says we still
         // have ≥5pp edge against the current bid, override the
@@ -2642,7 +2690,7 @@ async function runCashoutCheck() {
         // pitch-count / hitter-sell triggers still fire because
         // they incorporate the same game-state signal directly.
         if (empiricalVeto && (hitAbsolute || hitEvCapture)
-            && !hitLiveEv && !hitPitchCount && !hitHitterSell) {
+            && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition) {
             log("hold", `Empirical veto on ${p.ticker} (${fire?.player} ${fire?.threshold}+ ${fire?.stat} ${heldSide.toUpperCase()}): hold value beats bid by ${empiricalEdgePp.toFixed(1)}pp — overriding heuristic profit-take`);
             continue;
         }
@@ -2758,6 +2806,80 @@ async function runCashoutCheck() {
                 });
             }
         }
+    }
+}
+
+// Practice-mode auto-cashout. Mirrors the dead-position trigger from
+// runCashoutCheck but operates on practice fires in localStorage —
+// no Kalshi positions to sell, instead the fire is marked settled
+// with cashed_out: true and the realized profit_cents at the live
+// bid. User direction (2026-06-05): bot should auto-cashout when a
+// pitcher is going to be pulled and missed his line.
+async function runPracticeCashoutCheck() {
+    if (!_state.settings.enabled) return;
+    let fires = [];
+    try { fires = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); } catch { return; }
+    const open = fires.filter((f) => !f.settled && f.ticker
+        && (f.kind === "player_prop" || f.kind === "moneyline"));
+    if (!open.length) return;
+    let mutated = false;
+    for (const fire of open) {
+        // Look up empirical p_yes from the same conditional tables
+        // the buy-side and the regular cashout use. Skip when we
+        // can't compute one (no table coverage).
+        let empOurSideCents = null;
+        const heldSide = fire.side || "yes";
+        try {
+            if (fire.kind === "player_prop") {
+                const emp = (fire.stat === "strikeouts")
+                    ? await getEmpiricalKpropPYes(fire)
+                    : await getEmpiricalHitPropPYes(fire);
+                if (emp != null) {
+                    empOurSideCents = (heldSide === "no")
+                        ? (100 - emp.p_yes_cents)
+                        : emp.p_yes_cents;
+                }
+            } else if (fire.kind === "moneyline") {
+                const emp = await getEmpiricalMlPYes(fire);
+                if (emp != null) empOurSideCents = emp.p_yes_cents;
+            }
+        } catch { continue; }
+        if (empOurSideCents == null) continue;
+        // Only trigger when the position is effectively dead.
+        if (empOurSideCents >= 8) continue;
+        // Get the live bid for our side.
+        let ob = null;
+        try { ob = await root.Kalshi.getOrderbook(fire.ticker); } catch { ob = null; }
+        if (!ob) continue;
+        const liveBidCents = heldSide === "yes"
+            ? orderbookYesBidCents(ob)
+            : orderbookNoBidCents(ob);
+        if (liveBidCents == null || liveBidCents < 1) continue;
+        // Mark settled at the live bid. Same shape the rail's manual
+        // Sell button writes, so History treats them identically.
+        const contracts  = fire.contracts || 1;
+        const entryCents = fire.price_cents || 0;
+        const proceeds   = contracts * liveBidCents;
+        const cost       = contracts * entryCents;
+        const profit     = proceeds - cost;
+        fire.settled = {
+            won: profit > 0,
+            profit_cents: profit,
+            settled_at: new Date().toISOString(),
+            cashed_out: true,
+            sell_price_cents: liveBidCents,
+            cashout_reason: `dead position — model ${empOurSideCents}¢ (${heldSide.toUpperCase()}), bid ${liveBidCents}¢`,
+        };
+        mutated = true;
+        log("sell-practice", `[PRACTICE] auto-cashout ${contracts}× ${fire.ticker} ${heldSide.toUpperCase()} @ ${liveBidCents}¢ ` +
+            `(entry ${entryCents}¢, ${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)}, reason: ${fire.settled.cashout_reason})`,
+            { ticker: fire.ticker, profit_cents: profit });
+        toast(`Practice: cashed out ${contracts}× ${fire.player || fire.bet_team || fire.ticker} (${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)})`,
+            profit >= 0 ? "ok" : "err");
+    }
+    if (mutated) {
+        try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(fires)); } catch {}
+        refreshDrawerIfOpen();
     }
 }
 
@@ -6843,6 +6965,7 @@ root.AutoBot = {
     getLog,
     runScan,
     runCashoutCheck,
+    runPracticeCashoutCheck,
     // Progress / boxscore helpers — needed by app.js's rail bets
     // card so the meter renders with the same shape and same name-
     // resolution path the drawer's All Bets pane uses. Without
