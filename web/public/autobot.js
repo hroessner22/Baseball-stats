@@ -4206,6 +4206,29 @@ function bindPracticePaneHandlers(overlay) {
             btn.setAttribute("aria-expanded", String(!isOpen));
         });
     });
+    // Per-game expand/collapse inside a day section.
+    overlay.querySelectorAll("[data-game-toggle]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const gk = btn.getAttribute("data-game-toggle");
+            let set;
+            try { set = new Set(JSON.parse(localStorage.getItem("diamond_context_practice_collapsed_games") || "[]")); }
+            catch { set = new Set(); }
+            if (set.has(gk)) set.delete(gk);
+            else set.add(gk);
+            try { localStorage.setItem("diamond_context_practice_collapsed_games", JSON.stringify(Array.from(set))); } catch {}
+            const section = btn.closest(".bot-game-section");
+            const body    = section?.querySelector(".bot-game-rows");
+            const chev    = btn.querySelector(".bot-game-chevron");
+            const isOpen  = !!body && !body.hasAttribute("hidden");
+            if (body) {
+                if (isOpen) body.setAttribute("hidden", "");
+                else        body.removeAttribute("hidden");
+            }
+            section?.classList.toggle("is-collapsed", isOpen);
+            if (chev) chev.textContent = isOpen ? "▸" : "▾";
+            btn.setAttribute("aria-expanded", String(!isOpen));
+        });
+    });
     // Per-row expand/collapse — click a bet to reveal the full
     // rationale (factors, edge math, score) AND live tracking
     // (current bid/ask, mark-to-market, Kalshi link). State is
@@ -4606,7 +4629,17 @@ async function renderPracticeBetsPane() {
     })();
     const fireId = (f) => `${f.ticker || ""}|${f.placed_at || ""}`;
 
-    const rowsByDay = new Map();      // dayKey → array of row HTML strings
+    // Per-game collapse state — user direction (2026-06-05): inside
+    // each day, group by game_pk so the slate of TOR@BOS bets sits
+    // next to the slate of NYY@TB bets instead of interleaving.
+    // Game-level sections default OPEN; user can collapse individual
+    // games. Stored separately from day collapse so the two don't
+    // collide.
+    const collapsedGames = (() => {
+        try { return new Set(JSON.parse(localStorage.getItem("diamond_context_practice_collapsed_games") || "[]")); }
+        catch { return new Set(); }
+    })();
+    const rowsByDay = new Map();      // dayKey → Map<gameKey, { label, rows[], agg, firstSeen }>
     const dayAggregates = new Map();  // dayKey → { count, won, lost, openCount, settledNet, openCost, openLive }
     visibleFires.slice(0, 200).forEach((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
@@ -4710,20 +4743,40 @@ async function renderPracticeBetsPane() {
           </div>
         `;
         const dayKey = baseballDayKey(f.placed_at) || "unknown";
-        if (!rowsByDay.has(dayKey)) rowsByDay.set(dayKey, []);
-        rowsByDay.get(dayKey).push(rowHtml);
+        if (!rowsByDay.has(dayKey)) rowsByDay.set(dayKey, new Map());
+        const dayGames = rowsByDay.get(dayKey);
+        const gameKey = f.game_pk ? `g${f.game_pk}` : "no-game";
+        if (!dayGames.has(gameKey)) {
+            dayGames.set(gameKey, {
+                label: f.matchup || (f.game_pk ? `Game ${f.game_pk}` : "Other"),
+                game_pk: f.game_pk || null,
+                rows: [],
+                firstSeen: f.placed_at || "",
+                agg: { count: 0, won: 0, lost: 0, openCount: 0, settledNet: 0, openCost: 0, openLive: 0 },
+            });
+        }
+        const gameBucket = dayGames.get(gameKey);
+        gameBucket.rows.push(rowHtml);
+        if (f.placed_at && (!gameBucket.firstSeen || f.placed_at > gameBucket.firstSeen)) {
+            gameBucket.firstSeen = f.placed_at;
+        }
         if (!dayAggregates.has(dayKey)) {
             dayAggregates.set(dayKey, { count: 0, won: 0, lost: 0, openCount: 0, settledNet: 0, openCost: 0, openLive: 0 });
         }
         const agg = dayAggregates.get(dayKey);
-        agg.count++;
+        const gAgg = gameBucket.agg;
+        agg.count++; gAgg.count++;
         if (result?.settled) {
-            if (result.won) agg.won++; else agg.lost++;
+            if (result.won) { agg.won++; gAgg.won++; } else { agg.lost++; gAgg.lost++; }
             agg.settledNet += result.profit_cents;
+            gAgg.settledNet += result.profit_cents;
         } else {
-            agg.openCount++;
-            agg.openCost += cost;
-            if (liveBid != null) agg.openLive += (f.contracts || 1) * liveBid;
+            agg.openCount++; gAgg.openCount++;
+            agg.openCost += cost; gAgg.openCost += cost;
+            if (liveBid != null) {
+                agg.openLive += (f.contracts || 1) * liveBid;
+                gAgg.openLive += (f.contracts || 1) * liveBid;
+            }
         }
     });
     // Assemble day sections — newest first.
@@ -4741,7 +4794,46 @@ async function renderPracticeBetsPane() {
     };
     const rows = sortedDays.map((dk) => {
         const agg = dayAggregates.get(dk);
-        const sectionRows = rowsByDay.get(dk).join("");
+        const dayGames = rowsByDay.get(dk);
+        // Sort the day's games by most-recent fire so the slate the
+        // user is actively betting on floats to the top of the day.
+        const gameKeysSorted = Array.from(dayGames.keys()).sort((a, b) => {
+            const ta = dayGames.get(a).firstSeen || "";
+            const tb = dayGames.get(b).firstSeen || "";
+            return tb.localeCompare(ta);
+        });
+        const gameSections = gameKeysSorted.map((gk) => {
+            const bucket = dayGames.get(gk);
+            const gAgg = bucket.agg;
+            const collapseKey = `${dk}|${gk}`;
+            const gCollapsed = collapsedGames.has(collapseKey);
+            const gRecord = (gAgg.won + gAgg.lost) > 0 ? `${gAgg.won}–${gAgg.lost}` : "";
+            const gNetCls = gAgg.settledNet >= 0 ? "bot-pl-pos" : "bot-pl-neg";
+            const gNetTxt = (gAgg.won + gAgg.lost) > 0
+                ? `<span class="${gNetCls}">${gAgg.settledNet >= 0 ? "+" : ""}$${(gAgg.settledNet/100).toFixed(2)}</span>`
+                : "";
+            const gOpenHint = gAgg.openCount > 0 ? `${gAgg.openCount} open` : "";
+            const gSummary = [gOpenHint, gRecord && `${gRecord} settled`, gNetTxt].filter(Boolean).join(" · ");
+            const jump = bucket.game_pk
+                ? `<a class="bot-game-jump" href="#game/${bucket.game_pk}" title="Open game view" data-game-jump>↗</a>`
+                : "";
+            return `
+              <section class="bot-game-section ${gCollapsed ? "is-collapsed" : ""}">
+                <div class="bot-game-head-wrap">
+                  <button class="bot-game-head" data-game-toggle="${escapeText(collapseKey)}" aria-expanded="${!gCollapsed}">
+                    <span class="bot-game-chevron">${gCollapsed ? "▸" : "▾"}</span>
+                    <span class="bot-game-label">${escapeText(bucket.label)}</span>
+                    <span class="bot-game-count">${gAgg.count} bet${gAgg.count === 1 ? "" : "s"}</span>
+                    <span class="bot-game-summary">${gSummary}</span>
+                  </button>
+                  ${jump}
+                </div>
+                <div class="bot-game-rows" ${gCollapsed ? "hidden" : ""}>
+                  ${bucket.rows.join("")}
+                </div>
+              </section>
+            `;
+        }).join("");
         const isCollapsed = collapsedDays.has(dk);
         const dayLabel = formatBaseballDayLabel(dk);
         const recordTxt = (agg.won + agg.lost) > 0
@@ -4752,7 +4844,9 @@ async function renderPracticeBetsPane() {
             ? `<span class="${netCls}">${agg.settledNet >= 0 ? "+" : ""}$${(agg.settledNet/100).toFixed(2)}</span>`
             : "";
         const openHint = agg.openCount > 0 ? `${agg.openCount} open` : "";
-        const summaryBits = [openHint, recordTxt && `${recordTxt} settled`, netTxt].filter(Boolean).join(" · ");
+        const gamesCount = dayGames.size;
+        const gamesHint = gamesCount > 1 ? `${gamesCount} games` : "";
+        const summaryBits = [openHint, gamesHint, recordTxt && `${recordTxt} settled`, netTxt].filter(Boolean).join(" · ");
         return `
           <section class="bot-day-section ${isCollapsed ? "is-collapsed" : ""}">
             <button class="bot-day-head" data-day-toggle="${escapeText(dk)}" aria-expanded="${!isCollapsed}">
@@ -4762,7 +4856,7 @@ async function renderPracticeBetsPane() {
               <span class="bot-day-summary">${summaryBits}</span>
             </button>
             <div class="bot-day-rows" ${isCollapsed ? "hidden" : ""}>
-              ${sectionRows}
+              ${gameSections}
             </div>
           </section>
         `;

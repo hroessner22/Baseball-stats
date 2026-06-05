@@ -9962,6 +9962,79 @@ button.md-game-outcome:active { transform: translateY(1px); }
     display: none;
 }
 
+/* Per-game subsection inside a day. Visually subordinate to the
+   day header — same grid but smaller, dimmer, indented body. */
+.bot-game-section {
+    border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+.bot-game-section:first-child {
+    border-top: none;
+}
+.bot-game-head-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-right: 10px;
+    background: rgba(15, 23, 42, 0.35);
+}
+.bot-game-head {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    flex: 1;
+    text-align: left;
+    padding: 6px 14px 6px 24px;
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 10px auto auto 1fr;
+    gap: 8px;
+    align-items: baseline;
+    transition: background 100ms;
+}
+.bot-game-head:hover {
+    background: rgba(56, 189, 248, 0.05);
+}
+.bot-game-chevron {
+    color: var(--text-dim);
+    font-size: 9px;
+}
+.bot-game-label {
+    font-weight: 600;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text);
+}
+.bot-game-count {
+    color: var(--text-dim);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+}
+.bot-game-summary {
+    color: var(--text-dim);
+    font-size: 10.5px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.bot-game-jump {
+    color: var(--accent-action, #38BDF8);
+    text-decoration: none;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.bot-game-jump:hover {
+    background: rgba(56, 189, 248, 0.12);
+}
+.bot-game-rows {
+    padding: 2px 6px 6px 18px;
+}
+.bot-game-rows[hidden] {
+    display: none;
+}
+
 /* Inline progress strip on each open bet row. Mimics the live
    progress sportsbooks show on pending wagers: 'K: 3 / 5 — 2 more
    to win' plus a thin bar that fills as the player accumulates
