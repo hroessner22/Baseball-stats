@@ -510,6 +510,115 @@ def derive_pa_exhaustion(conn: sqlite3.Connection):
     return out
 
 
+# ── K-prop conditional P (cashout) ────────────────────────────
+
+def derive_kprop_conditional(conn: sqlite3.Connection):
+    """For each (BF_so_far, current_K, K9 bucket), report the
+    empirical P(final_K ≥ threshold). The bot uses this for cashout:
+
+      hold_value = P(threshold reached | current state) × $1
+      sell_value = current YES bid
+
+    Sell when bid > hold_value + margin; hold otherwise.
+
+    Buckets are coarse to keep sample sizes meaningful:
+      BF: 6, 9, 12, 15, 18, 21, 24, 27, 30+
+      K:  0..10
+      K9: <7.5, 7.5-9.0, 9.0-10.5, 10.5+
+    """
+    print("  K-prop conditional P (cashout table)...", file=sys.stderr)
+    sql = f"""
+    WITH starts AS (
+        SELECT year, pitcher, game_id,
+               SUM(CASE WHEN outcome = 'K' THEN 1 ELSE 0 END) AS total_k,
+               COUNT(*) AS total_bf
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, pitcher, game_id
+        HAVING COUNT(*) >= 12
+    ),
+    season AS (
+        SELECT year, pitcher,
+               SUM(total_k) AS sk,
+               SUM(total_bf) AS sbf
+        FROM starts
+        GROUP BY year, pitcher
+        HAVING SUM(total_bf) >= 100
+    ),
+    walked AS (
+        SELECT
+            ab.game_id, ab.pitcher, ab.year,
+            ROW_NUMBER() OVER (PARTITION BY ab.game_id, ab.pitcher
+                               ORDER BY ab.inning,
+                                        CASE WHEN ab.half='top' THEN 0 ELSE 1 END,
+                                        ab.outs) AS bf_num,
+            SUM(CASE WHEN ab.outcome = 'K' THEN 1 ELSE 0 END) OVER (
+                PARTITION BY ab.game_id, ab.pitcher
+                ORDER BY ab.inning,
+                         CASE WHEN ab.half='top' THEN 0 ELSE 1 END,
+                         ab.outs
+                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS k_after,
+            s.total_k,
+            sea.sk * 9.0 / NULLIF(CAST(sea.sbf AS REAL) / 4.3, 0) AS k9
+        FROM at_bats ab
+        JOIN starts s   ON s.game_id   = ab.game_id AND s.pitcher   = ab.pitcher
+        JOIN season sea ON sea.year    = ab.year    AND sea.pitcher = ab.pitcher
+        WHERE ab.year IN {YEARS_SQL}
+    )
+    SELECT bf_num, k_after, k9, total_k
+    FROM walked
+    WHERE bf_num <= 35
+    """
+
+    def bf_bucket(bf):
+        if bf < 6:  return "0-6"
+        if bf < 9:  return "6-9"
+        if bf < 12: return "9-12"
+        if bf < 15: return "12-15"
+        if bf < 18: return "15-18"
+        if bf < 21: return "18-21"
+        if bf < 24: return "21-24"
+        if bf < 27: return "24-27"
+        if bf < 30: return "27-30"
+        return "30+"
+    def k9_bucket(k9):
+        if k9 is None: return None
+        if k9 < 7.5: return "<7.5"
+        if k9 < 9.0: return "7.5-9.0"
+        if k9 < 10.5: return "9.0-10.5"
+        return "10.5+"
+
+    thresholds = [3, 4, 5, 6, 7, 8, 9, 10]
+    agg = {}      # key=(bf_bucket, k_after, k9_bucket) → {n, p_T+...}
+    for row in conn.execute(sql):
+        bf  = row["bf_num"]
+        k   = row["k_after"]
+        k9  = row["k9"]
+        tot = row["total_k"]
+        k9b = k9_bucket(k9)
+        if k9b is None or k is None or tot is None: continue
+        # Cap k_after at 10 (above is rare and binned together)
+        kb = min(int(k), 10)
+        key = (bf_bucket(bf), kb, k9b)
+        if key not in agg:
+            agg[key] = {"n": 0, **{f"p_{t}_plus": 0 for t in thresholds}}
+        a = agg[key]
+        a["n"] += 1
+        for t in thresholds:
+            if tot >= t: a[f"p_{t}_plus"] += 1
+
+    out = {}
+    for (bfb, k, k9b), a in agg.items():
+        if a["n"] < 30:  # need some sample
+            continue
+        rec = {"n": a["n"]}
+        for t in thresholds:
+            rec[f"p_{t}_plus"] = round(a[f"p_{t}_plus"] / a["n"], 4)
+        out[f"{bfb}|k{k}|{k9b}"] = rec
+    return out
+
+
 # ── Pitcher pull point (BF distribution at final batter) ──
 
 def derive_pitcher_pull_point(conn: sqlite3.Connection):
@@ -595,6 +704,7 @@ def main() -> int:
         "batter_recent_form_15g":         derive_batter_recent_form(conn),
         "pitcher_recent_form_5gs":        derive_pitcher_recent_form(conn),
         "pitcher_pull_point":             derive_pitcher_pull_point(conn),
+        "kprop_conditional":              derive_kprop_conditional(conn),
         "pa_exhaustion_by_state":         derive_pa_exhaustion(conn),
         "league_per_pa":                  derive_league_rates(conn),
     }
