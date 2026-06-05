@@ -4686,6 +4686,30 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     padding: 0;
     border-top: none;
 }
+.rail-bet-sell {
+    appearance: none;
+    align-self: flex-end;
+    margin-top: 4px;
+    background: rgba(248, 113, 113, 0.14);
+    border: 1px solid rgba(248, 113, 113, 0.32);
+    color: #F87171;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+}
+.rail-bet-sell:hover {
+    background: rgba(248, 113, 113, 0.24);
+    color: #FCA5A5;
+}
+.rail-bet-sell:disabled {
+    opacity: 0.6;
+    cursor: progress;
+}
 .rail-bet-row .bot-progress-row {
     font-size: 10px;
 }

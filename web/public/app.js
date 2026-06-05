@@ -4553,6 +4553,18 @@ function renderGameBetsCardRail(g) {
                 stateHtml = `<span class="rail-bet-state rail-bet-open">$${(cost/100).toFixed(2)}</span>`;
             }
         }
+        // Per-row Sell action. Practice mode marks the fire as
+        // settled at the live bid; real mode places a Kalshi sell
+        // order. Only shown when there's an open fire with a live
+        // bid we can sell into.
+        const cached = f.ticker ? _railLiveMarks.get(f.ticker) : null;
+        const liveBid = cached && cached.mark != null ? cached.mark : null;
+        const sellHtml = (!f.settled && f.ticker && liveBid != null)
+            ? `<button class="rail-bet-sell"
+                       data-rail-sell="${escapeHtml(f.ticker)}"
+                       data-rail-bid="${liveBid}"
+                       title="Sell this position at the live bid">Sell @ $${((contracts * liveBid)/100).toFixed(2)}</button>`
+            : "";
         return `
           <li class="rail-bet-row">
             <div class="rail-bet-head">
@@ -4561,6 +4573,7 @@ function renderGameBetsCardRail(g) {
               ${stateHtml}
             </div>
             ${railProgress(f)}
+            ${sellHtml}
           </li>
         `;
     }).join("");
@@ -4616,8 +4629,78 @@ document.addEventListener("click", (e) => {
         const cur = sessionStorage.getItem(k) === "1";
         sessionStorage.setItem(k, cur ? "0" : "1");
     } catch {}
-    // Trigger a re-render. activeGameId is the simplest hook.
     if (activeGameId) refreshGame(activeGameId);
+});
+
+// Per-row Sell button — user direction (2026-06-05): 'this would be
+// a good time to cashout and cut our losses.' For practice fires
+// we mark the fire as settled at the live bid (the cash we'd have
+// gotten if we'd actually sold). For real fires we place a Kalshi
+// limit sell at the live bid.
+document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-rail-sell]");
+    if (!btn) return;
+    e.preventDefault();
+    const ticker = btn.getAttribute("data-rail-sell");
+    const bid    = parseInt(btn.getAttribute("data-rail-bid"), 10);
+    if (!ticker || !Number.isFinite(bid)) return;
+    let practiceMode = false;
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    const lsKey = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
+    let fires = [];
+    try { fires = JSON.parse(localStorage.getItem(lsKey) || "[]"); } catch {}
+    const fire = fires.find((f) => f.ticker === ticker && !f.settled);
+    if (!fire) return;
+    const contracts = fire.contracts || 1;
+    const cost      = contracts * (fire.price_cents || 0);
+    const proceeds  = contracts * bid;
+    const profit    = proceeds - cost;
+    const ok = confirm(
+        `Sell ${contracts}× ${ticker} at ${bid}¢?\n\n` +
+        `Entry:    $${(cost/100).toFixed(2)}\n` +
+        `Sell at:  $${(proceeds/100).toFixed(2)}\n` +
+        `Realized: ${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)}`
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    btn.textContent = "Selling…";
+    try {
+        if (practiceMode) {
+            // Practice cashout — settle the fire in localStorage at
+            // the live bid. Same shape end-of-game settlement uses,
+            // plus a cashed_out marker so the History view can flag
+            // these as manual exits.
+            const idx = fires.findIndex((f) => f === fire || (f.ticker === ticker && !f.settled));
+            if (idx >= 0) {
+                fires[idx] = {
+                    ...fires[idx],
+                    settled: {
+                        won: profit > 0,
+                        profit_cents: profit,
+                        settled_at: new Date().toISOString(),
+                        cashed_out: true,
+                        sell_price_cents: bid,
+                    },
+                };
+                try { localStorage.setItem(lsKey, JSON.stringify(fires)); } catch {}
+            }
+        } else {
+            // Real cashout — place a Kalshi sell order at the live bid.
+            if (!window.Kalshi?.placeOrder) throw new Error("Kalshi not connected");
+            await window.Kalshi.placeOrder({
+                ticker, side: fire.side || "yes", count: contracts,
+                price: bid, action: "sell",
+            });
+        }
+        if (activeGameId) refreshGame(activeGameId);
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = `Sell @ $${(proceeds/100).toFixed(2)}`;
+        alert(`Sell failed: ${err.message || err}`);
+    }
 });
 function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"]/g, (c) => ({
