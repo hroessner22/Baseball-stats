@@ -296,6 +296,242 @@
       }
     }
   },
+  "batter_recent_form_15g": {
+    "cold   <.600": {
+      "game_batter_pairs": 73431,
+      "p_1_plus_hit": 0.5329,
+      "p_2_plus_hit": 0.1704,
+      "p_1_plus_hr": 0.0904,
+      "p_2_plus_tb": 0.2945
+    },
+    ".600-.700": {
+      "game_batter_pairs": 56714,
+      "p_1_plus_hit": 0.572,
+      "p_2_plus_hit": 0.1998,
+      "p_1_plus_hr": 0.1051,
+      "p_2_plus_tb": 0.3317
+    },
+    ".700-.800": {
+      "game_batter_pairs": 57974,
+      "p_1_plus_hit": 0.5934,
+      "p_2_plus_hit": 0.2159,
+      "p_1_plus_hr": 0.1162,
+      "p_2_plus_tb": 0.3517
+    },
+    ".800-.900": {
+      "game_batter_pairs": 45657,
+      "p_1_plus_hit": 0.6061,
+      "p_2_plus_hit": 0.2229,
+      "p_1_plus_hr": 0.1254,
+      "p_2_plus_tb": 0.3665
+    },
+    ".900-1.000": {
+      "game_batter_pairs": 29182,
+      "p_1_plus_hit": 0.6147,
+      "p_2_plus_hit": 0.2332,
+      "p_1_plus_hr": 0.1387,
+      "p_2_plus_tb": 0.3763
+    },
+    "hot   1.000+": {
+      "game_batter_pairs": 27048,
+      "p_1_plus_hit": 0.6294,
+      "p_2_plus_hit": 0.2443,
+      "p_1_plus_hr": 0.1566,
+      "p_2_plus_tb": 0.3988
+    }
+  },
+  "pitcher_recent_form_5gs": {
+    "<6.0": {
+      "starts": 4340,
+      "avg_k_per_start": 3.72,
+      "p_3_plus": 0.6869,
+      "p_4_plus": 0.4984,
+      "p_5_plus": 0.3247,
+      "p_6_plus": 0.1912,
+      "p_7_plus": 0.1032,
+      "p_8_plus": 0.0477,
+      "p_9_plus": 0.0212,
+      "p_10_plus": 0.0106
+    },
+    "6.0-7.5": {
+      "starts": 6360,
+      "avg_k_per_start": 4.28,
+      "p_3_plus": 0.7704,
+      "p_4_plus": 0.6036,
+      "p_5_plus": 0.434,
+      "p_6_plus": 0.2731,
+      "p_7_plus": 0.1586,
+      "p_8_plus": 0.0855,
+      "p_9_plus": 0.0407,
+      "p_10_plus": 0.0189
+    },
+    "7.5-9.0": {
+      "starts": 7347,
+      "avg_k_per_start": 4.74,
+      "p_3_plus": 0.8251,
+      "p_4_plus": 0.6747,
+      "p_5_plus": 0.5144,
+      "p_6_plus": 0.3528,
+      "p_7_plus": 0.2179,
+      "p_8_plus": 0.1236,
+      "p_9_plus": 0.0632,
+      "p_10_plus": 0.0308
+    },
+    "9.0-10.5": {
+      "starts": 5744,
+      "avg_k_per_start": 5.35,
+      "p_3_plus": 0.8807,
+      "p_4_plus": 0.754,
+      "p_5_plus": 0.6064,
+      "p_6_plus": 0.4519,
+      "p_7_plus": 0.3075,
+      "p_8_plus": 0.188,
+      "p_9_plus": 0.1053,
+      "p_10_plus": 0.0555
+    },
+    "10.5+": {
+      "starts": 5831,
+      "avg_k_per_start": 6.29,
+      "p_3_plus": 0.9275,
+      "p_4_plus": 0.8419,
+      "p_5_plus": 0.7301,
+      "p_6_plus": 0.5939,
+      "p_7_plus": 0.4442,
+      "p_8_plus": 0.3168,
+      "p_9_plus": 0.2092,
+      "p_10_plus": 0.1261
+    }
+  },
+  "pitcher_pull_point": {
+    "total_starts": 32457,
+    "by_bf": {
+      "12": {
+        "n_ending_here": 930,
+        "n_still_pitching": 31527,
+        "pull_rate": 0.0287
+      },
+      "13": {
+        "n_ending_here": 799,
+        "n_still_pitching": 30728,
+        "pull_rate": 0.0253
+      },
+      "14": {
+        "n_ending_here": 732,
+        "n_still_pitching": 29996,
+        "pull_rate": 0.0238
+      },
+      "15": {
+        "n_ending_here": 743,
+        "n_still_pitching": 29253,
+        "pull_rate": 0.0248
+      },
+      "16": {
+        "n_ending_here": 730,
+        "n_still_pitching": 28523,
+        "pull_rate": 0.025
+      },
+      "17": {
+        "n_ending_here": 867,
+        "n_still_pitching": 27656,
+        "pull_rate": 0.0304
+      },
+      "18": {
+        "n_ending_here": 1453,
+        "n_still_pitching": 26203,
+        "pull_rate": 0.0525
+      },
+      "19": {
+        "n_ending_here": 1608,
+        "n_still_pitching": 24595,
+        "pull_rate": 0.0614
+      },
+      "20": {
+        "n_ending_here": 2192,
+        "n_still_pitching": 22403,
+        "pull_rate": 0.0891
+      },
+      "21": {
+        "n_ending_here": 2855,
+        "n_still_pitching": 19548,
+        "pull_rate": 0.1274
+      },
+      "22": {
+        "n_ending_here": 3093,
+        "n_still_pitching": 16455,
+        "pull_rate": 0.1582
+      },
+      "23": {
+        "n_ending_here": 3431,
+        "n_still_pitching": 13024,
+        "pull_rate": 0.2085
+      },
+      "24": {
+        "n_ending_here": 3439,
+        "n_still_pitching": 9585,
+        "pull_rate": 0.2641
+      },
+      "25": {
+        "n_ending_here": 2970,
+        "n_still_pitching": 6615,
+        "pull_rate": 0.3099
+      },
+      "26": {
+        "n_ending_here": 2321,
+        "n_still_pitching": 4294,
+        "pull_rate": 0.3509
+      },
+      "27": {
+        "n_ending_here": 2128,
+        "n_still_pitching": 2166,
+        "pull_rate": 0.4956
+      },
+      "28": {
+        "n_ending_here": 1052,
+        "n_still_pitching": 1114,
+        "pull_rate": 0.4857
+      },
+      "29": {
+        "n_ending_here": 566,
+        "n_still_pitching": 548,
+        "pull_rate": 0.5081
+      },
+      "30": {
+        "n_ending_here": 252,
+        "n_still_pitching": 296,
+        "pull_rate": 0.4599
+      },
+      "31": {
+        "n_ending_here": 158,
+        "n_still_pitching": 138,
+        "pull_rate": 0.5338
+      },
+      "32": {
+        "n_ending_here": 79,
+        "n_still_pitching": 59,
+        "pull_rate": 0.5725
+      },
+      "33": {
+        "n_ending_here": 31,
+        "n_still_pitching": 28,
+        "pull_rate": 0.5254
+      },
+      "34": {
+        "n_ending_here": 18,
+        "n_still_pitching": 10,
+        "pull_rate": 0.6429
+      },
+      "35": {
+        "n_ending_here": 7,
+        "n_still_pitching": 3,
+        "pull_rate": 0.7
+      },
+      "36": {
+        "n_ending_here": 3,
+        "n_still_pitching": 0,
+        "pull_rate": 1.0
+      }
+    }
+  },
   "league_per_pa": {
     "total_pa": 1168585,
     "per_pa": {

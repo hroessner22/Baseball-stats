@@ -349,6 +349,40 @@ function buildPaRemainingFactor(opp) {
 // On K-props: high K/9 trend → positive adjustment (more Ks expected).
 // On moneylines: improving ERA → negative adjustment for the pitcher's
 // opponents (your bet on the OPPONENT team gets a haircut).
+// Empirically-derived coefficient cache (same JSON served by
+// /api/coefficients endpoint).
+let _coefs = null;
+async function getCoefs() {
+    if (_coefs) return _coefs;
+    try {
+        const r = await fetch("/api/coefficients");
+        if (!r.ok) return null;
+        _coefs = await r.json();
+        return _coefs;
+    } catch { return null; }
+}
+function k9Bucket(k9) {
+    if (k9 == null) return null;
+    if (k9 < 6.0)  return "<6.0";
+    if (k9 < 7.5)  return "6.0-7.5";
+    if (k9 < 9.0)  return "7.5-9.0";
+    if (k9 < 10.5) return "9.0-10.5";
+    return "10.5+";
+}
+function opsBucket(ops) {
+    if (ops == null) return null;
+    if (ops < 0.600) return "cold   <.600";
+    if (ops < 0.700) return ".600-.700";
+    if (ops < 0.800) return ".700-.800";
+    if (ops < 0.900) return ".800-.900";
+    if (ops < 1.000) return ".900-1.000";
+    return "hot   1.000+";
+}
+// Baseline (.700-.800 OPS / 7.5-9.0 K/9) used for the empirical
+// recent-form adjust_pp: factor_pp = (bucket_p - baseline_p) × 100.
+const OPS_BASELINE_BUCKET = ".700-.800";
+const K9_BASELINE_BUCKET  = "7.5-9.0";
+
 async function buildPitcherRecentFormFactor(opp, pid) {
     if (!pid) return { name: "pitcher_recent_form", weight: 0, present: false };
     let data;
@@ -360,27 +394,33 @@ async function buildPitcherRecentFormFactor(opp, pid) {
     if (!data?.available) return { name: "pitcher_recent_form", weight: 0, present: false };
 
     let adjust = 0;
-    // K-prop adjustment: every +1.0 K/9 above ~9.0 is +1pp on the
-    // prop's tail probability. Each 1.0 below is -1pp.
+
+    // K-prop EMPIRICAL adjustment: look up actual P(N+ K) by
+    // rolling K/9 bucket vs baseline bucket.
     if (opp.kind === "player_prop" && opp.stat === "strikeouts" && data.k9 != null) {
-        adjust = (data.k9 - 9.0) * 1.0;
-        if (data.trend === "improving") adjust += 1;
-        if (data.trend === "declining") adjust -= 1;
+        const coefs = await getCoefs();
+        const buckets = coefs?.pitcher_recent_form_5gs;
+        const myBucket = buckets?.[k9Bucket(data.k9)];
+        const base     = buckets?.[K9_BASELINE_BUCKET];
+        const empKey   = `p_${opp.threshold}_plus`;
+        if (myBucket?.[empKey] != null && base?.[empKey] != null) {
+            adjust = (myBucket[empKey] - base[empKey]) * 100;
+        }
     }
-    // Moneyline adjustment: a starter with sub-3.00 ERA trend gets
-    // a +pp for HIS side; bleeding 5.00+ gets -pp.
+
+    // Moneyline ERA adjustment kept as bucket-and-flip (no empirical
+    // per-thresh rate makes sense here — it's a moneyline outcome,
+    // not a count threshold).
     if (opp.kind === "moneyline" && data.era != null) {
         if      (data.era < 2.50) adjust = +2;
         else if (data.era < 3.50) adjust = +1;
         else if (data.era > 5.00) adjust = -2;
         else if (data.era > 4.00) adjust = -1;
-        // 'bet_team_starter_id' tells us whose pitcher this is —
-        // if it's OUR team's pitcher, keep adjust as-is (boost our
-        // side). If it's the opponent's pitcher, flip sign.
         if (opp.bet_team_starter_is_opponent) adjust = -adjust;
     }
-    // Clamp ±5pp.
-    adjust = Math.max(-5, Math.min(5, adjust));
+    // Clamp ±15pp — empirical can produce ±10pp+ for extreme buckets,
+    // but cap to avoid runaway factor.
+    adjust = Math.max(-15, Math.min(15, adjust));
     return {
         name:    "pitcher_recent_form",
         weight:  0.6,
@@ -390,14 +430,17 @@ async function buildPitcherRecentFormFactor(opp, pid) {
             k9:           data.k9,
             whip:         data.whip,
             trend:        data.trend,
+            k9_bucket:    k9Bucket(data.k9),
         },
         adjust_pp: round2(adjust),
         present:   true,
     };
 }
 
-// Batter recent form — last 15 games' OPS / ISO. Hot bat → boost
-// HR/TB/H props; cold → cut.
+// Batter recent form — EMPIRICAL. Last 15g rolling OPS bucketed
+// against the actual P(1+H / 2+H / 1+HR / 2+TB) from Retrosheet
+// 2018-2024. adjust_pp = (bucket_p - baseline_p) × 100, computed
+// per-stat. Replaces the hand-waved ±3pp OPS buckets.
 async function buildBatterRecentFormFactor(opp) {
     let data;
     try {
@@ -407,16 +450,25 @@ async function buildBatterRecentFormFactor(opp) {
     } catch { return { name: "batter_recent_form", weight: 0, present: false }; }
     if (!data?.available || data.games_found < 5) return { name: "batter_recent_form", weight: 0, present: false };
 
+    const coefs = await getCoefs();
+    const buckets = coefs?.batter_recent_form_15g;
+    const myBucket = buckets?.[opsBucket(data.ops || 0)];
+    const baseBucket = buckets?.[OPS_BASELINE_BUCKET];
+
+    // Map (stat, threshold) → which empirical column to use.
+    const empKey =
+        (opp.stat === "hits"        && opp.threshold === 1) ? "p_1_plus_hit"
+      : (opp.stat === "hits"        && opp.threshold === 2) ? "p_2_plus_hit"
+      : (opp.stat === "home_runs"   && opp.threshold === 1) ? "p_1_plus_hr"
+      : (opp.stat === "total_bases" && opp.threshold <= 2)  ? "p_2_plus_tb"
+      : null;
+
     let adjust = 0;
-    const ops = data.ops || 0;
-    if      (ops >= 1.000) adjust = +3;
-    else if (ops >= 0.850) adjust = +1.5;
-    else if (ops >= 0.700) adjust = 0;
-    else if (ops >= 0.550) adjust = -1.5;
-    else                    adjust = -3;
-    if (data.trend === "hot")  adjust += 1;
-    if (data.trend === "cold") adjust -= 1;
-    adjust = Math.max(-4, Math.min(4, adjust));
+    if (empKey && myBucket?.[empKey] != null && baseBucket?.[empKey] != null) {
+        adjust = (myBucket[empKey] - baseBucket[empKey]) * 100;
+    }
+    // Clamp ±10pp — empirical max spread is ~10pp from baseline.
+    adjust = Math.max(-10, Math.min(10, adjust));
 
     return {
         name:    "batter_recent_form",
@@ -427,6 +479,8 @@ async function buildBatterRecentFormFactor(opp) {
             iso:         data.iso,
             k_pct:       data.k_pct,
             trend:       data.trend,
+            ops_bucket:  opsBucket(data.ops || 0),
+            stat_used:   opp.stat,
         },
         adjust_pp: round2(adjust),
         present:   true,
@@ -562,15 +616,30 @@ async function buildH2HFactor(opp) {
     const stats = window === "last_2_years" ? data.last_2_years : data.career;
     if (!stats || stats.pa < 10) return { name: "h2h", weight: 0, present: false };
 
+    // H2H adjust_pp uses the same EMPIRICAL gradient as the
+    // batter_recent_form factor (Retrosheet 2018-2024 rolling
+    // OPS buckets → P(1+H) deltas), since H2H samples are
+    // typically too small to derive their own gradient reliably.
+    // The h2h weight already encodes sample-size confidence
+    // (ramps 0.4 → 1.0 between 10 PA and 50+ PA).
     let adjust = 0;
     const ops = stats.ops || ((stats.obp || 0) + (stats.slg || 0)) || 0;
-    if      (ops >= 1.100) adjust = +3;
-    else if (ops >= 0.900) adjust = +1.5;
-    else if (ops >= 0.700) adjust = 0;
-    else if (ops >= 0.500) adjust = -1.5;
-    else                    adjust = -3;
+    const coefs = await getCoefs();
+    const buckets = coefs?.batter_recent_form_15g;
+    const myBucket = buckets?.[opsBucket(ops)];
+    const baseBucket = buckets?.[OPS_BASELINE_BUCKET];
+    const empKey =
+        (opp.stat === "hits"        && opp.threshold === 1) ? "p_1_plus_hit"
+      : (opp.stat === "hits"        && opp.threshold === 2) ? "p_2_plus_hit"
+      : (opp.stat === "home_runs"   && opp.threshold === 1) ? "p_1_plus_hr"
+      : (opp.stat === "total_bases" && opp.threshold <= 2)  ? "p_2_plus_tb"
+      : null;
+    if (empKey && myBucket?.[empKey] != null && baseBucket?.[empKey] != null) {
+        adjust = (myBucket[empKey] - baseBucket[empKey]) * 100;
+    }
     // K-prop check: if batter's H2H K-rate is way above his usual,
-    // that's a sign this pitcher OWNS him on K's.
+    // that's a sign this pitcher OWNS him on K's. Empirical league
+    // K rate is 22.7% (from league_per_pa); H2H >= 35% is well above.
     if (opp.stat === "strikeouts" && stats.k_pct >= 0.35) adjust -= 2;
 
     // Confidence scales with sample size: 10 PA → 0.4 weight,

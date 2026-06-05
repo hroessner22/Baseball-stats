@@ -292,6 +292,215 @@ def derive_weather(conn: sqlite3.Connection):
     return out
 
 
+# ── Batter recent form (rolling 15-game OPS → next-game outcome) ──
+
+def derive_batter_recent_form(conn: sqlite3.Connection):
+    """For each batter-game, compute the OPS over the prior 15 games
+    (window = preceding 15 rows, excluding current). Bucket by that
+    rolling OPS and report P(1+H/2+H/1+HR/2+TB) in the CURRENT game.
+
+    Tells us how much the batter_recent_form factor's adjust_pp
+    SHOULD be: instead of guessing ±3pp for hot/cold, look up the
+    actual delta between OPS buckets.
+    """
+    print("  batter recent form (rolling 15g)...", file=sys.stderr)
+    sql = f"""
+    WITH gl AS (
+        SELECT
+            year, batter, game_id, date,
+            SUM(CASE WHEN outcome IN ('1B','2B','3B','HR') THEN 1 ELSE 0 END) AS h,
+            SUM(CASE WHEN outcome = 'HR' THEN 1 ELSE 0 END) AS hr,
+            SUM(CASE outcome WHEN '1B' THEN 1 WHEN '2B' THEN 2 WHEN '3B' THEN 3 WHEN 'HR' THEN 4 ELSE 0 END) AS tb,
+            SUM(CASE WHEN outcome NOT IN ('BB','HBP','OTHER') AND sh_fl=0 AND sf_fl=0 THEN 1 ELSE 0 END) AS ab,
+            SUM(CASE WHEN outcome = 'BB' THEN 1 ELSE 0 END) AS bb,
+            SUM(CASE WHEN outcome = 'HBP' THEN 1 ELSE 0 END) AS hbp,
+            COUNT(*) AS pa
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, batter, game_id
+    ),
+    rolling AS (
+        SELECT *,
+            SUM(h)   OVER w AS h15,
+            SUM(ab)  OVER w AS ab15,
+            SUM(bb)  OVER w AS bb15,
+            SUM(hbp) OVER w AS hbp15,
+            SUM(tb)  OVER w AS tb15,
+            SUM(pa)  OVER w AS pa15
+        FROM gl
+        WINDOW w AS (
+            PARTITION BY batter
+            ORDER BY date
+            ROWS BETWEEN 15 PRECEDING AND 1 PRECEDING
+        )
+    )
+    SELECT
+        h, hr, tb,
+        CAST(h15 AS REAL) / NULLIF(ab15, 0) AS rba,
+        CAST(h15 + bb15 + hbp15 AS REAL) / NULLIF(pa15, 0) AS robp,
+        CAST(tb15 AS REAL) / NULLIF(ab15, 0) AS rslg
+    FROM rolling
+    WHERE ab15 >= 30   -- need a meaningful rolling sample
+    """
+
+    buckets = [
+        ("cold   <.600",    0.000, 0.600),
+        (".600-.700",        0.600, 0.700),
+        (".700-.800",        0.700, 0.800),
+        (".800-.900",        0.800, 0.900),
+        (".900-1.000",       0.900, 1.000),
+        ("hot   1.000+",     1.000, 9.000),
+    ]
+    bd = {b[0]: {"games": 0, "h1": 0, "h2": 0, "hr1": 0, "tb2": 0} for b in buckets}
+
+    for row in conn.execute(sql):
+        if row["robp"] is None or row["rslg"] is None:
+            continue
+        ops = row["robp"] + row["rslg"]
+        for label, lo, hi in buckets:
+            if lo <= ops < hi:
+                d = bd[label]
+                d["games"] += 1
+                if (row["h"]  or 0) >= 1: d["h1"]  += 1
+                if (row["h"]  or 0) >= 2: d["h2"]  += 1
+                if (row["hr"] or 0) >= 1: d["hr1"] += 1
+                if (row["tb"] or 0) >= 2: d["tb2"] += 1
+                break
+
+    out = {}
+    for label, d in bd.items():
+        g = d["games"] or 1
+        out[label] = {
+            "game_batter_pairs": d["games"],
+            "p_1_plus_hit": round(d["h1"]  / g, 4),
+            "p_2_plus_hit": round(d["h2"]  / g, 4),
+            "p_1_plus_hr":  round(d["hr1"] / g, 4),
+            "p_2_plus_tb":  round(d["tb2"] / g, 4),
+        }
+    return out
+
+
+# ── Pitcher recent form (rolling 5-start K/9 → next-start K dist) ──
+
+def derive_pitcher_recent_form(conn: sqlite3.Connection):
+    """For each starter-game, compute K/9 over the prior 5 starts.
+    Bucket by rolling K/9 and report P(N+ K) in the NEXT start.
+    Replaces the hand-waved -2 to +2pp adjust_pp ranges based on
+    raw K/9 with actual gradient between rolling buckets.
+    """
+    print("  pitcher recent form (rolling 5gs)...", file=sys.stderr)
+    sql = f"""
+    WITH starts AS (
+        SELECT
+            year, pitcher, game_id, date,
+            SUM(CASE WHEN outcome = 'K' THEN 1 ELSE 0 END) AS k,
+            COUNT(*) AS bf
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, pitcher, game_id
+        HAVING COUNT(*) >= 12
+    ),
+    rolling AS (
+        SELECT *,
+            SUM(k)  OVER w AS k5,
+            SUM(bf) OVER w AS bf5
+        FROM starts
+        WINDOW w AS (
+            PARTITION BY pitcher
+            ORDER BY date
+            ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+        )
+    )
+    SELECT k, bf,
+           CAST(k5 * 9.0 AS REAL) / NULLIF(bf5 / 4.3, 0) AS rk9
+    FROM rolling
+    WHERE bf5 >= 50    -- ≥50 BF in rolling window (about 2 starts)
+    """
+    buckets = [
+        ("<6.0",    0.0,  6.0),
+        ("6.0-7.5", 6.0,  7.5),
+        ("7.5-9.0", 7.5,  9.0),
+        ("9.0-10.5",9.0, 10.5),
+        ("10.5+",  10.5, 99.0),
+    ]
+    k_thresholds = [3, 4, 5, 6, 7, 8, 9, 10]
+    bd = {b[0]: {"starts": 0, "k_sum": 0, **{f"p_{t}_plus": 0 for t in k_thresholds}} for b in buckets}
+
+    for row in conn.execute(sql):
+        rk9 = row["rk9"]
+        k   = row["k"] or 0
+        if rk9 is None: continue
+        for label, lo, hi in buckets:
+            if lo <= rk9 < hi:
+                d = bd[label]
+                d["starts"] += 1
+                d["k_sum"]  += k
+                for t in k_thresholds:
+                    if k >= t: d[f"p_{t}_plus"] += 1
+                break
+
+    out = {}
+    for label, d in bd.items():
+        s = d["starts"] or 1
+        rec = {"starts": d["starts"], "avg_k_per_start": round(d["k_sum"] / s, 2)}
+        for t in k_thresholds:
+            rec[f"p_{t}_plus"] = round(d[f"p_{t}_plus"] / s, 4)
+        out[label] = rec
+    return out
+
+
+# ── Pitcher pull point (BF distribution at final batter) ──
+
+def derive_pitcher_pull_point(conn: sqlite3.Connection):
+    """For each starter, find their FINAL BF in each game (= the
+    batter they were pulled after). Distribution tells us, given
+    a pitcher has reached BF=N, what's P(this is their last batter)?
+
+    Replaces the hand-waved 'p80 + 10 pitches' pull threshold.
+    """
+    print("  pitcher pull point (BF distribution)...", file=sys.stderr)
+    sql = f"""
+    WITH per_game AS (
+        SELECT
+            game_id, pitcher, year,
+            COUNT(*) AS bf
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY game_id, pitcher
+        HAVING COUNT(*) >= 12   -- only consider starts
+    )
+    SELECT bf, COUNT(*) AS n
+    FROM per_game
+    GROUP BY bf
+    ORDER BY bf
+    """
+    by_bf = {}
+    total = 0
+    for row in conn.execute(sql):
+        by_bf[row["bf"]] = row["n"]
+        total += row["n"]
+    # Cumulative count of "still pitching": for BF=N, how many starts
+    # exceeded N? Pull rate at N = n(N) / (n(N) + n(>N)).
+    sorted_bf = sorted(by_bf)
+    pull_rate = {}
+    cum_above = total
+    for bf in sorted_bf:
+        n_at = by_bf[bf]
+        n_above = cum_above - n_at      # n(>bf)
+        denom = n_at + n_above
+        rate = (n_at / denom) if denom else 0.0
+        pull_rate[bf] = {
+            "n_ending_here": n_at,
+            "n_still_pitching": n_above,
+            "pull_rate": round(rate, 4),
+        }
+        cum_above = n_above
+    return {
+        "total_starts": total,
+        "by_bf": pull_rate,
+    }
+
+
 # ── League per-PA rates (baseline / sanity) ───────────────────────
 
 def derive_league_rates(conn: sqlite3.Connection):
@@ -322,6 +531,9 @@ def main() -> int:
         "hitter_quality_by_season_avg":   derive_hitter_quality(conn),
         "kprop_by_pitcher_season_k9":     derive_kprop_pitcher_quality(conn),
         "weather":                        derive_weather(conn),
+        "batter_recent_form_15g":         derive_batter_recent_form(conn),
+        "pitcher_recent_form_5gs":        derive_pitcher_recent_form(conn),
+        "pitcher_pull_point":             derive_pitcher_pull_point(conn),
         "league_per_pa":                  derive_league_rates(conn),
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -342,6 +554,23 @@ def main() -> int:
               f"P(5+)={d['p_5_plus']:.3f}  P(6+)={d['p_6_plus']:.3f}  "
               f"P(7+)={d['p_7_plus']:.3f}  P(8+)={d['p_8_plus']:.3f}", file=sys.stderr)
     print(f"\nWeather reference: {result['weather']['reference']}", file=sys.stderr)
+    print("\nBatter recent-form (rolling 15g OPS):", file=sys.stderr)
+    for label, d in result["batter_recent_form_15g"].items():
+        print(f"  OPS {label:<16} n={d['game_batter_pairs']:>6}  "
+              f"P(1+H)={d['p_1_plus_hit']:.3f}  P(1+HR)={d['p_1_plus_hr']:.4f}  "
+              f"P(2+TB)={d['p_2_plus_tb']:.3f}", file=sys.stderr)
+    print("\nPitcher recent-form (rolling 5gs K/9):", file=sys.stderr)
+    for label, d in result["pitcher_recent_form_5gs"].items():
+        print(f"  rK/9 {label:<11} n={d['starts']:>4}  avg={d['avg_k_per_start']:.1f}  "
+              f"P(5+)={d['p_5_plus']:.3f}  P(6+)={d['p_6_plus']:.3f}  "
+              f"P(7+)={d['p_7_plus']:.3f}  P(8+)={d['p_8_plus']:.3f}", file=sys.stderr)
+    print(f"\nPitcher pull point: {result['pitcher_pull_point']['total_starts']} starts; "
+          f"sample BF→pull-rate: ", end="", file=sys.stderr)
+    for bf in [15, 18, 20, 22, 24, 26, 28, 30, 32]:
+        rec = result["pitcher_pull_point"]["by_bf"].get(bf)
+        if rec:
+            print(f"BF{bf}:{rec['pull_rate']:.2f} ", end="", file=sys.stderr)
+    print("", file=sys.stderr)
     return 0
 
 
