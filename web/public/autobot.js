@@ -280,6 +280,17 @@ function loadState() {
         if (s.bet_no_side_player_props === false) {
             s.bet_no_side_player_props = true;
         }
+        // ONE-SHOT MIGRATION 2026-06-04 (PM): user direction — 'for
+        // now I just want the bot to begin to run tests on the
+        // moneyline part.' Force props off + push moneyline reserve
+        // to 95% so ML scans get nearly the entire bankroll. Tracked
+        // by a flag so re-enabling props in the UI later sticks.
+        const ML_ONLY_FLAG = "diamond_context_ml_only_test_2026_06_04";
+        if (!localStorage.getItem(ML_ONLY_FLAG)) {
+            s.bet_player_props = false;
+            s.moneyline_reserve_pct = 0.95;
+            try { localStorage.setItem(ML_ONLY_FLAG, "1"); } catch {}
+        }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
     } catch { _state.settings = { ...DEFAULTS }; }
@@ -5139,6 +5150,13 @@ function renderBotPane() {
             ? `Scanning every ${SCAN_INTERVAL_MS/1000}s · last scan ${lastScan} · daily P/L: <strong>-$${(_state.dailyLoss.cents/100).toFixed(2)}</strong> / $${(s.daily_loss_limit_cents/100).toFixed(2)} cap`
             : `Unit $${(s.unit_cents/100).toFixed(2)} · daily loss limit $${(s.daily_loss_limit_cents/100).toFixed(2)} · exposure cap $${(s.open_exposure_max/100).toFixed(2)}`}
         </p>
+        ${(!s.bet_player_props && s.moneyline_reserve_pct >= 0.9) ? `
+          <div class="bot-mode-banner bot-mode-banner-ml">
+            <strong>Moneyline-only test mode</strong>
+            <span>Player props disabled · ${Math.round(s.moneyline_reserve_pct * 100)}% of bankroll reserved for ML.
+                  Flip 'Also bet player props' below to bring props back.</span>
+          </div>
+        ` : ""}
         <details class="bot-emergency-fold">
           <summary>Emergency actions</summary>
           <div class="bot-emergency-actions">

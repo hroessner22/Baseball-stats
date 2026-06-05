@@ -10741,6 +10741,33 @@ button.md-game-outcome:active { transform: translateY(1px); }
     color: var(--text);
 }
 
+/* Mode banner — appears under the bot ON/OFF row to surface a
+   non-default operating mode that would otherwise hide in
+   settings. Currently used for moneyline-only test mode. */
+.bot-mode-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    border-radius: 6px;
+    font-size: 12px;
+}
+.bot-mode-banner strong {
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+.bot-mode-banner span {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.bot-mode-banner-ml {
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    color: #38BDF8;
+}
+.bot-mode-banner-ml span { color: rgba(186, 230, 253, 0.85); }
+
 /* Practice / Live mode segmented control. Replaces the old single
    toggle (which was ambiguous — 'off + LIVE' could be read two
    ways). Both modes always visible; the active one is filled,
