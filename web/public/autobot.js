@@ -2793,11 +2793,25 @@ async function runCashoutCheck() {
 
         if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn) continue;
 
-        // EMPIRICAL VETO: if the conditional table says we still
-        // have ≥5pp edge against the current bid, override the
-        // heuristic profit-take / EV-capture triggers. live-EV /
-        // pitch-count / hitter-sell triggers still fire because
-        // they incorporate the same game-state signal directly.
+        // CONVICTION VETO (2026-06-05). User direction: 'if we have
+        // a bet that we actually do believe will hit and theres
+        // substantial enough money left, dont cashout.' If our
+        // empirical model still sees ≥10pp edge above bid AND there's
+        // ≥20¢ of remaining upside (room to run), hold to maturity —
+        // even if a profit-take or lock-in would otherwise fire.
+        // Tail-compression (bid >= 85) bypasses this; at that price
+        // there's structurally not enough upside to argue with.
+        const remainingUpside = 100 - yesBidCents;
+        const stillBelieve     = (empiricalEdgePp != null && empiricalEdgePp >= 10);
+        const substantialLeft  = remainingUpside >= 20;
+        const tailCompressed   = yesBidCents >= 85;
+        const convictionVeto   = stillBelieve && substantialLeft && !tailCompressed;
+        if (convictionVeto && !hitDeadPosition) {
+            log("hold", `Conviction veto on ${p.ticker} (${fire?.player} ${fire?.threshold}+ ${fire?.stat} ${heldSide.toUpperCase()}): model edge ${empiricalEdgePp.toFixed(1)}pp + ${remainingUpside}¢ upside remaining — holding instead of locking ${profitPerContract}¢/contract`);
+            continue;
+        }
+
+        // EMPIRICAL VETO (legacy 5pp threshold). Still overrides T1+T2.
         if (empiricalVeto && (hitAbsolute || hitEvCapture)
             && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn) {
             log("hold", `Empirical veto on ${p.ticker} (${fire?.player} ${fire?.threshold}+ ${fire?.stat} ${heldSide.toUpperCase()}): hold value beats bid by ${empiricalEdgePp.toFixed(1)}pp — overriding heuristic profit-take`);
@@ -3145,6 +3159,39 @@ async function runPracticeCashoutCheck() {
             } else if (entryCents > 0 && profitPerContract >= entryCents * gainBar) {
                 const pctGain = Math.round((profitPerContract / entryCents) * 100);
                 lockReason = `+${pctGain}% gain (${heldSide.toUpperCase()} entry ${entryCents}¢, bid ${liveBidCents}¢, bar ${Math.round(gainBar*100)}%) — lock`;
+            }
+        }
+        // CONVICTION VETO (2026-06-05). 'If we have a bet that we
+        // actually do believe will hit and theres substantial enough
+        // money left, dont cashout.' Override the lock-in unless
+        // the bid is tail-compressed (>=85¢). Looks up our own
+        // empirical p_yes for the current state — if it's still
+        // 10pp+ above the bid AND there's 20¢+ upside remaining,
+        // hold.
+        if (lockReason && liveBidCents < 85) {
+            let empOurSideCents = null;
+            try {
+                if (fire.kind === "player_prop") {
+                    const emp = (fire.stat === "strikeouts")
+                        ? await getEmpiricalKpropPYes(fire)
+                        : await getEmpiricalHitPropPYes(fire);
+                    if (emp != null) {
+                        empOurSideCents = (heldSide === "no")
+                            ? (100 - emp.p_yes_cents)
+                            : emp.p_yes_cents;
+                    }
+                } else if (fire.kind === "moneyline") {
+                    const emp = await getEmpiricalMlPYes(fire);
+                    if (emp != null) empOurSideCents = emp.p_yes_cents;
+                }
+            } catch {}
+            if (empOurSideCents != null) {
+                const edgePp = empOurSideCents - liveBidCents;
+                const remaining = 100 - liveBidCents;
+                if (edgePp >= 10 && remaining >= 20) {
+                    log("hold", `[PRACTICE] Conviction veto on ${fire.ticker}: model ${empOurSideCents}¢ vs bid ${liveBidCents}¢ (+${edgePp}pp), ${remaining}¢ upside remaining — holding instead of locking ${profitPerContract}¢`);
+                    lockReason = null;
+                }
             }
         }
         // 'World disagrees' gate. If we'd be selling at a loss AND
