@@ -2107,6 +2107,31 @@ function getFires() {
 // instead of calling Kalshi. Lets the user see what the bot would
 // have done — and how those positions move — without spending money.
 const LS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
+
+// Flag a real-mode fire as mathematically dead but still open on
+// Kalshi (no closing bid available). UI uses this to demote the row
+// to the bottom of the Active list — the bet is effectively a loss
+// but stays visible until either Kalshi opens a bid or the market
+// settles.
+function markFireDeadFlag(ticker, reason) {
+    if (!ticker) return;
+    let fires;
+    try { fires = JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
+    catch { return; }
+    let mutated = false;
+    for (const f of fires) {
+        if (f.ticker !== ticker || f.settled || f.dead_flag) continue;
+        f.dead_flag = true;
+        f.dead_reason = reason;
+        f.dead_flagged_at = new Date().toISOString();
+        mutated = true;
+    }
+    if (mutated) {
+        try { localStorage.setItem(LS_FIRES, JSON.stringify(fires)); } catch {}
+        refreshDrawerIfOpen();
+        log("bot", `Dead-flagged ${ticker} (${reason}) — kept open, no Kalshi bid`);
+    }
+}
 const PRACTICE_FIRES_MAX = 500;
 function recordPracticeFire(payload) {
     let arr;
@@ -2412,15 +2437,31 @@ async function runCashoutCheck() {
         // every cash-out loop. One call, both extractions.
         let ob = null;
         try { ob = await root.Kalshi.getOrderbook(p.ticker); } catch { /* skip */ }
-        if (!ob) continue;
-        // Pull the bid for whichever side we hold — when we hold YES
-        // we sell into YES bid, when we hold NO we sell into NO bid
-        // (= 100 - YES ask). Same math from here forward; the only
-        // change is which price we compare to entry.
+        // Mathematically-dead pre-check: NO threshold-met or YES
+        // K-prop pitcher-pulled. For real bets, if Kalshi has no
+        // bid we can't close on the exchange — flag the fire so
+        // the UI demotes it to the bottom of Active. User direction
+        // (2026-06-05): 'if it doesnt close on kalshi when were
+        // using real bets, dont close it, just shift it to the
+        // bottom of active.'
+        const mathDeadReason = fire ? await isMathematicallyDead(fire) : null;
+        if (!ob) {
+            if (mathDeadReason) markFireDeadFlag(p.ticker, mathDeadReason);
+            continue;
+        }
         const liveBidCents = heldSide === "yes"
             ? orderbookYesBidCents(ob)
             : orderbookNoBidCents(ob);
-        if (liveBidCents == null) continue;
+        if (liveBidCents == null) {
+            if (mathDeadReason) markFireDeadFlag(p.ticker, mathDeadReason);
+            continue;
+        }
+        if (liveBidCents < 1 && mathDeadReason) {
+            // Kalshi is offering literally nothing — keep the
+            // position open (can't sell at 0¢) but flag it.
+            markFireDeadFlag(p.ticker, mathDeadReason);
+            continue;
+        }
         const profitPerContract = liveBidCents - entryCents;
         // Legacy local name kept so the rest of this function reads
         // unchanged — it points to the side-appropriate bid.
@@ -2847,6 +2888,42 @@ async function runCashoutCheck() {
     }
 }
 
+// Detects positions that are MATHEMATICALLY DEAD — no further game
+// state can save them. Two cases:
+//   1) NO side, current_stat >= threshold. Player already crossed
+//      the line; NO has lost. e.g. NO on '2+ TB' when batter has 3 TB.
+//   2) YES K-prop, pitcher already replaced (live lineup no longer
+//      lists him), current_K < threshold. He's not going back out;
+//      YES has lost.
+// User direction (2026-06-05): 'When these bets happen, you can
+// count them as losses then and there. Theres no coming back.'
+// Returns a reason string when dead, null otherwise.
+async function isMathematicallyDead(fire) {
+    if (!fire || fire.kind !== "player_prop" || !fire.player) return null;
+    const side = fire.side || "yes";
+    const threshold = fire.threshold || 0;
+    // Pull current stat from the boxscore (single source of truth).
+    let boxMap;
+    try { boxMap = await fetchBoxscoreForGames([fire.game_pk]); }
+    catch { return null; }
+    const box = boxMap.get(fire.game_pk);
+    if (!box) return null;
+    const current = boxscoreStatForProp(box, fire.player, fire.stat);
+    if (current == null) return null;
+    // Case 1: NO side already lost.
+    if (side === "no" && current >= threshold) {
+        return `${current}/${threshold} ${fire.stat} — NO already lost, can't unhit it`;
+    }
+    // Case 2: YES K-prop, pitcher pulled, threshold not met.
+    if (side === "yes" && fire.stat === "strikeouts" && current < threshold) {
+        const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
+        if (!pInfo) {
+            return `${current}/${threshold} K, pitcher already replaced — YES can't reach`;
+        }
+    }
+    return null;
+}
+
 // Detects whether a K-prop YES position is essentially dead because
 // the starter won't pitch again before the threshold is reached.
 // Returns a human-readable reason string when true, null otherwise.
@@ -2918,11 +2995,34 @@ async function runPracticeCashoutCheck() {
     if (!open.length) return;
     let mutated = false;
     for (const fire of open) {
+        const heldSide = fire.side || "yes";
+        const contractsEarly = fire.contracts || 1;
+        const entryEarly     = fire.price_cents || 0;
+        // STEP 0: mathematically dead check. NO with threshold met,
+        // or YES K-prop with pitcher pulled. These are flat losses —
+        // settle immediately at -cost, don't try to find a sell bid.
+        const deadReason = await isMathematicallyDead(fire);
+        if (deadReason) {
+            const cost = contractsEarly * entryEarly;
+            fire.settled = {
+                won: false,
+                profit_cents: -cost,
+                settled_at: new Date().toISOString(),
+                cashed_out: true,
+                sell_price_cents: 0,
+                cashout_reason: deadReason,
+                math_dead: true,
+            };
+            mutated = true;
+            log("sell-practice", `[PRACTICE] math-dead ${contractsEarly}× ${fire.ticker} ${heldSide.toUpperCase()} — loss $${(cost/100).toFixed(2)} (${deadReason})`,
+                { ticker: fire.ticker, profit_cents: -cost, reason: deadReason });
+            toast(`Practice: ${fire.player || fire.ticker} — ${deadReason}`, "err");
+            continue;
+        }
         // Look up empirical p_yes from the same conditional tables
         // the buy-side and the regular cashout use. Skip when we
         // can't compute one (no table coverage).
         let empOurSideCents = null;
-        const heldSide = fire.side || "yes";
         try {
             if (fire.kind === "player_prop") {
                 const emp = (fire.stat === "strikeouts")
@@ -4868,7 +4968,19 @@ async function renderPracticeBetsPane() {
         : kindFilter === "moneyline"
             ? f.kind === "moneyline"
             : f.kind === "player_prop";
-    const activeFires  = fires.filter((f) => !f.settled);
+    // Active fires: not yet settled. Dead-flagged real bets (can't
+    // close on Kalshi yet) get demoted to the bottom of the list
+    // per user direction (2026-06-05): 'if it doesnt close on kalshi
+    // when were using real bets, dont close it, just shift it to
+    // the bottom of active.'
+    const activeRaw    = fires.filter((f) => !f.settled);
+    const activeFires  = activeRaw.slice().sort((a, b) => {
+        const ad = a.dead_flag ? 1 : 0;
+        const bd = b.dead_flag ? 1 : 0;
+        if (ad !== bd) return ad - bd;
+        // Within each group keep newest first.
+        return (b.placed_at || "").localeCompare(a.placed_at || "");
+    });
     const settledFires = fires.filter((f) =>  f.settled);
     const mlFires      = fires.filter((f) => f.kind === "moneyline");
     const propFires    = fires.filter((f) => f.kind === "player_prop");
@@ -5008,12 +5120,13 @@ async function renderPracticeBetsPane() {
             : "";
         const progressHtml = renderBetProgress(f, progressBoxscoreMap.get(f.game_pk));
         const rowHtml = `
-          <div class="bot-recent-row ${isOpen ? "is-open" : ""}">
+          <div class="bot-recent-row ${isOpen ? "is-open" : ""} ${f.dead_flag ? "is-dead" : ""}">
             <div class="bot-recent-row-head-wrap">
               <button class="bot-recent-row-head" data-fire-toggle="${escapeText(id)}" aria-expanded="${isOpen}">
                 <span class="bot-recent-chevron">${isOpen ? "▾" : "▸"}</span>
                 <span class="bot-recent-label">${label}</span>
                 <span class="bot-recent-meta">
+                  ${f.dead_flag ? `<span class="bot-dead-badge" title="${escapeText(f.dead_reason || "no closing bid")}">DEAD</span>` : ""}
                   <span class="${sideCls}">${sideTag}</span>
                   $${(cost/100).toFixed(2)}
                   ${resultBadge}
