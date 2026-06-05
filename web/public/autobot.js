@@ -3026,33 +3026,45 @@ function findPlayerLine(lines, mlbam, playerName) {
         if (want && String(ln.mlbam) === want) return ln;
         if (target && normName(ln.name) === target) return ln;
     }
-    // Fallback: Kalshi tickers / bet fires store the player as
-    // 'R. Ray' / 'E. Cabrera', but the boxscore stores 'Robbie Ray' /
-    // 'Edward Cabrera'. Match on first-initial + last-name when the
-    // bet side looks like an initialized form. Unique within a single
-    // boxscore side (two pitchers with the same last name + initial
-    // on the same team mid-game is functionally never going to
-    // happen), so this is safe.
-    if (target) {
-        const tParts = target.split(/\s+/).filter(Boolean);
-        if (tParts.length >= 2) {
-            const tFirst = tParts[0];
-            const tLast  = tParts.slice(1).join(" ");
-            const looksInitialized = tFirst.length === 1;
-            for (const ln of lines) {
-                const n = normName(ln.name).split(/\s+/).filter(Boolean);
-                if (n.length < 2) continue;
-                const nFirst = n[0];
-                const nLast  = n.slice(1).join(" ");
-                if (nLast !== tLast) continue;
-                if (looksInitialized) {
-                    if (nFirst.startsWith(tFirst)) return ln;
-                } else if (nFirst === tFirst) {
-                    return ln;
-                }
+    if (!target) return null;
+    const tParts = target.split(/\s+/).filter(Boolean);
+    // Second pass: first-initial + last-name. Bet fires often use
+    // initialized form ('R. Ray') while boxscore uses full ('Robbie
+    // Ray'). Surname must match exactly; first-token startsWith
+    // handles both single-letter and prefix matches.
+    if (tParts.length >= 2) {
+        const tFirst = tParts[0];
+        const tLast  = tParts[tParts.length - 1];
+        for (const ln of lines) {
+            const n = normName(ln.name).split(/\s+/).filter(Boolean);
+            if (n.length < 2) continue;
+            const nLast = n[n.length - 1];
+            if (nLast !== tLast) continue;
+            if (n[0].startsWith(tFirst) || tFirst.startsWith(n[0])) {
+                return ln;
             }
         }
     }
+    // Third pass: surname-only, but only if unique within the list.
+    // Two pitchers with the same surname on the same team mid-game
+    // would tie this — fall through to null in that case rather than
+    // pick the wrong one.
+    const target_last = tParts.length >= 1
+        ? tParts[tParts.length - 1]
+        : target;
+    if (target_last) {
+        const matches = lines.filter((ln) => {
+            const n = normName(ln.name).split(/\s+/).filter(Boolean);
+            return n.length >= 1 && n[n.length - 1] === target_last;
+        });
+        if (matches.length === 1) return matches[0];
+    }
+    // No match — leave a breadcrumb so we can see WHY in DevTools
+    // rather than silently rendering 0 / threshold.
+    try {
+        console.warn("[findPlayerLine] no match for", playerName,
+            "available:", lines.map((l) => l.name));
+    } catch {}
     return null;
 }
 function boxscoreStatForProp(boxscore, playerName, stat) {
