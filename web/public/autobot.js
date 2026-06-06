@@ -95,7 +95,12 @@ const HARD_CAPS = {
     // for blowout signals. Moneyline (WE) bets specifically are our
     // strongest signal (132-season Retrosheet validation); we should
     // fire on small but real edges.
-    edge_pp_min:           2,
+    // edge_pp_min lowered to 1 (2026-06-06). User direction: 'we
+    // should lower ML if we feel like we have an advantage,
+    // especially in live games.' WE is our strongest signal; 1pp
+    // is a real edge across volume even though variance is huge on
+    // any individual fire.
+    edge_pp_min:           1,
     edge_pp_max:           20,
     // User direction 2026-06-03: 'no more than 2 dollars lost.'
     // Daily loss limit lifted to $2. Open exposure also $2 so the
@@ -107,15 +112,16 @@ const HARD_CAPS = {
 const DEFAULTS = {
     enabled:               false,
     unit_cents:            200,    // $2.00 max per fire — comfortable size for practice mode ($100 bankroll)
-    // 2026-06-03: lowered 5 → 3pp per 'volume + persistent edge wins.'
-    // 2026-06-05: lowered 3 → 2pp per user direction: 'if we have
-    // even a minor edge we should take it for now because we can
-    // always learn from it.' Goal at this stage is to ACCUMULATE
-    // settled-fire data so we can derive the optimal edge bar
-    // empirically. The empirical conditional + scoring gates already
-    // filter the obviously bad fires — let smaller-edge ML bets
-    // through to gather data.
-    edge_threshold_pp:     2,
+    // 2026-06-03: lowered 5 → 3pp ('volume + persistent edge wins.')
+    // 2026-06-05: lowered 3 → 2pp ('even a minor edge we should take.')
+    // 2026-06-06: lowered 2 → 1pp per user direction: 'we should lower
+    // ML if we feel like we have an advantage, especially in live
+    // games.' WE table is the bot's strongest signal (132 seasons of
+    // Retrosheet); Kalshi WE pricing is tight enough that 1pp is a
+    // real persistent edge across volume. The multi-factor adjusted-
+    // edge gate (same threshold) + min_conviction (0.40) keep the
+    // genuinely no-information fires out.
+    edge_threshold_pp:     1,
     // 2026-06-03: lowered 7 → 5pp. Earlier the prop threshold was
     // padded high because the model was noisy (the Wenceel /
     // Gleyber pattern). Since then we've added: realistic-ceiling
@@ -413,15 +419,24 @@ function loadState() {
             }
             try { localStorage.setItem(KPROP_GATE_FLAG, "1"); } catch {}
         }
-        // 2026-06-05 (late): lower ML edge threshold 3 → 2pp per
-        // user direction. Goal is volume → accumulate settled-fire
-        // data for empirical edge-bar derivation.
+        // 2026-06-05 (late): lower ML edge threshold 3 → 2pp.
         const ML_THRESHOLD_FLAG = "diamond_context_ml_threshold_2pp_2026_06_05";
         if (!localStorage.getItem(ML_THRESHOLD_FLAG)) {
             if (typeof s.edge_threshold_pp === "number" && s.edge_threshold_pp > 2) {
                 s.edge_threshold_pp = 2;
             }
             try { localStorage.setItem(ML_THRESHOLD_FLAG, "1"); } catch {}
+        }
+        // 2026-06-06: lower ML edge threshold 2 → 1pp per user
+        // direction. 'we should lower ML if we feel like we have
+        // an advantage, especially in live games.' WE is our
+        // strongest signal; 1pp is real EV across volume.
+        const ML_THRESHOLD_1PP_FLAG = "diamond_context_ml_threshold_1pp_2026_06_06";
+        if (!localStorage.getItem(ML_THRESHOLD_1PP_FLAG)) {
+            if (typeof s.edge_threshold_pp === "number" && s.edge_threshold_pp > 1) {
+                s.edge_threshold_pp = 1;
+            }
+            try { localStorage.setItem(ML_THRESHOLD_1PP_FLAG, "1"); } catch {}
         }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
