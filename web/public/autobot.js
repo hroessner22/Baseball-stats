@@ -2274,42 +2274,17 @@ function recordFiredBet(payload) {
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
     catch { arr = []; }
-    // LAST-LINE DEDUP (2026-06-06). Player-prop: same prop + side
-    // is always a duplicate. Moneyline: same TEAM + side is a
-    // duplicate; opposite team is a HEDGE, allowed through. User
-    // direction (2026-06-06): 'keep 1 ML per game unless youre
-    // hedging.'
-    if (payload.kind === "player_prop") {
-        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-        const sameOpen = arr.some((f) =>
-            !f.settled
-            && f.kind === "player_prop"
-            && String(f.game_pk) === String(payload.game_pk)
-            && f.stat === payload.stat
-            && Number(f.threshold) === Number(payload.threshold)
-            && (f.side || "yes") === (payload.side || "yes")
-            && norm(f.player) === norm(payload.player)
-        );
-        if (sameOpen) {
-            try {
-                log("skip", `Fire write blocked (last-line dedup) — same prop open: ${payload.player} ${payload.threshold}+ ${payload.stat} ${(payload.side || "yes").toUpperCase()}`);
-            } catch {}
-            return;
-        }
-    } else if (payload.kind === "moneyline") {
-        const sameTeamOpen = arr.some((f) =>
-            !f.settled
-            && f.kind === "moneyline"
-            && String(f.game_pk) === String(payload.game_pk)
-            && String(f.bet_team || "").toUpperCase() === String(payload.bet_team || "").toUpperCase()
-            && (f.side || "yes") === (payload.side || "yes")
-        );
-        if (sameTeamOpen) {
-            try {
-                log("skip", `ML write blocked (one-per-team-per-game) — already open on ${payload.bet_team}`);
-            } catch {}
-            return;
-        }
+    const beforeLen = arr.length;
+    arr = scrubOpenDuplicates(arr);
+    if (arr.length < beforeLen) {
+        try { log("bot", `Real-fires scrub removed ${beforeLen - arr.length} duplicate open fire(s)`); } catch {}
+    }
+    const incomingSig = fireSignature({ ...payload, kind: payload.kind });
+    const collidesOpen = arr.some((f) => !f.settled && fireSignature(f) === incomingSig);
+    if (collidesOpen) {
+        try { log("skip", `Real fire write blocked (signature collision) — ${incomingSig}`); } catch {}
+        try { localStorage.setItem(LS_FIRES, JSON.stringify(arr)); } catch {}
+        return;
     }
     arr.unshift(payload);
     if (arr.length > FIRES_MAX) arr.length = FIRES_MAX;
@@ -2378,51 +2353,63 @@ function markFireDeadFlag(ticker, reason) {
     }
 }
 const PRACTICE_FIRES_MAX = 500;
+// Stable signature for an open fire. Same shape for both practice
+// and real arrays. Player props key off normalized player name +
+// stat + threshold + side. Moneylines key off team + side. Anything
+// else is treated as unique.
+function fireSignature(f) {
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (f.kind === "player_prop") {
+        return `pp:${f.game_pk}:${norm(f.player)}:${f.stat}:${Number(f.threshold)}:${f.side || "yes"}`;
+    }
+    if (f.kind === "moneyline") {
+        return `ml:${f.game_pk}:${String(f.bet_team || "").toUpperCase()}:${f.side || "yes"}`;
+    }
+    return `other:${f.ticker || Math.random()}`;
+}
+
+// Scrubs an array of fires of duplicate OPEN fires. Keeps the FIRST
+// occurrence of each signature (which, given arr.unshift order, is
+// the newest). Settled fires are kept untouched. Returns the cleaned
+// array.
+function scrubOpenDuplicates(arr) {
+    const seen = new Set();
+    const out = [];
+    for (const f of arr) {
+        if (f.settled) {
+            out.push(f);
+            continue;
+        }
+        const sig = fireSignature(f);
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        out.push(f);
+    }
+    return out;
+}
+
 function recordPracticeFire(payload) {
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
     catch { arr = []; }
-    // LAST-LINE DEDUP (2026-06-06). User: 'stop doing stuff like
-    // this with the double bets.' Even with the upstream
-    // propSessionFires + hasOpenSameProp checks, duplicates are
-    // still landing in the practice log (mlbam-mismatch races,
-    // duplicate ticker shapes in the markets payload, etc.).
-    // This is the last line of defense: refuse the write if an
-    // open fire on the same (game, player, stat, threshold, side)
-    // already exists in the array.
-    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    if (payload.kind === "player_prop") {
-        const sameOpen = arr.some((f) =>
-            !f.settled
-            && f.kind === "player_prop"
-            && String(f.game_pk) === String(payload.game_pk)
-            && f.stat === payload.stat
-            && Number(f.threshold) === Number(payload.threshold)
-            && (f.side || "yes") === (payload.side || "yes")
-            && norm(f.player) === norm(payload.player)
-        );
-        if (sameOpen) {
-            try {
-                log("skip", `Practice write blocked (last-line dedup) — same prop open: ${payload.player} ${payload.threshold}+ ${payload.stat} ${(payload.side || "yes").toUpperCase()}`);
-            } catch {}
-            return;
-        }
-    } else if (payload.kind === "moneyline") {
-        // One ML per team-per-game (the OPPOSITE side is a hedge and
-        // allowed through).
-        const sameTeamOpen = arr.some((f) =>
-            !f.settled
-            && f.kind === "moneyline"
-            && String(f.game_pk) === String(payload.game_pk)
-            && String(f.bet_team || "").toUpperCase() === String(payload.bet_team || "").toUpperCase()
-            && (f.side || "yes") === (payload.side || "yes")
-        );
-        if (sameTeamOpen) {
-            try {
-                log("skip", `Practice ML write blocked (one-per-team-per-game) — already open on ${payload.bet_team}`);
-            } catch {}
-            return;
-        }
+    // SCRUB any existing duplicate open fires — handles the case
+    // where dups landed in LS before this scrub shipped. Idempotent.
+    const beforeLen = arr.length;
+    arr = scrubOpenDuplicates(arr);
+    if (arr.length < beforeLen) {
+        try { log("bot", `Practice scrub removed ${beforeLen - arr.length} duplicate open fire(s)`); } catch {}
+    }
+    // REFUSE the new write if its signature is already open.
+    const incomingSig = fireSignature({ ...payload, kind: payload.kind });
+    const collidesOpen = arr.some((f) => !f.settled && fireSignature(f) === incomingSig);
+    if (collidesOpen) {
+        try {
+            log("skip", `Practice write blocked (signature collision) — ${incomingSig}`);
+        } catch {}
+        // Still write the (possibly-scrubbed) array back so the LS
+        // reflects the dedup.
+        try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(arr)); } catch {}
+        return;
     }
     arr.unshift({ ...payload, practice: true });
     if (arr.length > PRACTICE_FIRES_MAX) arr.length = PRACTICE_FIRES_MAX;
@@ -7750,6 +7737,23 @@ function toast(msg, kind = "ok") {
 // ── Bootstrap ─────────────────────────────────────────────────────
 
 loadState();
+
+// One-shot startup cleanup — scrub any existing duplicate open fires
+// from LS so we start from a clean slate even when dups landed in
+// previous sessions before the dedup scrub shipped.
+(function startupScrubDuplicates() {
+    for (const key of [LS_PRACTICE_FIRES, LS_FIRES]) {
+        try {
+            const arr = JSON.parse(localStorage.getItem(key) || "[]");
+            if (!Array.isArray(arr) || !arr.length) continue;
+            const cleaned = scrubOpenDuplicates(arr);
+            if (cleaned.length < arr.length) {
+                localStorage.setItem(key, JSON.stringify(cleaned));
+                try { log("bot", `Startup scrub: removed ${arr.length - cleaned.length} duplicate open fire(s) from ${key}`); } catch {}
+            }
+        } catch {}
+    }
+})();
 
 // Auto-refresh the drawer when a new notification fires so the
 // Mailbox badge + popover update in real time without the user
