@@ -5755,9 +5755,11 @@ function matchupStatLineForPitcher(player, boxscore) {
     const h   = Number(line.H)  || 0;
     const er  = Number(line.ER) || 0;
     const bb  = Number(line.BB) || 0;
+    const pc  = Number(line.pitches) || 0;
     const parts = [`${ip} IP`, `${k} K`, `${h} H`];
     if (er) parts.push(`${er} ER`);
     if (bb && bb >= 2) parts.push(`${bb} BB`);
+    if (pc) parts.push(`${pc} P`);
     return parts.join(" · ");
 }
 
