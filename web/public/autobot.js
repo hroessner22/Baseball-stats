@@ -5280,13 +5280,43 @@ async function renderPracticeBetsPane() {
         // historical reasoning.
         const liveSection = (() => {
             if (result?.settled) {
+                // Cashout audit trail (2026-06-06). User direction:
+                // 'When did we cashout on Sonny Gray? was it before
+                // the game?' Previously the Final result block only
+                // showed outcome / P&L / settled_at — no way to tell
+                // if a bet was cashed out vs naturally settled, or
+                // when relative to first pitch.
+                const s = f.settled || {};
+                const cashedOut    = !!s.cashed_out;
+                const sellPrice    = s.sell_price_cents;
+                const reasonText   = s.cashout_reason;
+                const placedMs     = f.placed_at ? Date.parse(f.placed_at) : NaN;
+                const settledMs    = s.settled_at  ? Date.parse(s.settled_at)  : NaN;
+                const heldMin = (Number.isFinite(placedMs) && Number.isFinite(settledMs))
+                    ? Math.max(0, Math.round((settledMs - placedMs) / 60000))
+                    : null;
+                const exitTypeLine = `<div><span>Exit type</span><strong>${cashedOut ? "Cashed out" : "Natural settlement"}</strong></div>`;
+                const sellPriceLine = (cashedOut && sellPrice != null)
+                    ? `<div><span>Sell price</span><strong>${sellPrice}¢ / contract</strong></div>`
+                    : "";
+                const reasonLine = reasonText
+                    ? `<div><span>Reason</span><strong>${escapeText(reasonText)}</strong></div>`
+                    : "";
+                const heldLine = heldMin != null
+                    ? `<div><span>Held for</span><strong>${heldMin} min</strong></div>`
+                    : "";
                 return `
                   <div class="bot-reasoning-section">
                     <div class="bot-reasoning-h">Final result</div>
                     <div class="bot-reasoning-rows">
                       <div><span>Outcome</span><strong>${result.won ? "WON" : "LOST"}</strong></div>
                       <div><span>Profit / loss</span><strong class="${result.won ? "bot-pl-pos" : "bot-pl-neg"}">${result.won ? "+" : ""}$${(result.profit_cents/100).toFixed(2)}</strong></div>
-                      ${f.settled?.settled_at ? `<div><span>Settled</span><strong>${formatNotifTime(f.settled.settled_at)}</strong></div>` : ""}
+                      ${exitTypeLine}
+                      ${sellPriceLine}
+                      ${reasonLine}
+                      ${f.placed_at ? `<div><span>Placed</span><strong>${formatNotifTime(f.placed_at)}</strong></div>` : ""}
+                      ${s.settled_at ? `<div><span>Settled</span><strong>${formatNotifTime(s.settled_at)}</strong></div>` : ""}
+                      ${heldLine}
                     </div>
                   </div>
                 `;
