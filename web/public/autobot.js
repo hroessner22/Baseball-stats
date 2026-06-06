@@ -979,6 +979,32 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             log("skip", `Realistic-threshold guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: max realistic threshold is ${realisticMax} (he doesn't do this many)`);
             continue;
         }
+        // K-PROP NO FLOOR (2026-06-06). User direction: 'Framber
+        // Valdez 3+ strikeouts NO ... this is really low.' Betting NO
+        // against a quality starter reaching a LOW K threshold is the
+        // mirror image of the Gray 9+ YES problem — the bot's model
+        // overestimates P(< 3 K) for someone who basically always
+        // gets 3 K, books a 5pp 'edge' on noise, fires NO at 90¢
+        // entry, loses 90¢. Skip K-prop NO when threshold ≤ 60% of
+        // the pitcher's season K/start.
+        //   Valdez (~5 K/start) → 60% = 3 → 3+ NO blocked
+        //   Mid-tier (~4 K/start) → 60% = 2.4 → 2+ NO blocked, 3+ OK
+        //   Low-K (~3 K/start)    → 60% = 1.8 → only 1+ NO blocked
+        if (parsed.stat === "strikeouts") {
+            const koStartRate = pitcherSeasonKPerStart(modelProps, mlbam);
+            if (koStartRate != null && koStartRate >= 4
+                && parsed.threshold <= Math.floor(koStartRate * 0.6)) {
+                // Only blocks NO side — YES at low thresholds is fine.
+                // We'll find out which side we're firing in a moment;
+                // tag and skip there.
+                _state._noFloorBlock = (_state._noFloorBlock || new Map());
+                _state._noFloorBlock.set(propKey, {
+                    threshold: parsed.threshold,
+                    floor: Math.floor(koStartRate * 0.6),
+                    kPerStart: koStartRate.toFixed(2),
+                });
+            }
+        }
         const baselineP = baselineProbForBet(modelProps, mlbam, parsed.stat, parsed.threshold);
         if (baselineP != null && baselineP < 0.01) {
             log("skip", `Realistic-threshold guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: season baseline ${(baselineP*100).toFixed(2)}% (he basically never does this)`);
@@ -1053,6 +1079,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const market_p      = chooseNo ? no_market_p   : yes_market_p;
         const our_p         = chooseNo ? no_our_p      : our_p_yes;
         const edgePP        = chooseNo ? no_edge_pp    : yes_edge_pp;
+
+        // K-prop NO floor check (2026-06-06). If we tagged this prop
+        // upstream as 'NO threshold below pitcher's K floor', and the
+        // bot picked NO, skip. YES side at the same threshold is fine.
+        if (side === "no" && _state._noFloorBlock?.has(propKey)) {
+            const blk = _state._noFloorBlock.get(propKey);
+            log("skip", `K-prop NO floor — ${parsed.player} ${parsed.threshold}+ K NO: threshold ≤ ${blk.floor} = 60% of ${blk.kPerStart} K/start, structural mispricing not edge`);
+            continue;
+        }
 
         // ── SANITY GATES — refuse trades the orderbook can't actually
         // support, even if the math says enormous edge. These are the
@@ -3414,6 +3449,22 @@ function baselineProbForBet(modelProps, playerMlbam, stat, threshold) {
 //
 // Returns null when we can't compute (early season, missing data) —
 // caller treats null as "can't decide, allow."
+// Pitcher season K-per-start, used by the K-prop NO floor guard.
+function pitcherSeasonKPerStart(modelProps, playerMlbam) {
+    if (!modelProps?.lineups || !playerMlbam) return null;
+    const want = String(playerMlbam);
+    for (const sk of ["home", "away"]) {
+        const lp = modelProps.lineups[sk];
+        if (!lp) continue;
+        if (String(lp.pitcher_id) !== want) continue;
+        const gs = lp.pitcher_season_gs || 0;
+        const so = lp.pitcher_season_so || 0;
+        if (gs < 3) return null;
+        return so / gs;
+    }
+    return null;
+}
+
 function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
     if (!modelProps?.lineups || !playerMlbam) return null;
     const want = String(playerMlbam);
