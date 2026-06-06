@@ -218,6 +218,80 @@ def derive_kprop_pitcher_quality(conn: sqlite3.Connection):
     return out
 
 
+def derive_kprop_threshold_hit_rates_by_k_per_start(conn: sqlite3.Connection):
+    """Empirical hit rate for each K threshold, bucketed by the pitcher's
+    season K-per-start.
+
+    autobot.js uses this table to derive — at runtime — the YES ceiling
+    (highest threshold worth taking), the NO floor (lowest threshold
+    where NO has real chance), and the borderline-sizing band (where the
+    bet is positive-EV but high-variance). When this table refreshes,
+    those rules update automatically.
+    """
+    print("  K-prop hit rates by K/start...", file=sys.stderr)
+    sql = f"""
+    WITH per_game AS (
+        SELECT year, pitcher, game_id,
+               SUM(CASE WHEN outcome = 'K' THEN 1 ELSE 0 END) AS k,
+               COUNT(*) AS bf
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, pitcher, game_id
+    ),
+    starts AS (
+        -- BF >= 15 filters out relievers more aggressively than the
+        -- generic K-prop-pitcher-quality function (which uses 12).
+        -- Closer to 'true starter game' for the threshold-rate computation.
+        SELECT * FROM per_game WHERE bf >= 15
+    ),
+    season_pitching AS (
+        SELECT year, pitcher,
+               SUM(k) AS season_k,
+               COUNT(*) AS season_starts,
+               CAST(SUM(k) AS REAL) / COUNT(*) AS k_per_start
+        FROM starts
+        GROUP BY year, pitcher
+        HAVING COUNT(*) >= 10
+    )
+    SELECT s.k, sp.k_per_start
+    FROM starts s
+    JOIN season_pitching sp USING (year, pitcher)
+    """
+    buckets = [
+        ("<4",  0.0, 4.0),
+        ("4-5", 4.0, 5.0),
+        ("5-6", 5.0, 6.0),
+        ("6-7", 6.0, 7.0),
+        ("7-8", 7.0, 8.0),
+        ("8+",  8.0, 99.0),
+    ]
+    thresholds = list(range(2, 11))   # 2+ through 10+
+    bucket_data = {b[0]: {"n": 0, **{f"p_{t}_plus": 0 for t in thresholds}} for b in buckets}
+
+    for row in conn.execute(sql):
+        kps = row["k_per_start"]
+        k_in_start = row["k"] or 0
+        if kps is None:
+            continue
+        for label, lo, hi in buckets:
+            if lo <= kps < hi:
+                d = bucket_data[label]
+                d["n"] += 1
+                for t in thresholds:
+                    if k_in_start >= t:
+                        d[f"p_{t}_plus"] += 1
+                break
+
+    out = {}
+    for label, d in bucket_data.items():
+        n = d["n"] or 1
+        rec = {"n": d["n"]}
+        for t in thresholds:
+            rec[f"p_{t}_plus"] = round(d[f"p_{t}_plus"] / n, 4)
+        out[label] = rec
+    return out
+
+
 # ── Weather coefficients ──────────────────────────────────────────
 
 def derive_weather(conn: sqlite3.Connection):
@@ -823,6 +897,7 @@ def main() -> int:
         "seasons": f"{YEARS[0]}-{YEARS[-1]}",
         "hitter_quality_by_season_avg":   derive_hitter_quality(conn),
         "kprop_by_pitcher_season_k9":     derive_kprop_pitcher_quality(conn),
+        "kprop_hit_rates_by_k_per_start": derive_kprop_threshold_hit_rates_by_k_per_start(conn),
         "weather":                        derive_weather(conn),
         "batter_recent_form_15g":         derive_batter_recent_form(conn),
         "pitcher_recent_form_5gs":        derive_pitcher_recent_form(conn),

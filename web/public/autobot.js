@@ -974,29 +974,48 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         //
         // Both return null with small samples (<10 hitter games, <3
         // pitcher starts); when null, allow through.
-        const realisticMax = realisticThresholdCeiling(modelProps, mlbam, parsed.stat);
+        const realisticCoefs = await getCoefficients();
+        const realisticMax = realisticThresholdCeiling(modelProps, mlbam, parsed.stat, realisticCoefs);
         if (realisticMax != null && parsed.threshold > realisticMax) {
             log("skip", `Realistic-threshold guard — ${parsed.player} ${parsed.threshold}+ ${parsed.stat}: max realistic threshold is ${realisticMax} (he doesn't do this many)`);
             continue;
         }
-        // K-PROP NO FLOOR (2026-06-06). User direction: 'Framber
-        // Valdez 3+ strikeouts NO ... this is really low.' Betting NO
-        // against a quality starter reaching a LOW K threshold is the
-        // mirror image of the Gray 9+ YES problem — the bot's model
-        // overestimates P(< 3 K) for someone who basically always
-        // gets 3 K, books a 5pp 'edge' on noise, fires NO at 90¢
-        // entry, loses 90¢. Skip K-prop NO when threshold ≤ 60% of
-        // the pitcher's season K/start.
-        //   Valdez (~5 K/start) → 60% = 3 → 3+ NO blocked
-        //   Mid-tier (~4 K/start) → 60% = 2.4 → 2+ NO blocked, 3+ OK
-        //   Low-K (~3 K/start)    → 60% = 1.8 → only 1+ NO blocked
+        // K-PROP NO FLOOR — EMPIRICAL (2026-06-06). Blocks NO when
+        // the empirical hit rate of (≥ threshold K) is ≥ 85%, meaning
+        // the NO side has ≤ 15% chance to win. At that win rate the
+        // bet pays out so rarely that even fat model 'edges' are
+        // structural mispricings against the empirical baseline.
+        //
+        // From the same 25,677 starter-games:
+        //   5-6 K/start (Valdez) → 3+ K hits 91.3% → NO 3+ blocked
+        //   4-5 K/start         → 2+ K hits 94.2% → NO 2+ blocked
+        //   <4 K/start          → no floor (3+ NO has 32.6% real chance)
         if (parsed.stat === "strikeouts") {
             const koStartRate = pitcherSeasonKPerStart(modelProps, mlbam);
-            if (koStartRate != null && koStartRate >= 4
+            const rates = getKpropHitRates(koStartRate, realisticCoefs);
+            if (rates) {
+                // Highest threshold T where P(≥T) ≥ 85% → NO at or
+                // below T is dead-on-arrival.
+                let empiricalFloor = null;
+                for (let t = 10; t >= 1; t--) {
+                    const p = rates[`p_${t}_plus`];
+                    if (p != null && p >= 0.85) {
+                        empiricalFloor = t;
+                        break;
+                    }
+                }
+                if (empiricalFloor != null && parsed.threshold <= empiricalFloor) {
+                    _state._noFloorBlock = (_state._noFloorBlock || new Map());
+                    _state._noFloorBlock.set(propKey, {
+                        threshold: parsed.threshold,
+                        floor: empiricalFloor,
+                        kPerStart: koStartRate.toFixed(2),
+                        empiricalPYes: (rates[`p_${parsed.threshold}_plus`] * 100).toFixed(1) + "%",
+                    });
+                }
+            } else if (koStartRate != null && koStartRate >= 4
                 && parsed.threshold <= Math.floor(koStartRate * 0.6)) {
-                // Only blocks NO side — YES at low thresholds is fine.
-                // We'll find out which side we're firing in a moment;
-                // tag and skip there.
+                // Fallback when coefs not yet loaded — old K/start × 0.6 rule.
                 _state._noFloorBlock = (_state._noFloorBlock || new Map());
                 _state._noFloorBlock.set(propKey, {
                     threshold: parsed.threshold,
@@ -1085,7 +1104,10 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // bot picked NO, skip. YES side at the same threshold is fine.
         if (side === "no" && _state._noFloorBlock?.has(propKey)) {
             const blk = _state._noFloorBlock.get(propKey);
-            log("skip", `K-prop NO floor — ${parsed.player} ${parsed.threshold}+ K NO: threshold ≤ ${blk.floor} = 60% of ${blk.kPerStart} K/start, structural mispricing not edge`);
+            const empiricalNote = blk.empiricalPYes
+                ? `empirical P(${blk.threshold}+ K) = ${blk.empiricalPYes} → NO wins ≤ ${(100 - parseFloat(blk.empiricalPYes)).toFixed(1)}% of the time`
+                : `threshold ≤ ${blk.floor} = 60% of ${blk.kPerStart} K/start`;
+            log("skip", `K-prop NO floor — ${parsed.player} ${parsed.threshold}+ K NO blocked: ${empiricalNote}`);
             continue;
         }
 
@@ -1583,9 +1605,20 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         //   - Ask <= 20¢ (live market implies < 20% YES)
         //   - K-prop YES at threshold within 1 of the realistic
         //     ceiling (borderline; ok to take, just smaller size)
+        // BORDERLINE-SIZING — empirical hit rate in 15-35% range.
+        // Reads from the kprop_hit_rates_by_k_per_start table; falls
+        // back to the 'within 1 of ceiling' heuristic when the table
+        // isn't loaded.
         let kPropBorderline = false;
-        if (parsed.stat === "strikeouts" && side === "yes" && realisticMax != null) {
-            kPropBorderline = (parsed.threshold >= realisticMax - 1);
+        if (parsed.stat === "strikeouts" && side === "yes") {
+            const koStartRate = pitcherSeasonKPerStart(modelProps, mlbam);
+            const rates = getKpropHitRates(koStartRate, realisticCoefs);
+            const empP = rates?.[`p_${parsed.threshold}_plus`];
+            if (empP != null) {
+                kPropBorderline = (empP >= 0.15 && empP <= 0.35);
+            } else if (realisticMax != null) {
+                kPropBorderline = (parsed.threshold >= realisticMax - 1);
+            }
         }
         const isLowProbYesBuy = side === "yes"
             && (parsed.stat === "home_runs" || askCents <= 20 || kPropBorderline);
@@ -3114,18 +3147,50 @@ async function wouldFailCurrentBuyGates(fire) {
     const kPerStart = so / gs;
     const side = fire.side || "yes";
     const threshold = fire.threshold || 0;
+    const coefs = await getCoefficients();
+    const rates = getKpropHitRates(kPerStart, coefs);
     if (side === "yes") {
-        // Mirror the buy-side YES ceiling rule.
+        // Empirical ceiling — highest threshold where P ≥ 20%.
+        if (rates) {
+            let ceiling = 0;
+            for (let t = 10; t >= 1; t--) {
+                const p = rates[`p_${t}_plus`];
+                if (p != null && p >= 0.20) { ceiling = t; break; }
+            }
+            if (threshold > ceiling) {
+                const empP = rates[`p_${threshold}_plus`];
+                const empNote = empP != null ? ` (empirical P = ${(empP*100).toFixed(1)}%)` : "";
+                return `K-prop YES ${threshold}+ exceeds current ceiling ${ceiling}${empNote} (K/start ${kPerStart.toFixed(2)})`;
+            }
+            return null;
+        }
+        // Fallback to old hardcoded rule
         const softCeiling = Math.max(1, Math.ceil(kPerStart * 1.5));
-        const effective = kPerStart < 6 ? Math.min(softCeiling, 7) : softCeiling;
+        const effective = kPerStart < 5 ? Math.min(softCeiling, 6)
+                        : kPerStart < 6 ? Math.min(softCeiling, 7)
+                        : softCeiling;
         if (threshold > effective) {
-            return `K-prop YES ${threshold}+ exceeds current ceiling ${effective} (${pInfo.seasonSo} K / ${pInfo.seasonGs} GS = ${kPerStart.toFixed(2)} K/start)`;
+            return `K-prop YES ${threshold}+ exceeds current ceiling ${effective} (K/start ${kPerStart.toFixed(2)})`;
         }
     } else if (side === "no") {
-        // Mirror the buy-side NO floor rule.
+        // Empirical floor — highest threshold where P ≥ 85%.
+        if (rates) {
+            let floor = null;
+            for (let t = 10; t >= 1; t--) {
+                const p = rates[`p_${t}_plus`];
+                if (p != null && p >= 0.85) { floor = t; break; }
+            }
+            if (floor != null && threshold <= floor) {
+                const empP = rates[`p_${threshold}_plus`];
+                const empNote = empP != null ? ` (empirical P = ${(empP*100).toFixed(1)}%)` : "";
+                return `K-prop NO ${threshold}+ below current floor ${floor}${empNote} (K/start ${kPerStart.toFixed(2)})`;
+            }
+            return null;
+        }
+        // Fallback
         const floor = Math.floor(kPerStart * 0.6);
         if (kPerStart >= 4 && threshold <= floor) {
-            return `K-prop NO ${threshold}+ below current floor ${floor} (${pInfo.seasonSo} K / ${pInfo.seasonGs} GS = ${kPerStart.toFixed(2)} K/start)`;
+            return `K-prop NO ${threshold}+ below current floor ${floor} (K/start ${kPerStart.toFixed(2)})`;
         }
     }
     return null;
@@ -3555,6 +3620,29 @@ function baselineProbForBet(modelProps, playerMlbam, stat, threshold) {
 //
 // Returns null when we can't compute (early season, missing data) —
 // caller treats null as "can't decide, allow."
+// Bucket label for the empirical K-prop hit-rate table. Must match
+// the buckets in scripts/derive_coefficients.py
+// (derive_kprop_threshold_hit_rates_by_k_per_start).
+function bucketForKPerStart(kps) {
+    if (kps < 4) return "<4";
+    if (kps < 5) return "4-5";
+    if (kps < 6) return "5-6";
+    if (kps < 7) return "6-7";
+    if (kps < 8) return "7-8";
+    return "8+";
+}
+
+// Reads the K-prop empirical hit rate from the coefficients table.
+// Sync — uses a cached coefs object so callers don't have to await.
+// Returns the per-bucket rates record or null.
+function getKpropHitRates(kPerStart, coefs) {
+    if (kPerStart == null || !coefs) return null;
+    const bucket = bucketForKPerStart(kPerStart);
+    const rates = coefs.kprop_hit_rates_by_k_per_start?.[bucket];
+    if (!rates || (rates.n || 0) < 100) return null;
+    return rates;
+}
+
 // Pitcher season K-per-start, used by the K-prop NO floor guard.
 function pitcherSeasonKPerStart(modelProps, playerMlbam) {
     if (!modelProps?.lineups || !playerMlbam) return null;
@@ -3571,7 +3659,7 @@ function pitcherSeasonKPerStart(modelProps, playerMlbam) {
     return null;
 }
 
-function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
+function realisticThresholdCeiling(modelProps, playerMlbam, stat, coefs) {
     if (!modelProps?.lineups || !playerMlbam) return null;
     const want = String(playerMlbam);
     if (stat === "strikeouts") {
@@ -3583,15 +3671,32 @@ function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
             const so = lp.pitcher_season_so || 0;
             if (gs < 3) return null;
             const kPerStart = so / gs;
-            // User direction (2026-06-06): 'Montero's K/9 is low,
-            // 5 OK, 6 could be a lower price bet, 7 is unlikely to
-            // ever happen.' Tighten the cap further for low-K
-            // starters so 7+ stops firing on guys averaging 4-5
-            // K/start.
-            //   1.5× for Gray (4.56)     → ceil 7, K<5 → cap 6 → 7+/8+/9+ blocked
-            //   1.5× for Montero (~4.5)  → ceil 7, K<5 → cap 6 → 7+ blocked, 6+ allowed
-            //   1.5× for mid-tier (~5.5) → ceil 9, K<6 → cap 7 → 7+ allowed, 8+ blocked
-            //   1.5× for Cole (8.75)     → ceil 14, no cap   → 9+/10+ allowed
+            // EMPIRICAL CEILING (2026-06-06). Highest threshold where
+            // the per-bucket empirical hit rate is ≥ 20% — below 20%
+            // the variance dominates any plausible model edge. Reads
+            // the table written by derive_coefficients.py
+            // (kprop_hit_rates_by_k_per_start), so when the table is
+            // re-derived these caps move automatically.
+            //
+            // 25,677 starter-games (2018-2024) give the per-bucket
+            // ceiling:
+            //   <4   K/start → 5 (5+ at 27.8%, 6+ at 14.4% blocked)
+            //   4-5  K/start → 6 (6+ at 29.8%, 7+ at 16.4% blocked)
+            //   5-6  K/start → 7 (7+ at 30.5%, 8+ at 17.5% blocked)
+            //   6-7  K/start → 8 (8+ at 31.1%, 9+ at 18.6% blocked)
+            //   7-8  K/start → 9 (9+ at 32.7%, 10+ blocked)
+            //   8+   K/start → 10
+            const rates = getKpropHitRates(kPerStart, coefs);
+            if (rates) {
+                for (let t = 10; t >= 1; t--) {
+                    const p = rates[`p_${t}_plus`];
+                    if (p != null && p >= 0.20) return t;
+                }
+                return 0;
+            }
+            // Fallback when coefs aren't loaded yet — use the
+            // original 1.5× rule. Matches the empirical caps within
+            // ±1 threshold for every bucket.
             const softCeiling = Math.max(1, Math.ceil(kPerStart * 1.5));
             if (kPerStart < 5) return Math.min(softCeiling, 6);
             if (kPerStart < 6) return Math.min(softCeiling, 7);
