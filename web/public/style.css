@@ -1463,8 +1463,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .ph-headshot img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    object-position: center top;
+    /* User direction (2026-06-06): 'Make sure the whole face and hat
+       are in the frame. Shrink the picture if you need to.' Was
+       object-fit: cover with center-top — cropped the top of the hat
+       AND the chin. 'contain' fits the full portrait inside the
+       circle; the empty corners on the sides blend with the dark
+       surface background. */
+    object-fit: contain;
+    object-position: center;
     display: block;
 }
 .ph-headshot-initials {
