@@ -1573,16 +1573,22 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         }
 
         let contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
-        // LOW-PROBABILITY SIZING CAP (2026-06-06). User direction:
-        // 'betting on lower named guys hitting homeruns is good, but
-        // we need to put less money on it. No reason to put that much
-        // money on it if its such low probability.' For HR-prop YES
-        // (and any prop YES bought below 20¢, which implies <20% live
-        // market probability), cap total exposure at 50¢. Kelly was
-        // sizing $1.60-$2.00 positions on guys with 10-15% true win
-        // rate — too much capital for the variance.
+        // LOW-PROBABILITY SIZING CAP (2026-06-06). User direction
+        // (HR): 'betting on lower named guys hitting homeruns is
+        // good, but we need to put less money on it.' (Montero):
+        // '6 could be a lower price bet because the odds are good.'
+        // Cap total exposure at 50¢ for any YES bet that lives in
+        // the long tail of its distribution:
+        //   - HR props (always low-probability)
+        //   - Ask <= 20¢ (live market implies < 20% YES)
+        //   - K-prop YES at threshold within 1 of the realistic
+        //     ceiling (borderline; ok to take, just smaller size)
+        let kPropBorderline = false;
+        if (parsed.stat === "strikeouts" && side === "yes" && realisticMax != null) {
+            kPropBorderline = (parsed.threshold >= realisticMax - 1);
+        }
         const isLowProbYesBuy = side === "yes"
-            && (parsed.stat === "home_runs" || askCents <= 20);
+            && (parsed.stat === "home_runs" || askCents <= 20 || kPropBorderline);
         if (isLowProbYesBuy && contracts * askCents > 50) {
             const cappedContracts = Math.max(1, Math.floor(50 / askCents));
             if (cappedContracts < contracts) {
@@ -3577,20 +3583,18 @@ function realisticThresholdCeiling(modelProps, playerMlbam, stat) {
             const so = lp.pitcher_season_so || 0;
             if (gs < 3) return null;
             const kPerStart = so / gs;
-            // User direction (2026-06-05): 'Sonny Gray has 41 ks in
-            // 50 innings and you just took 9+. Why?' — Gray is at
-            // 4.56 K/start so 2× ceiling = 10 was letting 9+ through.
-            // Tighten to 1.5× ceiling AND require a 6 K/start floor
-            // before allowing thresholds >= 8.
-            //   1.5× for Gray (4.56)  → ceil 7  → 8+/9+ blocked
-            //   1.5× for Cole (8.75)  → ceil 14 → 9+/10+ allowed
+            // User direction (2026-06-06): 'Montero's K/9 is low,
+            // 5 OK, 6 could be a lower price bet, 7 is unlikely to
+            // ever happen.' Tighten the cap further for low-K
+            // starters so 7+ stops firing on guys averaging 4-5
+            // K/start.
+            //   1.5× for Gray (4.56)     → ceil 7, K<5 → cap 6 → 7+/8+/9+ blocked
+            //   1.5× for Montero (~4.5)  → ceil 7, K<5 → cap 6 → 7+ blocked, 6+ allowed
+            //   1.5× for mid-tier (~5.5) → ceil 9, K<6 → cap 7 → 7+ allowed, 8+ blocked
+            //   1.5× for Cole (8.75)     → ceil 14, no cap   → 9+/10+ allowed
             const softCeiling = Math.max(1, Math.ceil(kPerStart * 1.5));
-            if (kPerStart < 6) {
-                // Cap at the soft ceiling AND no higher than 7. A
-                // pitcher who averages 4 K/start doesn't reach 8+ in
-                // a real start.
-                return Math.min(softCeiling, 7);
-            }
+            if (kPerStart < 5) return Math.min(softCeiling, 6);
+            if (kPerStart < 6) return Math.min(softCeiling, 7);
             return softCeiling;
         }
         return null;
