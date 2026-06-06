@@ -292,6 +292,120 @@ def derive_kprop_threshold_hit_rates_by_k_per_start(conn: sqlite3.Connection):
     return out
 
 
+def derive_hitprop_hit_rates_by_season_avg(conn: sqlite3.Connection):
+    """Empirical TB and Hits hit rate per threshold, bucketed by the
+    batter's season TB/game and H/game respectively.
+
+    Used by autobot.js to fire hitter YES bets when the bucket's
+    empirical rate is well above market price. Same structure as
+    kprop_hit_rates_by_k_per_start.
+    """
+    print("  Hit-prop hit rates by season avg...", file=sys.stderr)
+    sql_tb = f"""
+    WITH per_game AS (
+        SELECT year, batter, game_id,
+               SUM(CASE outcome WHEN '1B' THEN 1 WHEN '2B' THEN 2 WHEN '3B' THEN 3 WHEN 'HR' THEN 4 ELSE 0 END) AS tb,
+               COUNT(*) AS pa
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, batter, game_id
+    ),
+    starts AS (SELECT * FROM per_game WHERE pa >= 3),
+    season_avgs AS (
+        SELECT year, batter,
+               COUNT(*) AS games,
+               CAST(SUM(tb) AS REAL) / COUNT(*) AS tb_per_game
+        FROM starts
+        GROUP BY year, batter
+        HAVING COUNT(*) >= 40
+    )
+    SELECT s.tb, sa.tb_per_game
+    FROM starts s
+    JOIN season_avgs sa USING (year, batter)
+    """
+    tb_buckets = [
+        ("<0.8",   0.0, 0.8),
+        ("0.8-1.0", 0.8, 1.0),
+        ("1.0-1.2", 1.0, 1.2),
+        ("1.2-1.4", 1.2, 1.4),
+        ("1.4-1.6", 1.4, 1.6),
+        ("1.6-1.8", 1.6, 1.8),
+        ("1.8+",   1.8, 99.0),
+    ]
+    tb_thresholds = [1, 2, 3, 4]
+    tb_data = {b[0]: {"n": 0, **{f"p_{t}_plus": 0 for t in tb_thresholds}} for b in tb_buckets}
+    for row in conn.execute(sql_tb):
+        rate = row["tb_per_game"]
+        tb   = row["tb"] or 0
+        if rate is None: continue
+        for label, lo, hi in tb_buckets:
+            if lo <= rate < hi:
+                d = tb_data[label]
+                d["n"] += 1
+                for t in tb_thresholds:
+                    if tb >= t: d[f"p_{t}_plus"] += 1
+                break
+
+    sql_h = f"""
+    WITH per_game AS (
+        SELECT year, batter, game_id,
+               SUM(CASE WHEN outcome IN ('1B','2B','3B','HR') THEN 1 ELSE 0 END) AS h,
+               COUNT(*) AS pa
+        FROM at_bats
+        WHERE year IN {YEARS_SQL}
+        GROUP BY year, batter, game_id
+    ),
+    starts AS (SELECT * FROM per_game WHERE pa >= 3),
+    season_avgs AS (
+        SELECT year, batter,
+               COUNT(*) AS games,
+               CAST(SUM(h) AS REAL) / COUNT(*) AS h_per_game
+        FROM starts
+        GROUP BY year, batter
+        HAVING COUNT(*) >= 40
+    )
+    SELECT s.h, sa.h_per_game
+    FROM starts s
+    JOIN season_avgs sa USING (year, batter)
+    """
+    h_buckets = [
+        ("<0.5",    0.0, 0.5),
+        ("0.5-0.7", 0.5, 0.7),
+        ("0.7-0.8", 0.7, 0.8),
+        ("0.8-0.9", 0.8, 0.9),
+        ("0.9-1.0", 0.9, 1.0),
+        ("1.0+",    1.0, 99.0),
+    ]
+    h_thresholds = [1, 2, 3]
+    h_data = {b[0]: {"n": 0, **{f"p_{t}_plus": 0 for t in h_thresholds}} for b in h_buckets}
+    for row in conn.execute(sql_h):
+        rate = row["h_per_game"]
+        h    = row["h"] or 0
+        if rate is None: continue
+        for label, lo, hi in h_buckets:
+            if lo <= rate < hi:
+                d = h_data[label]
+                d["n"] += 1
+                for t in h_thresholds:
+                    if h >= t: d[f"p_{t}_plus"] += 1
+                break
+
+    def finalize(buckets_data, thresholds):
+        out = {}
+        for label, d in buckets_data.items():
+            n = d["n"] or 1
+            rec = {"n": d["n"]}
+            for t in thresholds:
+                rec[f"p_{t}_plus"] = round(d[f"p_{t}_plus"] / n, 4)
+            out[label] = rec
+        return out
+
+    return {
+        "tb_by_season_tb_per_game":  finalize(tb_data, tb_thresholds),
+        "hits_by_season_h_per_game": finalize(h_data, h_thresholds),
+    }
+
+
 # ── Weather coefficients ──────────────────────────────────────────
 
 def derive_weather(conn: sqlite3.Connection):
@@ -898,6 +1012,7 @@ def main() -> int:
         "hitter_quality_by_season_avg":   derive_hitter_quality(conn),
         "kprop_by_pitcher_season_k9":     derive_kprop_pitcher_quality(conn),
         "kprop_hit_rates_by_k_per_start": derive_kprop_threshold_hit_rates_by_k_per_start(conn),
+        "hitprop_hit_rates_by_season_avg": derive_hitprop_hit_rates_by_season_avg(conn),
         "weather":                        derive_weather(conn),
         "batter_recent_form_15g":         derive_batter_recent_form(conn),
         "pitcher_recent_form_5gs":        derive_pitcher_recent_form(conn),

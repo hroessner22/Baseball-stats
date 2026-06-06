@@ -1485,6 +1485,29 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             ? (_state.settings.favored_no_extra_pp || 0)
             : 0;
         const noPenalty = side === "no" ? 4 : 0;
+        // EMPIRICAL YES-SIDE BONUS for hitter props (2026-06-06).
+        // User direction: 'Find a way to have hits or total bases
+        // fire that is backed by stats.' When the batter's bucket
+        // empirical hit rate beats the live YES market price by
+        // ≥5pp, lower the YES edge bar by 2pp (5pp → 3pp). Catches
+        // the under-priced YES side on power hitters and 1.0+ h/game
+        // hitters where market consistently under-prices the tail.
+        //
+        // Live values from 233k batter-games (2018-2024):
+        //   TB 2+ for 1.6-1.8 TB/game: 41.5% empirical
+        //   TB 2+ for 1.8+ TB/game:    47.2% empirical
+        //   Hits 1+ for 1.0+ h/game:   70.6% empirical
+        //   Hits 2+ for 1.0+ h/game:   30.6% empirical
+        let yesEmpiricalBonus = 0;
+        if (side === "yes"
+            && (parsed.stat === "hits" || parsed.stat === "total_bases")
+            && market_p != null) {
+            const empResult = getHitterEmpiricalP(modelProps, mlbam, parsed.stat, parsed.threshold, realisticCoefs);
+            if (empResult && (empResult.p - market_p) >= 0.05) {
+                yesEmpiricalBonus = -2;
+                log("bot", `Empirical YES bonus — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} YES: bucket=${empResult.bucket} (${empResult.perGame.toFixed(2)}/g), emp ${(empResult.p*100).toFixed(1)}% vs market ${(market_p*100).toFixed(1)}% (+${((empResult.p - market_p)*100).toFixed(1)}pp). Edge bar dropped to ${propThreshold + yesEmpiricalBonus}pp.`);
+            }
+        }
         // NO TOTAL_BASES 2+ AT HIGH ENTRY (2026-06-05, revised at
         // game end). Final bucket record: 2-4 settled, but four of
         // four LOSSES sit at askCents >= 82, and the two WINS sit
@@ -1499,7 +1522,10 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             && (parsed.threshold || 0) >= 2
             && askCents >= 85
         ) ? 4 : 0;
-        const effectivePropThreshold = propThreshold + noPenalty + favoredYesPenalty + noTbHighEntryPenalty;
+        const effectivePropThreshold = Math.max(
+            1,
+            propThreshold + noPenalty + favoredYesPenalty + noTbHighEntryPenalty + yesEmpiricalBonus
+        );
         if (edgePP < effectivePropThreshold) {
             if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "edge_below_threshold",
@@ -1525,7 +1551,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             const adjEdge = Number(score.edge_pp) || 0;
             const conf    = Number(score.confidence) || 0;
             const minConf = _state.settings.min_conviction;
-            const adjBar  = propThreshold + favoredYesPenalty + noTbHighEntryPenalty;
+            const adjBar  = Math.max(1, propThreshold + favoredYesPenalty + noTbHighEntryPenalty + yesEmpiricalBonus);
             if (adjEdge < adjBar) {
                 logScoredDecisionOnce(score, {
                     action: "skip", reason: "adjusted_edge_below_threshold",
@@ -1557,7 +1583,15 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // gate keys on the SEMANTIC identity of the bet (game +
         // player + stat + threshold + side), so the same bet can
         // never fire twice this session regardless of ticker shape.
-        const propFireKey = `${g.game_pk}:${mlbam}:${parsed.stat}:${parsed.threshold}:${side}`;
+        // Use the normalized player NAME (not mlbam) as the dedup
+        // key. Kalshi sometimes lists the same prop under two ticker
+        // shapes — 'Spencer Strider: 7+ K' and 'S. Strider: 7+ K' —
+        // and the nameToMlbam table can resolve those to different
+        // ids (one finds the player, one returns undefined). Keying
+        // on mlbam meant the second iteration with a different id
+        // bypassed the in-memory dedup AND set up the rest of the
+        // chain to also miss. Normalized name is the stable identity.
+        const propFireKey = `${g.game_pk}:${normName(parsed.player)}:${parsed.stat}:${parsed.threshold}:${side}`;
         if (_state.propSessionFires.has(propFireKey)) {
             if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "already_fired_this_prop",
@@ -3735,6 +3769,63 @@ function getKpropHitRates(kPerStart, coefs) {
     const rates = coefs.kprop_hit_rates_by_k_per_start?.[bucket];
     if (!rates || (rates.n || 0) < 100) return null;
     return rates;
+}
+
+// Empirical hit rate for a HITTER prop at a given threshold. Reads
+// hitprop_hit_rates_by_season_avg from the coefficients table. Returns
+// the P(stat >= threshold) for the batter's season-rate bucket, or
+// null if data is missing.
+function bucketForTbPerGame(rate) {
+    if (rate < 0.8) return "<0.8";
+    if (rate < 1.0) return "0.8-1.0";
+    if (rate < 1.2) return "1.0-1.2";
+    if (rate < 1.4) return "1.2-1.4";
+    if (rate < 1.6) return "1.4-1.6";
+    if (rate < 1.8) return "1.6-1.8";
+    return "1.8+";
+}
+function bucketForHPerGame(rate) {
+    if (rate < 0.5) return "<0.5";
+    if (rate < 0.7) return "0.5-0.7";
+    if (rate < 0.8) return "0.7-0.8";
+    if (rate < 0.9) return "0.8-0.9";
+    if (rate < 1.0) return "0.9-1.0";
+    return "1.0+";
+}
+function getHitterEmpiricalP(modelProps, playerMlbam, stat, threshold, coefs) {
+    if (!modelProps?.lineups || !playerMlbam || !coefs) return null;
+    const want = String(playerMlbam);
+    for (const sk of ["home", "away"]) {
+        const lp = modelProps.lineups[sk];
+        if (!lp?.batters) continue;
+        const b = lp.batters.find((x) => String(x.mlbam) === want);
+        if (!b) continue;
+        const g = b.season_games || 0;
+        if (g < 40) return null;
+        let perGame = 0;
+        let table = null;
+        let bucket = null;
+        if (stat === "hits") {
+            perGame = (b.season_hits || 0) / g;
+            table = coefs.hitprop_hit_rates_by_season_avg?.hits_by_season_h_per_game;
+            bucket = bucketForHPerGame(perGame);
+        } else if (stat === "total_bases") {
+            const tb = (b.season_hits || 0)
+                     + (b.season_doubles || 0)
+                     + 2 * (b.season_triples || 0)
+                     + 3 * (b.season_home_runs || 0);
+            perGame = tb / g;
+            table = coefs.hitprop_hit_rates_by_season_avg?.tb_by_season_tb_per_game;
+            bucket = bucketForTbPerGame(perGame);
+        } else {
+            return null;
+        }
+        const rates = table?.[bucket];
+        if (!rates || (rates.n || 0) < 100) return null;
+        const p = rates[`p_${threshold}_plus`];
+        return p == null ? null : { p, bucket, perGame, n: rates.n };
+    }
+    return null;
 }
 
 // Pitcher season K-per-start, used by the K-prop NO floor guard.
