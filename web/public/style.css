@@ -3995,6 +3995,20 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     border: 1px solid var(--border);
     border-radius: var(--radius);
 }
+.player-row-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.player-row-stats {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+}
 
 /* AT BAT + PITCHING side-by-side so both are visible above-the-fold on
    wider screens. Stacks back to one column on narrow viewports. */

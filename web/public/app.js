@@ -4073,22 +4073,26 @@ async function refreshGame(id) {
         }
         if (gameViewMode === "boxscore") {
             hydrateBoxscore(id, g.status);
-        } else if (gameViewMode === "live" && hasGameBets(id)) {
-            // Live View hydrates its own dedicated boxscore (for the
-            // rail meter) + Kalshi orderbooks (for the live mark).
-            // Edge-cached, so the refetch on the 5s tick is cheap.
-            // After both settle, repaintRailBets swaps just the rail
-            // card without re-rendering the whole game view.
-            hydrateRailLiveData(id).then(() => {
+        } else if (gameViewMode === "live") {
+            // Always hydrate the rail boxscore on Live View — it
+            // feeds both the rail bets meter AND the AT BAT /
+            // PITCHING stat lines. Edge-cached, so cheap on every
+            // 5s tick. Only kick the bets-specific Kalshi orderbook
+            // path when there are actual bets on this game.
+            hydrateRailBoxscore(id).then(() => {
                 if (String(id) !== String(activeGameId)) return;
                 if (gameViewMode !== "live") return;
-                repaintRailBets(g);
+                // Trigger a soft repaint so the new stat lines show.
+                safeSetHTML(gameView, renderGame(g));
             });
-            // Also kick the practice cashout check on this tick so a
-            // newly-dead position exits within the same 5s window the
-            // user is watching — without waiting for the global
-            // practice-cashout timer to come around.
-            try { window.AutoBot?.runPracticeCashoutCheck?.(); } catch {}
+            if (hasGameBets(id)) {
+                hydrateRailLiveData(id).then(() => {
+                    if (String(id) !== String(activeGameId)) return;
+                    if (gameViewMode !== "live") return;
+                    repaintRailBets(g);
+                });
+                try { window.AutoBot?.runPracticeCashoutCheck?.(); } catch {}
+            }
         }
         if (gameViewMode === "markets") {
             hydrateMarkets(id);
@@ -5288,10 +5292,13 @@ function fieldPane(g) {
     // play-by-play so they're always above-the-fold (the field SVG
     // grew enough that stacking them below was pushing the matchup
     // out of view at 1080p).
+    const railBox = _railBoxscores.get(String(g.game_pk))?.data || null;
+    const batterStat  = matchupStatLineForBatter(g.batter, railBox);
+    const pitcherStat = matchupStatLineForPitcher(g.pitcher, railBox);
     const matchupCompact = (g.batter || g.pitcher)
         ? `<div class="matchup-pair matchup-pair-rail">
-             ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
-             ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
+             ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id, batterStat) : ""}
+             ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id, pitcherStat) : ""}
            </div>`
         : "";
     const betsRail = renderGameBetsCardRail(g);
@@ -5677,10 +5684,9 @@ function situationStrip(g) {
     return `<div class="situation"><span class="state-label">${(g.detail || g.status).toUpperCase()}</span></div>`;
 }
 
-function matchupRow(label, name, hand, mlbam) {
+function matchupRow(label, name, hand, mlbam, statLine) {
     // Wrap the name in a player link when we have an MLBAM id — clicking
-    // the batter / pitcher takes you to their profile page (same target
-    // as the player links inside the recent-PA list).
+    // the batter / pitcher takes you to their profile page.
     const nameHtml = mlbam
         ? `<a class="player-link" href="#player/${mlbam}"><strong>${name}</strong></a>`
         : `<strong>${name}</strong>`;
@@ -5694,10 +5700,65 @@ function matchupRow(label, name, hand, mlbam) {
       <div class="player-row">
         <span class="label">${label}</span>
         ${headshot}
-        ${nameHtml}
+        <div class="player-row-body">
+          ${nameHtml}
+          ${statLine ? `<div class="player-row-stats">${statLine}</div>` : ""}
+        </div>
         <span class="hand">${hand}</span>
       </div>
     `;
+}
+
+// Pull today's compact stat line for the current batter or pitcher
+// from the live boxscore. User direction (2026-06-06): 'put their
+// short lines here, only the most important stats. Pitchers IP, K,
+// H. Batters is different.' Industry standard for hitter live cards
+// is AB-H plus the marquee event (HR/2B/3B/BB/K/RBI). Pitchers get
+// IP / K / H / ER.
+function matchupStatLineForBatter(player, boxscore) {
+    if (!player?.id || !boxscore?.batting) return "";
+    const want = String(player.id);
+    let line = null;
+    for (const side of ["home", "away"]) {
+        const ln = (boxscore.batting[side] || []).find((b) => String(b.mlbam) === want);
+        if (ln) { line = ln; break; }
+    }
+    if (!line) return "";
+    const ab  = Number(line.AB) || 0;
+    const h   = Number(line.H)  || 0;
+    const hr  = Number(line.HR) || 0;
+    const dbl = Number(line._2B) || 0;
+    const tpl = Number(line._3B) || 0;
+    const bb  = Number(line.BB) || 0;
+    const k   = Number(line.K)  || 0;
+    const rbi = Number(line.RBI) || 0;
+    const parts = [`${h}-${ab}`];
+    if (hr)  parts.push(`${hr} HR`);
+    else if (tpl) parts.push(`${tpl} 3B`);
+    else if (dbl) parts.push(`${dbl} 2B`);
+    if (rbi) parts.push(`${rbi} RBI`);
+    if (bb)  parts.push(`${bb} BB`);
+    if (k)   parts.push(`${k} K`);
+    return parts.join(" · ");
+}
+function matchupStatLineForPitcher(player, boxscore) {
+    if (!player?.id || !boxscore?.pitching) return "";
+    const want = String(player.id);
+    let line = null;
+    for (const side of ["home", "away"]) {
+        const ln = (boxscore.pitching[side] || []).find((p) => String(p.mlbam) === want);
+        if (ln) { line = ln; break; }
+    }
+    if (!line) return "";
+    const ip  = String(line.IP || "0.0");
+    const k   = Number(line.K)  || 0;
+    const h   = Number(line.H)  || 0;
+    const er  = Number(line.ER) || 0;
+    const bb  = Number(line.BB) || 0;
+    const parts = [`${ip} IP`, `${k} K`, `${h} H`];
+    if (er) parts.push(`${er} ER`);
+    if (bb && bb >= 2) parts.push(`${bb} BB`);
+    return parts.join(" · ");
 }
 
 function cardPane(g) {
