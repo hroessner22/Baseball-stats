@@ -3007,6 +3007,10 @@ async function isMathematicallyDead(fire) {
     const pitchedHome = (box.pitching?.home || []).some((p) => (p.IP || "0.0") !== "0.0" || (p.batters_faced || 0) > 0 || (p.pitches || 0) > 0);
     const pitchedAway = (box.pitching?.away || []).some((p) => (p.IP || "0.0") !== "0.0" || (p.batters_faced || 0) > 0 || (p.pitches || 0) > 0);
     if (!pitchedHome && !pitchedAway && !hasPitchedAtAll) {
+        // Pre-game — math-dead can't apply unless we also realize the
+        // fire was a mistake to begin with. wouldFailCurrentBuyGates
+        // handles the actual retraction path; isMathematicallyDead
+        // stays silent so it doesn't false-positive on pregame data.
         return null;
     }
     const current = boxscoreStatForProp(box, fire.player, fire.stat);
@@ -3032,6 +3036,40 @@ async function isMathematicallyDead(fire) {
 // runPracticeCashoutCheck (practice fires) to override the empirical
 // table's optimistic 'needs 1 more K = 70%' on starters who aren't
 // coming back out.
+// Re-runs the CURRENT buy gates against an already-placed fire. When
+// the bot's rules have evolved (e.g. 1.5× K-prop ceiling, K-prop NO
+// floor) and an old fire would no longer clear them, that's a
+// 'mistake retraction' candidate — let it exit even pre-game.
+// User direction (2026-06-06): 'we wont pregame cashout unless we
+// realize we made a mistake.'
+async function wouldFailCurrentBuyGates(fire) {
+    if (!fire || fire.kind !== "player_prop" || fire.stat !== "strikeouts") return null;
+    if (!fire.game_pk || !fire.player) return null;
+    const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
+    if (!pInfo) return null;
+    const gs = pInfo.seasonGs || 0;
+    const so = pInfo.seasonSo || 0;
+    if (gs < 3) return null;
+    const kPerStart = so / gs;
+    const side = fire.side || "yes";
+    const threshold = fire.threshold || 0;
+    if (side === "yes") {
+        // Mirror the buy-side YES ceiling rule.
+        const softCeiling = Math.max(1, Math.ceil(kPerStart * 1.5));
+        const effective = kPerStart < 6 ? Math.min(softCeiling, 7) : softCeiling;
+        if (threshold > effective) {
+            return `K-prop YES ${threshold}+ exceeds current ceiling ${effective} (${pInfo.seasonSo} K / ${pInfo.seasonGs} GS = ${kPerStart.toFixed(2)} K/start)`;
+        }
+    } else if (side === "no") {
+        // Mirror the buy-side NO floor rule.
+        const floor = Math.floor(kPerStart * 0.6);
+        if (kPerStart >= 4 && threshold <= floor) {
+            return `K-prop NO ${threshold}+ below current floor ${floor} (${pInfo.seasonSo} K / ${pInfo.seasonGs} GS = ${kPerStart.toFixed(2)} K/start)`;
+        }
+    }
+    return null;
+}
+
 async function starterPullProbableReason(fire) {
     if (!fire || !fire.game_pk || !fire.player) return null;
     const pInfo = await getLivePitcherInfo(fire.game_pk, fire.player);
@@ -3122,17 +3160,22 @@ async function runPracticeCashoutCheck() {
         const heldSide = fire.side || "yes";
         const contractsEarly = fire.contracts || 1;
         const entryEarly     = fire.price_cents || 0;
-        // PRE-GAME GUARD (2026-06-05). User direction: 'you also now
-        // placed and cashed out a bet before the game started. Never
-        // let that happen.' Before any pitch has been thrown the
-        // mark-to-market is noise, the empirical lookups use the
-        // pregame state which is always 'still reachable', and any
-        // 'dead' signal we'd find is a lineup-not-loaded artifact.
-        // Just hold pregame fires — they go live with the game.
+        // PRE-GAME GUARD with MISTAKE-RETRACTION EXCEPTION. By default
+        // we don't cashout pregame — mark-to-market is noise, the
+        // empirical lookups use stale pregame state. EXCEPTION: if
+        // the fire would no longer pass our current buy gates (e.g.
+        // a K-prop YES at a threshold we'd now block, or a K-prop NO
+        // below the current floor), allow the pregame retraction.
+        // User direction (2026-06-06): 'we wont pregame cashout
+        // unless we realize we made a mistake right?'
+        let mistakeReason = null;
         if (fire.game_pk) {
             const gInfo = await getLiveGameState(fire.game_pk);
             const inningNow = gInfo?.inning || 0;
-            if (inningNow < 1) continue;
+            if (inningNow < 1) {
+                mistakeReason = await wouldFailCurrentBuyGates(fire);
+                if (!mistakeReason) continue;
+            }
         }
         // STEP 0: mathematically dead check. NO with threshold met,
         // or YES K-prop with pitcher pulled. These are flat losses —
@@ -3237,11 +3280,13 @@ async function runPracticeCashoutCheck() {
         if (pullReason && wouldBeLoss && worldAgrees) {
             continue;
         }
-        if (!pullReason && !lockReason) continue;
+        if (!pullReason && !lockReason && !mistakeReason) continue;
         const proceeds = contracts * liveBidCents;
         const cost     = contracts * entryCents;
         const profit   = proceeds - cost;
-        const reasonText = pullReason || lockReason;
+        const reasonText = mistakeReason
+            ? `Mistake retraction: ${mistakeReason}`
+            : (pullReason || lockReason);
         fire.settled = {
             won: profit > 0,
             profit_cents: profit,
