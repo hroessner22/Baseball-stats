@@ -1530,6 +1530,19 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             log("skip", `Already fired — ${parsed.player} ${(side === "no" ? "under" : "over")} ${parsed.threshold} ${parsed.stat}: this exact bet already placed this session`);
             continue;
         }
+        // DOUBLE-CHECK against the actual fires log. In-memory
+        // propSessionFires can get out of sync (page reload, separate
+        // tab, mlbam resolving differently across scans). User
+        // direction (2026-06-06): 'never double down like that' —
+        // two Nelson Velázquez 1+ HR YES bets fired 22 min apart.
+        // This persistent check uses the same key against both the
+        // practice and real fire stores, so a same-player+stat+
+        // threshold+side+game is locked out regardless of state.
+        if (hasOpenSameProp(g.game_pk, parsed.player, parsed.stat, parsed.threshold, side)) {
+            log("skip", `Already-open dedup — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()}: open fire exists on this same prop, no double-down`);
+            _state.propSessionFires.add(propFireKey);
+            continue;
+        }
 
         // CORRELATED-LADDER GATE — Cole over 6/7/8/9/10 K is one
         // outcome priced 5 ways. Allow stacked fires ONLY when each
@@ -1559,7 +1572,24 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             }
         }
 
-        const contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
+        let contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
+        // LOW-PROBABILITY SIZING CAP (2026-06-06). User direction:
+        // 'betting on lower named guys hitting homeruns is good, but
+        // we need to put less money on it. No reason to put that much
+        // money on it if its such low probability.' For HR-prop YES
+        // (and any prop YES bought below 20¢, which implies <20% live
+        // market probability), cap total exposure at 50¢. Kelly was
+        // sizing $1.60-$2.00 positions on guys with 10-15% true win
+        // rate — too much capital for the variance.
+        const isLowProbYesBuy = side === "yes"
+            && (parsed.stat === "home_runs" || askCents <= 20);
+        if (isLowProbYesBuy && contracts * askCents > 50) {
+            const cappedContracts = Math.max(1, Math.floor(50 / askCents));
+            if (cappedContracts < contracts) {
+                log("bot", `Low-prob sizing cap — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} YES @ ${askCents}¢: Kelly said ${contracts}× but capping at ${cappedContracts}× ($${(cappedContracts*askCents/100).toFixed(2)} of $${(contracts*askCents/100).toFixed(2)})`);
+                contracts = cappedContracts;
+            }
+        }
         if (contracts < 1) {
             if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "unit_too_small_for_market",
@@ -2172,6 +2202,31 @@ function getFires() {
 // instead of calling Kalshi. Lets the user see what the bot would
 // have done — and how those positions move — without spending money.
 const LS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
+
+// Persistent same-prop dedup. Checks the actual fire logs (practice
+// and real) for an OPEN fire on the same game/player/stat/threshold/
+// side. Survives page reloads and works even if propSessionFires
+// goes out of sync.
+function hasOpenSameProp(gamePk, playerName, stat, threshold, side) {
+    const normTarget = normName(playerName || "");
+    const matches = (f) =>
+        !f.settled
+        && String(f.game_pk) === String(gamePk)
+        && f.kind === "player_prop"
+        && f.stat === stat
+        && Number(f.threshold) === Number(threshold)
+        && (f.side || "yes") === side
+        && normName(f.player || "") === normTarget;
+    try {
+        const practice = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]");
+        if (practice.some(matches)) return true;
+    } catch {}
+    try {
+        const real = JSON.parse(localStorage.getItem(LS_FIRES) || "[]");
+        if (real.some(matches)) return true;
+    } catch {}
+    return false;
+}
 
 // Flag a real-mode fire as mathematically dead but still open on
 // Kalshi (no closing bid available). UI uses this to demote the row
