@@ -2225,6 +2225,28 @@ function recordFiredBet(payload) {
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
     catch { arr = []; }
+    // LAST-LINE DEDUP (2026-06-06). Same guard as recordPracticeFire
+    // — refuse the write if an open fire on the same prop already
+    // exists. Player props only (moneylines on the same game can
+    // legitimately have multiple fires across different shifts).
+    if (payload.kind === "player_prop") {
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const sameOpen = arr.some((f) =>
+            !f.settled
+            && f.kind === "player_prop"
+            && String(f.game_pk) === String(payload.game_pk)
+            && f.stat === payload.stat
+            && Number(f.threshold) === Number(payload.threshold)
+            && (f.side || "yes") === (payload.side || "yes")
+            && norm(f.player) === norm(payload.player)
+        );
+        if (sameOpen) {
+            try {
+                log("skip", `Fire write blocked (last-line dedup) — same prop open: ${payload.player} ${payload.threshold}+ ${payload.stat} ${(payload.side || "yes").toUpperCase()}`);
+            } catch {}
+            return;
+        }
+    }
     arr.unshift(payload);
     if (arr.length > FIRES_MAX) arr.length = FIRES_MAX;
     try { localStorage.setItem(LS_FIRES, JSON.stringify(arr)); } catch {}
@@ -2296,6 +2318,30 @@ function recordPracticeFire(payload) {
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
     catch { arr = []; }
+    // LAST-LINE DEDUP (2026-06-06). User: 'stop doing stuff like
+    // this with the double bets.' Even with the upstream
+    // propSessionFires + hasOpenSameProp checks, duplicates are
+    // still landing in the practice log (mlbam-mismatch races,
+    // duplicate ticker shapes in the markets payload, etc.).
+    // This is the last line of defense: refuse the write if an
+    // open fire on the same (game, player, stat, threshold, side)
+    // already exists in the array.
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const sameOpen = arr.some((f) =>
+        !f.settled
+        && f.kind === payload.kind
+        && String(f.game_pk) === String(payload.game_pk)
+        && f.stat === payload.stat
+        && Number(f.threshold) === Number(payload.threshold)
+        && (f.side || "yes") === (payload.side || "yes")
+        && norm(f.player) === norm(payload.player)
+    );
+    if (sameOpen) {
+        try {
+            log("skip", `Practice write blocked (last-line dedup) — same prop open: ${payload.player} ${payload.threshold}+ ${payload.stat} ${(payload.side || "yes").toUpperCase()}`);
+        } catch {}
+        return;
+    }
     arr.unshift({ ...payload, practice: true });
     if (arr.length > PRACTICE_FIRES_MAX) arr.length = PRACTICE_FIRES_MAX;
     try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(arr)); } catch {}
