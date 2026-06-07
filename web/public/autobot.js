@@ -1147,20 +1147,13 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
 
-        // EMPIRICAL MODEL SANITY GATE (2026-06-07). User direction
-        // after the Jun 6 postmortem: 'look at every decision very
-        // carefully... did it fit into our algorithm? if so, should
-        // we adjust the barriers?' Masyn Winn 1+ hit NO @ 85¢, José
-        // Fermín 1+ hit NO @ 88¢ — bot's model said NO was 85%+
-        // likely, but the empirical hit-rate bucket for their season
-        // H/game range says NO is only ~50%. The model is too
-        // confident in NO for bottom-of-order hitters.
-        //
-        // Rule: when our chosen side's probability is >= 15pp higher
-        // than the bucket's empirical probability, refuse the bet.
-        // The model is over-stating edge by leaning on signals (hot/
-        // cold streaks, matchups) that the empirical base rate
-        // dismisses over a longer sample.
+        // EMPIRICAL MODEL SANITY GATE (revised 2026-06-07).
+        // Started at 15pp gap (catches Masyn Winn pattern) but blocked
+        // ~all hitter prop fires on day-of deploy. Raised to 20pp:
+        // still catches the Winn case (37pp gap) and the Fermín case
+        // (35pp gap) but lets through model reads in the 15-19pp
+        // band where the bot has a legitimate signal beyond the
+        // season base rate (matchup, recent form, weather, etc).
         if (parsed.stat === "hits" || parsed.stat === "total_bases") {
             const sanityCoefs = await getCoefficients();
             const empResult = getHitterEmpiricalP(modelProps, mlbam, parsed.stat, parsed.threshold, sanityCoefs);
@@ -1168,7 +1161,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 const empOurSide = side === "no" ? (1 - empResult.p) : empResult.p;
                 const botOurSide = side === "no" ? no_our_p : our_p_yes;
                 const gap = botOurSide - empOurSide;
-                if (gap >= 0.15) {
+                if (gap >= 0.20) {
                     log("skip", `Empirical model sanity — ${parsed.player} ${parsed.threshold}+ ${parsed.stat} ${side.toUpperCase()}: bot says ${(botOurSide*100).toFixed(0)}% but bucket=${empResult.bucket} (${empResult.perGame.toFixed(2)}/g) empirical = ${(empOurSide*100).toFixed(0)}% (+${(gap*100).toFixed(0)}pp gap — model too confident)`);
                     continue;
                 }
