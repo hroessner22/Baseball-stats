@@ -2048,6 +2048,31 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     const market_p = yesAskCents / 100;
     const edgePP = (our_p - market_p) * 100;
 
+    // Single-emit ML scan recorder. Builds the scan-row payload once
+    // upfront and `emit(fired, skip_reason)` writes it once at any
+    // exit point in this function. Lets us backtest threshold/sizing
+    // rules against real data later.
+    const scanRowBase = {
+        game_pk:        g.game_pk,
+        matchup:        `${g.away}@${g.home}`,
+        bet_team:       isHomeSide ? g.home : g.away,
+        ticker,
+        side:           "yes",
+        our_p,
+        market_p,
+        edge_pp:        edgePP,
+        yes_ask_cents:  yesAskCents,
+        inning:         g.inning ?? null,
+        half:           g.half ?? null,
+        practice:       _state.settings.practice_mode,
+    };
+    let scanEmitted = false;
+    const emitMlScan = (fired, skip_reason, extras = {}) => {
+        if (scanEmitted) return;
+        scanEmitted = true;
+        recordMlScanToSupabase({ ...scanRowBase, ...extras, fired, skip_reason });
+    };
+
     // Savant stance — three states:
     //   "agree"     → Savant also thinks YES is mispriced too cheap
     //   "disagree"  → Savant thinks the market is right (or YES is overpriced)
@@ -2072,12 +2097,17 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         inning:        g.inning || null,
     }) : null;
 
+    // Now that savantStance is computed, enrich the scan row.
+    scanRowBase.savant_p = savant_p;
+    scanRowBase.savant_stance = savantStance;
+
     // HARD-gate mode (when the user explicitly enables
     // require_savant_agree): keep the original strict behavior.
     if (_state.settings.require_savant_agree && savantStance !== "agree") {
         if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "savant_disagree_hard_gate",
         });
+        emitMlScan(false, "savant_disagree_hard_gate");
         return;
     }
 
@@ -2097,6 +2127,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             action: "skip", reason: "edge_below_threshold",
             threshold_pp: effectiveThreshold,
         });
+        emitMlScan(false, "edge_below_threshold");
         return;
     }
 
@@ -2117,7 +2148,10 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
 
     // Already bet this market+side this session?
     const key = `${ticker}:yes`;
-    if (_state.sessionBets.has(key)) return;
+    if (_state.sessionBets.has(key)) {
+        emitMlScan(false, "already_bet_this_session");
+        return;
+    }
 
     // Conviction-scaled sizing. ML uses raw our_p (WE table) — passes
     // kind: 'moneyline' + our_p so the sizer bypasses score.adjusted_p
@@ -2137,6 +2171,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             ask_cents: yesAskCents, unit_cents: _state.settings.unit_cents,
         });
         log("skip", `Moneyline ${tail} ${g.away}@${g.home}: YES ask ${yesAskCents}¢ > unit cap ${_state.settings.unit_cents}¢`);
+        emitMlScan(false, "unit_too_small_for_market");
         return;
     }
 
@@ -2161,15 +2196,12 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             cap_pct:          mlCapPct,
             current_ml_open:  mlExposure,
         });
+        emitMlScan(false, "moneyline_cap_hit");
         return;
     }
-    // Hard balance check — if Kalshi reports less cash than this
-    // specific order would cost, skip silently. PRACTICE MODE
-    // bypasses this; virtual bankroll check is below. Without the
-    // bypass, every ML fire was getting blocked here when the user
-    // was testing in practice with $0 real Kalshi balance.
     if (!_state.settings.practice_mode && !(await canAfford(tradeCostCents))) {
         log("skip", `Skip ${ticker}: balance below ${tradeCostCents}¢ trade cost`);
+        emitMlScan(false, "balance_too_low");
         return;
     }
 
@@ -2180,6 +2212,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             const bankroll = computePracticeBankroll();
             if (bankroll.available_cents < tradeCostCents) {
                 log("skip", `[PRACTICE] bankroll exhausted: $${(bankroll.available_cents/100).toFixed(2)} available, ${tradeCostCents}¢ cost`);
+                emitMlScan(false, "practice_bankroll_exhausted");
                 return;
             }
             recordPracticeFire({
@@ -2223,6 +2256,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             persistSessionBets();
             log("buy-practice", `[PRACTICE] auto-fired ${contracts}× ${tail} YES @ ${yesAskCents}¢ (edge ${edgePP.toFixed(1)}pp)`);
             toast(`Practice: ${tail} YES @ ${yesAskCents}¢`, "ok");
+            emitMlScan(true, null);
             return;
         }
         const result = await root.Kalshi.placeOrder({
@@ -2264,9 +2298,7 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
             `, edge ${edgePP.toFixed(1)}pp)`,
             { ticker, contracts, yesAskCents, our_p, savant_p, market_p, edgePP, savantStance, order: result });
         toast(`Bot: bought ${contracts}× ${tail} YES @ ${yesAskCents}¢`, "ok");
-        // Invalidate balance cache + inter-fire pause to avoid
-        // race-conditioning Kalshi's rate limit (same fix as
-        // scanPlayerProps — see EOD log).
+        emitMlScan(true, null);
         if (root.Kalshi.invalidateBalanceCache) root.Kalshi.invalidateBalanceCache();
         await sleep(800);
     } catch (e) {
@@ -2519,6 +2551,42 @@ function recordPracticeFire(payload) {
 
 // Best-effort Supabase persistence. Silent if user not signed in.
 // Returns the inserted row id (passed back so settlement can target it).
+// Every ML scan the bot considered — fired or skipped — written to
+// bot_ml_scans. Lets us backtest "at threshold X, would we have made
+// money?" from real data instead of theory. Silent no-op if user
+// isn't signed in. User direction (2026-06-07): 'we don't have enough
+// data to know yet... ship a one-time ML scan recorder.'
+async function recordMlScanToSupabase(payload) {
+    try {
+        if (!root.Auth || !root.Auth.supabase) return;
+        const supabase = root.Auth.supabase();
+        const user = root.Auth.getUser && root.Auth.getUser();
+        if (!user || !user.id) return;
+        const row = {
+            user_id:      user.id,
+            game_pk:      payload.game_pk,
+            matchup:      payload.matchup || null,
+            bet_team:     payload.bet_team || null,
+            ticker:       payload.ticker,
+            side:         payload.side || "yes",
+            our_p:        Number(payload.our_p) || 0,
+            market_p:     Number(payload.market_p) || 0,
+            edge_pp:      Number(payload.edge_pp) || 0,
+            yes_ask_cents: Number(payload.yes_ask_cents) || 0,
+            savant_p:     payload.savant_p ?? null,
+            savant_stance: payload.savant_stance ?? null,
+            inning:       payload.inning ?? null,
+            half:         payload.half ?? null,
+            fired:        !!payload.fired,
+            skip_reason:  payload.skip_reason ?? null,
+            practice:     payload.practice !== false,
+        };
+        await supabase.from("bot_ml_scans").insert(row);
+    } catch (e) {
+        // Silent — recording is best-effort.
+    }
+}
+
 async function persistFireToSupabase(payload) {
     try {
         if (!root.Auth || !root.Auth.supabase) return null;
