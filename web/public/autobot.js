@@ -2300,6 +2300,11 @@ const LS_FIRES = "diamond_context_bot_fires";
 // review. 2000 fires ~= 30+ days at typical volume.
 const FIRES_MAX = 2000;
 function recordFiredBet(payload) {
+    const debounceSig = fireSignature({ ...payload, kind: payload.kind });
+    if (!debounceFire(debounceSig)) {
+        try { log("skip", `Real fire write blocked (debounce <60s) — ${debounceSig}`); } catch {}
+        return;
+    }
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_FIRES) || "[]"); }
     catch { arr = []; }
@@ -2397,6 +2402,31 @@ function fireSignature(f) {
     return `other:${f.ticker || Math.random()}`;
 }
 
+// In-memory Map<signature, last-fire-timestamp-ms>. The OUTERMOST
+// dedup layer — refuses any new fire on the same signature within
+// 60s of the previous. Pure JS, no IO, runs before anything else.
+// Survives within a single JS process; resets on page reload (LS-
+// based scrub handles cross-session).
+const _recentFireSigs = new Map();
+const RECENT_FIRE_DEBOUNCE_MS = 60_000;
+function debounceFire(sig) {
+    const now = Date.now();
+    const last = _recentFireSigs.get(sig);
+    if (last != null && (now - last) < RECENT_FIRE_DEBOUNCE_MS) {
+        return false;  // refuse — too soon
+    }
+    _recentFireSigs.set(sig, now);
+    // Prune entries older than the debounce window so the Map doesn't
+    // grow unbounded over a long session.
+    if (_recentFireSigs.size > 200) {
+        const cutoff = now - RECENT_FIRE_DEBOUNCE_MS;
+        for (const [k, t] of _recentFireSigs) {
+            if (t < cutoff) _recentFireSigs.delete(k);
+        }
+    }
+    return true;  // OK to proceed
+}
+
 // Scrubs an array of fires of duplicate OPEN fires. Keeps the FIRST
 // occurrence of each signature (which, given arr.unshift order, is
 // the newest). Settled fires are kept untouched. Returns the cleaned
@@ -2418,6 +2448,15 @@ function scrubOpenDuplicates(arr) {
 }
 
 function recordPracticeFire(payload) {
+    // OUTERMOST LAYER: in-memory time-debounce. Refuses any
+    // second fire on the same signature within 60 seconds. Catches
+    // ALL same-scan and back-to-back-scan duplicates regardless of
+    // any LS / mlbam / ticker-shape issues downstream.
+    const debounceSig = fireSignature({ ...payload, kind: payload.kind });
+    if (!debounceFire(debounceSig)) {
+        try { log("skip", `Practice write blocked (debounce <60s) — ${debounceSig}`); } catch {}
+        return;
+    }
     let arr;
     try { arr = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
     catch { arr = []; }
