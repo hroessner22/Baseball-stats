@@ -341,6 +341,10 @@ function parsePitches(playEvents) {
     for (const e of playEvents) {
         if (e.type !== "pitch") continue;
         const det = e.details || {};
+        const result_code = det.call?.code || null;
+        // X / D / E = ball in play. Statcast attaches hitData on those.
+        const isBip = result_code === "X" || result_code === "D" || result_code === "E";
+        const hd = isBip ? (e.hitData || null) : null;
         out.push({
             number:      e.pitchNumber || null,
             type:        det.type?.description || "Unknown",
@@ -349,10 +353,19 @@ function parsePitches(playEvents) {
                             ? Math.round(e.pitchData.startSpeed * 10) / 10
                             : null,
             result:      det.call?.description || det.description || "?",
-            result_code: det.call?.code || null,
+            result_code,
             count_after: e.count
                 ? { balls: e.count.balls, strikes: e.count.strikes }
                 : null,
+            // Statcast hit data — exit velo, distance, launch angle.
+            // Matches the shape in shapePitchEvent() over in
+            // game/[id].js so renderPitchRow() handles both.
+            hit: hd ? {
+                exit_velo:    hd.launchSpeed != null ? Math.round(hd.launchSpeed * 10) / 10 : null,
+                distance:     hd.totalDistance != null ? Math.round(hd.totalDistance) : null,
+                launch_angle: hd.launchAngle != null ? Math.round(hd.launchAngle) : null,
+                trajectory:   hd.trajectory || null,
+            } : null,
         });
     }
     return out;
