@@ -2560,6 +2560,19 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     background: var(--accent-action);
     color: white;
 }
+/* 'Watch' button sits next to the mode tabs but reads as a distinct
+   primary action — red wash so it doesn't look like another tab.
+   Clicking pops MLB.tv in a sized window the user positions next to
+   the app (or PiPs from the player's own controls). */
+.game-mode-toggle .game-watch-btn {
+    background: rgba(239, 68, 68, 0.18);
+    color: #FCA5A5;
+    margin-left: 6px;
+}
+.game-mode-toggle .game-watch-btn:hover {
+    background: rgba(239, 68, 68, 0.28);
+    color: #FECACA;
+}
 
 .gamecast-pane {
     padding: 0 32px;

@@ -4214,6 +4214,11 @@ function renderGame(g) {
         <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
         <button class="${mode === 'boxscore' ? 'active' : ''}" data-mode="boxscore">Box Score</button>
         <button class="${mode === 'markets'  ? 'active' : ''}" data-mode="markets">Markets</button>
+        <button class="game-watch-btn"
+                data-watch
+                data-game-pk="${g.game_pk}"
+                title="Open MLB.tv in a popup window. Use the player's PiP button to keep the video floating over DIAMOND:CONTEXT."
+                aria-label="Watch on MLB.tv">▶ Watch</button>
       </div>
       ${mode === 'gamecast'
         ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
@@ -4785,6 +4790,33 @@ document.addEventListener("click", (e) => {
     if (mode === gameViewMode) return;
     gameViewMode = mode;
     if (activeGameId) refreshGame(activeGameId);
+});
+
+// Watch button — opens MLB.tv for this specific game in a SIZED POPUP
+// window so it lands as a small floating player the user can position
+// next to DIAMOND:CONTEXT (or pop into the OS picture-in-picture from
+// the player's own controls). User direction (2026-06-07): 'Can we
+// not have the video on our screen?' MLB.tv blocks iframe embedding
+// via X-Frame-Options, so this is the closest thing — a real video
+// window we don't have to host, that sits alongside our betting UI.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-watch]");
+    if (!btn) return;
+    e.preventDefault();
+    const pk = btn.getAttribute("data-game-pk");
+    if (!pk) return;
+    const url = `https://www.mlb.com/tv/g${pk}`;
+    // 720p-ish window, anchored to the top-right so it doesn't cover
+    // the bot drawer (which docks to the right). User can drag /
+    // resize after open.
+    const w = 720, h = 460;
+    const left = Math.max(0, (window.screen.availWidth || 1280) - w - 40);
+    const top  = 80;
+    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes`;
+    const win = window.open(url, "mlbtv-stream", features);
+    if (!win) {
+        alert("Popup blocked. Allow popups for DIAMOND:CONTEXT and try again — the MLB.tv player needs to open as a separate window.");
+    }
 });
 
 // ── GAMECAST ────────────────────────────────────────────────────────
