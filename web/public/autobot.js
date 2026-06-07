@@ -3223,7 +3223,48 @@ async function runCashoutCheck() {
             }
         }
 
-        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn) continue;
+        // EIGHTH trigger — EV CASHOUT for hitter YES with limited
+        // remaining PAs (2026-06-07). User direction: 'think about
+        // Manzardo and Foscue, they each have one at bat remaining.
+        // If EV of cashing out > EV of staying in, cashout.' Plus:
+        // 'calculate situation-specific HR expectancy and make sure
+        // it makes sense.'
+        //
+        // The model-props endpoint's livePCents is already situation-
+        // aware — it folds in pitcher matchup, park factor, weather,
+        // AND turns_remaining. When the batter is near out of PAs
+        // and the model's hold value drops well below the current
+        // Kalshi bid, take the EV-positive exit regardless of
+        // profit/loss. Sanity check: refuse to fire when the gap
+        // exceeds 35¢ (model is probably broken if it disagrees
+        // with the market that much).
+        let hitEvCashout = false;
+        let evCashoutDetail = "";
+        if (fire?.kind === "player_prop"
+            && heldSide === "yes"
+            && (fire.stat === "home_runs" || fire.stat === "hits" || fire.stat === "total_bases")
+            && fire.game_pk
+            && fire.player) {
+            const livePCentsForEv = await getLivePlayerPropPCents(fire);
+            const gInfoForEv = await getLiveGameState(fire.game_pk);
+            if (livePCentsForEv != null && gInfoForEv) {
+                const remainingPAs = Number(gInfoForEv.turns_remaining) || 0;
+                const gap = yesBidCents - livePCentsForEv;
+                // Sanity bands: HR per-PA caps at ~10% even for elite,
+                // hits per-PA caps at ~40%. If our model says >50% with
+                // <1 PA remaining for HR, something is off. Cushion of
+                // 5¢ minimum benefit to justify selling.
+                const sanityOk = livePCentsForEv >= 0 && livePCentsForEv <= 70;
+                const meaningful = gap >= 5 && gap <= 35;
+                const limitedPAs = remainingPAs < 1.0;
+                if (sanityOk && meaningful && limitedPAs) {
+                    hitEvCashout = true;
+                    evCashoutDetail = `live model ${livePCentsForEv}¢ remaining EV, bid ${yesBidCents}¢ (+${gap}¢ benefit, ${remainingPAs.toFixed(2)} PAs left)`;
+                }
+            }
+        }
+
+        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn && !hitEvCashout) continue;
 
         // CONVICTION VETO (2026-06-05). User direction: 'if we have
         // a bet that we actually do believe will hit and theres
@@ -3302,6 +3343,7 @@ async function runCashoutCheck() {
             if (hitHitterSell)   triggerParts.push(`+hit (${hitterSellDetail})`);
             if (hitDeadPosition) triggerParts.push(`+dead (${deadPositionDetail})`);
             if (hitLockIn)       triggerParts.push(`+lock (${lockInDetail})`);
+            if (hitEvCashout)    triggerParts.push(`+ev-cashout (${evCashoutDetail})`);
             const triggerTag = triggerParts.join(" / ");
             // Log the cash-out decision for EOD review — pairs with
             // the BUY scoreBet at fire time, so we can see whether
@@ -3701,6 +3743,29 @@ async function runPracticeCashoutCheck() {
                 }
             }
         }
+        // EV-CASHOUT (2026-06-07) — hitter YES with limited remaining
+        // PAs and Kalshi bid well above the model's hold value. Take
+        // the EV-positive exit regardless of profit/loss. Uses the
+        // model-props situation-aware probability (already folds in
+        // pitcher matchup + park + weather + turns_remaining).
+        let evCashoutReason = null;
+        if (fire.kind === "player_prop"
+            && heldSide === "yes"
+            && (fire.stat === "home_runs" || fire.stat === "hits" || fire.stat === "total_bases")
+            && fire.player) {
+            try {
+                const livePCents = await getLivePlayerPropPCents(fire);
+                const gInfo = await getLiveGameState(fire.game_pk);
+                if (livePCents != null && gInfo) {
+                    const remainingPAs = Number(gInfo.turns_remaining) || 0;
+                    const gap = liveBidCents - livePCents;
+                    if (livePCents <= 70 && gap >= 5 && gap <= 35 && remainingPAs < 1.0) {
+                        evCashoutReason = `EV cashout — live model ${livePCents}¢ remaining EV, bid ${liveBidCents}¢ (+${gap}¢ benefit, ${remainingPAs.toFixed(2)} PAs left)`;
+                    }
+                }
+            } catch {}
+        }
+
         // 'World disagrees' gate. If we'd be selling at a loss AND
         // the bid is already ≤5¢, hold instead — the world agrees the
         // bet is dead, and realizing it at near-zero adds no edge.
@@ -3709,11 +3774,13 @@ async function runPracticeCashoutCheck() {
         if (pullReason && wouldBeLoss && worldAgrees) {
             continue;
         }
-        if (!pullReason && !lockReason && !mistakeReason) continue;
+        if (!pullReason && !lockReason && !mistakeReason && !evCashoutReason) continue;
         const proceeds = contracts * liveBidCents;
         const cost     = contracts * entryCents;
         const profit   = proceeds - cost;
-        const reasonText = mistakeReason
+        const reasonText = evCashoutReason
+            ? evCashoutReason
+            : mistakeReason
             ? `Mistake retraction: ${mistakeReason}`
             : (pullReason || lockReason);
         fire.settled = {
