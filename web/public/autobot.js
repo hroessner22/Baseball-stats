@@ -2408,7 +2408,12 @@ function fireSignature(f) {
 // Survives within a single JS process; resets on page reload (LS-
 // based scrub handles cross-session).
 const _recentFireSigs = new Map();
-const RECENT_FIRE_DEBOUNCE_MS = 60_000;
+// 5-minute debounce — Foscue case fired 4 min apart and the
+// signature collision check still let it through. Five minutes
+// covers any same-game scenario where a position should not
+// re-fire while it's open. Cross-game with the same player happens
+// rarely enough that the game_pk in the signature handles it.
+const RECENT_FIRE_DEBOUNCE_MS = 300_000;
 function debounceFire(sig) {
     const now = Date.now();
     const last = _recentFireSigs.get(sig);
@@ -2474,11 +2479,30 @@ function recordPracticeFire(payload) {
         try {
             log("skip", `Practice write blocked (signature collision) — ${incomingSig}`);
         } catch {}
-        // Still write the (possibly-scrubbed) array back so the LS
-        // reflects the dedup.
         try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(arr)); } catch {}
         return;
     }
+    // DIAGNOSTIC: if there's an open fire on the SAME player/stat/
+    // threshold but the signature didn't catch it, log what differs.
+    // Lets us see in the console why the collision check is missing
+    // duplicates that are clearly duplicates by every other measure.
+    try {
+        const sameProp = arr.find((f) =>
+            !f.settled
+            && f.kind === "player_prop"
+            && String(f.game_pk) === String(payload.game_pk)
+            && String(f.stat) === String(payload.stat)
+            && Number(f.threshold) === Number(payload.threshold)
+            && (f.side || "yes") === (payload.side || "yes")
+        );
+        if (sameProp) {
+            const existingSig = fireSignature(sameProp);
+            console.warn("[dedup-leak] same prop open but signature mismatched", {
+                incoming: { sig: incomingSig, payload },
+                existing: { sig: existingSig, fire: sameProp },
+            });
+        }
+    } catch {}
     arr.unshift({ ...payload, practice: true });
     if (arr.length > PRACTICE_FIRES_MAX) arr.length = PRACTICE_FIRES_MAX;
     try { localStorage.setItem(LS_PRACTICE_FIRES, JSON.stringify(arr)); } catch {}
