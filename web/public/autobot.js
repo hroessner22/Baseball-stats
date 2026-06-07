@@ -2095,7 +2095,15 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     if (score) {
         const adjEdge   = Number(score.edge_pp) || 0;
         const conf      = Number(score.confidence) || 0;
-        const minConf   = _state.settings.min_conviction;
+        // ML-SPECIFIC CONVICTION FLOOR (2026-06-07). User direction:
+        // 'we're trying to place more live bets on Moneyline.' ML
+        // only has 3 multi-factor inputs (model_edge, savant_alignment,
+        // pitcher_recent_form) vs player props which have 7. Requiring
+        // the same 0.30 conviction on ML means one factor disagreeing
+        // (especially Savant) tanks confidence and blocks the fire,
+        // even when our WE table — the strongest signal we have —
+        // says +EV. Use 0.20 for ML. Player props stay at the global.
+        const minConf = 0.20;
         if (adjEdge < effectiveThreshold) {
             logScoredDecisionOnce(score, {
                 action: "skip", reason: "adjusted_edge_below_threshold",
