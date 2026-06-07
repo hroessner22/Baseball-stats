@@ -789,16 +789,40 @@ async function scanOneGame(g) {
     // 1) Moneyline edges (our WE table vs Kalshi, with Savant as a
     //    confidence amplifier). Win expectancy is our strongest
     //    edge — 132 seasons of Retrosheet validation.
+    // ML scan diagnostic — record ONE pre-scan row per game per tick
+    // when the upstream gates block before reaching checkAndMaybeFire.
+    // Lets us see in bot_ml_scans why ML isn't firing: 'no_we',
+    // 'inning_too_early', 'no_kalshi_ml_market', or 'reached_check'.
+    const recordPreScan = (reason) => {
+        recordMlScanToSupabase({
+            game_pk: g.game_pk,
+            matchup: `${g.away}@${g.home}`,
+            ticker:  `pre:${g.game_pk}`,
+            side:    "yes",
+            our_p:   ourHome ?? 0,
+            market_p: 0,
+            edge_pp: 0,
+            yes_ask_cents: 0,
+            inning:  parseInt(g.inning, 10) || null,
+            half:    g.half ?? null,
+            fired:   false,
+            skip_reason: reason,
+            practice: _state.settings.practice_mode,
+        });
+    };
     if (ourHome == null) {
         log("skip", `No WE for ${g.away}@${g.home} (game state too early or missing) — moneyline scan blocked`);
+        recordPreScan("no_we_for_game");
     } else {
         const gInning = parseInt(g.inning, 10) || 0;
         if (gInning < _state.settings.min_inning_for_moneyline) {
             log("skip", `Moneyline scan blocked — ${g.away}@${g.home} inning ${gInning} < min ${_state.settings.min_inning_for_moneyline}`);
+            recordPreScan("inning_too_early");
         } else {
             const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
             if (moneylines.length === 0) {
                 log("skip", `No Kalshi moneyline market for ${g.away}@${g.home}`);
+                recordPreScan("no_kalshi_ml_market");
             } else {
                 log("bot", `Scanning ${moneylines.length} moneyline${moneylines.length === 1 ? "" : "s"} for ${g.away}@${g.home} (our WE: ${(ourHome*100).toFixed(1)}% home)`);
                 for (const m of moneylines) {
