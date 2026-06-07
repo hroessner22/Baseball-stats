@@ -1962,9 +1962,29 @@ function normName(s) {
 //
 // When the score isn't available (no adjusted_p) we fall back
 // to 2-contract flat.
-function sizeContractsByKelly(askCents, score, unitCents, bankrollCents) {
+function sizeContractsByKelly(askCents, score, unitCents, bankrollCents, opts = {}) {
     if (!Number.isFinite(askCents) || askCents <= 0) return 0;
     if (askCents > unitCents) return 0;
+    // ML BYPASS (2026-06-07). For moneylines we trust the raw WE
+    // table — same reasoning as the gate bypass earlier. If the
+    // caller passes our_p explicitly, use it instead of the score's
+    // adjusted_p. Otherwise fall through to the score-based path.
+    if (opts.kind === "moneyline" && Number.isFinite(opts.our_p)) {
+        const marketP = askCents / 100;
+        const ourP    = Math.max(0.001, Math.min(0.999, Number(opts.our_p)));
+        if (ourP <= marketP) return 0;
+        const b = (1 - marketP) / marketP;
+        const fullKelly = (b * ourP - (1 - ourP)) / b;
+        if (fullKelly <= 0) return 0;
+        const halfKelly = fullKelly * 0.5;
+        const bankroll = (bankrollCents && bankrollCents > 0) ? bankrollCents : (unitCents * 50);
+        const targetCents = halfKelly * bankroll;
+        const cappedCents = Math.min(targetCents, unitCents);
+        let contracts = Math.floor(cappedCents / askCents);
+        if (contracts < 1) contracts = 1;
+        while (contracts > 1 && contracts * askCents > unitCents) contracts--;
+        return contracts;
+    }
     if (!score || score.adjusted_p == null) {
         // Fallback: 2 contracts if affordable.
         const fallback = Math.floor(unitCents / askCents);
@@ -2099,9 +2119,18 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
     const key = `${ticker}:yes`;
     if (_state.sessionBets.has(key)) return;
 
-    // Conviction-scaled sizing. Base 1 contract, +1 at 5pp adjusted
-    // edge, +2 at 8pp — capped at unit_cents (=$1.00 hard ceiling).
-    const contracts = sizeContractsByConviction(yesAskCents, score, _state.settings.unit_cents);
+    // Conviction-scaled sizing. ML uses raw our_p (WE table) — passes
+    // kind: 'moneyline' + our_p so the sizer bypasses score.adjusted_p
+    // and trusts the WE table directly. Without this opts pass-through,
+    // a Savant-disagree adjusted_p < market_p would have returned 0
+    // contracts even when raw edge was real — silent ML kill.
+    const bankrollForSizing = _state.settings.practice_mode
+        ? _state.settings.practice_starting_bankroll_cents
+        : _state.settings.open_exposure_max;
+    const contracts = sizeContractsByKelly(
+        yesAskCents, score, _state.settings.unit_cents, bankrollForSizing,
+        { kind: "moneyline", our_p }
+    );
     if (contracts < 1) {
         if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "unit_too_small_for_market",
