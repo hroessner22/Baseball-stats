@@ -227,45 +227,17 @@ function buildGame(d, teamAdj) {
                 description: p.result?.description || null,
                 away_score:  p.result?.awayScore ?? 0,
                 home_score:  p.result?.homeScore ?? 0,
-                // Per-PA pitch sequence — same shape as current_pitches
-                // so the Live View can expand a past PA inline and show
-                // the pitches the way the in-progress PA does.
                 pitches: (p.playEvents || [])
                     .filter((e) => e.type === "pitch")
-                    .map((e) => ({
-                        number:      e.pitchNumber || null,
-                        type:        e.details?.type?.description || "Unknown",
-                        type_code:   e.details?.type?.code || null,
-                        velo:        e.pitchData?.startSpeed != null
-                            ? Math.round(e.pitchData.startSpeed * 10) / 10
-                            : null,
-                        result:      e.details?.call?.description || e.details?.description || "?",
-                        result_code: e.details?.call?.code || null,
-                        count_after: e.count
-                            ? { balls: e.count.balls, strikes: e.count.strikes }
-                            : null,
-                    })),
+                    .map(shapePitchEvent),
             }))
         : [];
 
     // Pitch sequence for the IN-PROGRESS PA — same shape the Gamecast
-    // uses for completed PAs, but pulled from currentPlay.playEvents so
-    // the Live View can show "this at-bat · 3 pitches" as it unfolds.
+    // uses for completed PAs.
     const currentPitches = (currentPlay.playEvents || [])
         .filter((e) => e.type === "pitch")
-        .map((e) => ({
-            number:      e.pitchNumber || null,
-            type:        e.details?.type?.description || "Unknown",
-            type_code:   e.details?.type?.code || null,
-            velo:        e.pitchData?.startSpeed != null
-                ? Math.round(e.pitchData.startSpeed * 10) / 10
-                : null,
-            result:      e.details?.call?.description || e.details?.description || "?",
-            result_code: e.details?.call?.code || null,
-            count_after: e.count
-                ? { balls: e.count.balls, strikes: e.count.strikes }
-                : null,
-        }));
+        .map(shapePitchEvent);
 
     return {
         game_pk: gameData.game?.pk,
@@ -312,6 +284,40 @@ function compactTeamStrength(s) {
         l30:             s.l30,
         streak:          s.streak,
         combined_pct:    s.combined_pct,
+    };
+}
+
+// Single source of truth for shaping a Statcast pitch event into the
+// payload the frontend pitch row renders. Used by both current_pitches
+// and the per-PA pitches array. Hit data is attached ONLY when the
+// pitch was put in play — Statcast reports exit velocity, distance,
+// and launch angle on those events; everything else gets null.
+function shapePitchEvent(e) {
+    const result_code = e.details?.call?.code || null;
+    // 'X' = in play (out), 'D' = in play (run-scoring out / hit),
+    // 'E' = in play (error). Statcast attaches hitData on all three.
+    const isBip = result_code === "X" || result_code === "D" || result_code === "E";
+    const hd = isBip ? (e.hitData || null) : null;
+    return {
+        number:      e.pitchNumber || null,
+        type:        e.details?.type?.description || "Unknown",
+        type_code:   e.details?.type?.code || null,
+        velo:        e.pitchData?.startSpeed != null
+            ? Math.round(e.pitchData.startSpeed * 10) / 10
+            : null,
+        result:      e.details?.call?.description || e.details?.description || "?",
+        result_code,
+        count_after: e.count
+            ? { balls: e.count.balls, strikes: e.count.strikes }
+            : null,
+        // Statcast hit data — exit velo (mph), distance (ft), launch
+        // angle (deg), trajectory ('fly_ball', 'ground_ball', etc).
+        hit: hd ? {
+            exit_velo:    hd.launchSpeed != null ? Math.round(hd.launchSpeed * 10) / 10 : null,
+            distance:     hd.totalDistance != null ? Math.round(hd.totalDistance) : null,
+            launch_angle: hd.launchAngle != null ? Math.round(hd.launchAngle) : null,
+            trajectory:   hd.trajectory || null,
+        } : null,
     };
 }
 

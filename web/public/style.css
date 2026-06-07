@@ -3100,6 +3100,26 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-weight: 550;
     font-size: 10px;
 }
+/* Statcast hit data line — sits directly under the .pa-pitch-row
+   for any pitch put in play. Indented under the type column so
+   the relationship to the pitch above is obvious. Compact and dim
+   so it doesn't compete with the pitch line. */
+.pa-pitch-hit {
+    margin: 2px 0 4px 32px;
+    padding: 2px 6px;
+    font-size: 10.5px;
+    color: var(--accent-action, #38BDF8);
+    background: rgba(56, 189, 248, 0.06);
+    border-left: 2px solid rgba(56, 189, 248, 0.35);
+    border-radius: 0 3px 3px 0;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    display: inline-block;
+}
+.pa-pitch-hit strong {
+    color: var(--text);
+    font-weight: 700;
+}
 
 /* ── ABOUT / METHODS VIEW ─────────────────────────────────────── */
 

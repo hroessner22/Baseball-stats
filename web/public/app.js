@@ -4921,8 +4921,19 @@ function renderPitchRow(pitch, idx) {
         pitch.result_code === "B" ? "ball" :
         (pitch.result_code === "C" || pitch.result_code === "S") ? "strike" :
         (pitch.result_code === "F" || pitch.result_code === "T") ? "foul" :
-        (pitch.result_code === "X" || pitch.result_code === "E") ? "in-play" :
+        (pitch.result_code === "X" || pitch.result_code === "D" || pitch.result_code === "E") ? "in-play" :
         "";
+    // Statcast hit-data line for balls in play: 'EV 102 · 412 ft · 28°'.
+    // Only shown when the pitch was put in play AND Statcast reported
+    // it (ground balls in the dirt often lack distance).
+    const hit = pitch.hit;
+    const hitParts = [];
+    if (hit?.exit_velo != null) hitParts.push(`EV <strong>${hit.exit_velo}</strong>`);
+    if (hit?.distance != null && hit.distance > 0) hitParts.push(`<strong>${hit.distance}</strong> ft`);
+    if (hit?.launch_angle != null) hitParts.push(`${hit.launch_angle}°`);
+    const hitLine = hitParts.length
+        ? `<div class="pa-pitch-hit">${hitParts.join(" · ")}</div>`
+        : "";
     return `
       <div class="pa-pitch-row ${cls}">
         <span class="pa-pitch-num">${idx + 1}</span>
@@ -4931,6 +4942,7 @@ function renderPitchRow(pitch, idx) {
         <span class="pa-pitch-result">${pitch.result}</span>
         <span class="pa-pitch-count">${count}</span>
       </div>
+      ${hitLine}
     `;
 }
 
