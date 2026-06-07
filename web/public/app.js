@@ -3258,6 +3258,7 @@ function renderPitcherModule(p, currentYear) {
 
     return `
       <section class="player-module">
+        ${renderPitchingHeadline(p.season_stats, currentYear)}
         <div class="pm-pitcher-note">Hitter performance AGAINST this pitcher — lower is better.</div>
         ${renderSlashStrip({
             label: `${currentYear} Season (Against)`,
@@ -3280,6 +3281,52 @@ function renderPitcherModule(p, currentYear) {
         ${renderRateProfile(seasonSlash, careerSlash, currentYear)}
         ${renderOutcomeBreakdown(p.career, "B")}
       </section>
+    `;
+}
+
+// Conventional pitcher headline — ESPN / MLB.com / Baseball Reference
+// all lead with ERA, W-L, IP, WHIP, K, BB. Five-tile strip matches the
+// hitter-AVG strip below for visual rhythm. User direction (2026-06-07):
+// 'Make the stats here for a pitcher more conventional. I like that
+// you have the unconventional numbers, but theyre not the way we
+// should define a pitcher at first. Look on other major websites.'
+function renderPitchingHeadline(s, currentYear) {
+    if (!s) return "";
+    const era  = s.era ?? "—";
+    const ip   = s.ip ?? "—";
+    const whip = s.whip ?? "—";
+    const k    = s.strikeouts ?? "—";
+    const bb   = s.walks ?? "—";
+    const wl   = `${s.wins ?? "—"}-${s.losses ?? "—"}`;
+    const k9   = s.k_per_9 ?? "—";
+    const bb9  = s.bb_per_9 ?? "—";
+    return `
+      <div class="slash-strip">
+        <div class="ss-head">
+          <span class="ss-label">${currentYear} Season</span>
+          <span class="ss-extra">${s.starts || 0} GS · ${s.games || 0} G${s.saves ? ` · ${s.saves} SV` : ""}</span>
+        </div>
+        <div class="ss-grid">
+          <div class="ss-tile"><div class="ss-val">${era}</div><div class="ss-key">ERA</div></div>
+          <div class="ss-tile"><div class="ss-val">${wl}</div><div class="ss-key">W-L</div></div>
+          <div class="ss-tile"><div class="ss-val">${ip}</div><div class="ss-key">IP</div></div>
+          <div class="ss-tile"><div class="ss-val">${whip}</div><div class="ss-key">WHIP</div></div>
+          <div class="ss-tile ss-tile-counter"><div class="ss-val">${k}</div><div class="ss-key">K</div></div>
+        </div>
+        <div class="ss-counts">
+          <span><strong>${k9}</strong> K/9</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${bb9}</strong> BB/9</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${bb}</strong> BB</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${s.hits ?? "—"}</strong> H</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${s.home_runs ?? "—"}</strong> HR</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${s.earned_runs ?? "—"}</strong> ER</span>
+        </div>
+      </div>
     `;
 }
 
