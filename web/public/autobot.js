@@ -3250,16 +3250,23 @@ async function runCashoutCheck() {
             if (livePCentsForEv != null && gInfoForEv) {
                 const remainingPAs = Number(gInfoForEv.turns_remaining) || 0;
                 const gap = yesBidCents - livePCentsForEv;
-                // Sanity bands: HR per-PA caps at ~10% even for elite,
-                // hits per-PA caps at ~40%. If our model says >50% with
-                // <1 PA remaining for HR, something is off. Cushion of
-                // 5¢ minimum benefit to justify selling.
+                // Sanity bands: HR per-PA caps ~10%, hits per-PA ~40%.
+                // Cushion: 5¢ minimum benefit to justify the sale —
+                // big enough that we don't realize tiny gaps that are
+                // probably model noise.
                 const sanityOk = livePCentsForEv >= 0 && livePCentsForEv <= 70;
                 const meaningful = gap >= 5 && gap <= 35;
                 const limitedPAs = remainingPAs < 1.0;
                 if (sanityOk && meaningful && limitedPAs) {
                     hitEvCashout = true;
                     evCashoutDetail = `live model ${livePCentsForEv}¢ remaining EV, bid ${yesBidCents}¢ (+${gap}¢ benefit, ${remainingPAs.toFixed(2)} PAs left)`;
+                } else {
+                    // Diagnostic — log why we DIDN'T fire so we can
+                    // see what's blocking when we expected a sell.
+                    // Format makes it greppable in the bot log.
+                    try {
+                        log("hold", `T8 EV-cashout skipped — ${fire?.player} ${fire?.threshold}+ ${fire?.stat}: live=${livePCentsForEv}¢ bid=${yesBidCents}¢ gap=${gap}¢ PAs=${remainingPAs.toFixed(2)} [sanityOk=${sanityOk} meaningful=${meaningful} limitedPAs=${limitedPAs}]`);
+                    } catch {}
                 }
             }
         }
