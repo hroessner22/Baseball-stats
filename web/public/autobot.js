@@ -2080,45 +2080,20 @@ async function checkAndMaybeFire(g, market, ourHome, savantHome) {
         return;
     }
 
-    // TRUE-ADVANTAGE GATE — the raw model edge cleared the bar, but
-    // we ALSO require the multi-factor framework to confirm. score
-    // sums up model_edge + savant + pitcher_recent_form (others
-    // are prop-only). When factors agree, score.edge_pp >= raw
-    // edge AND confidence climbs. When they disagree, the adjusted
-    // edge shrinks toward zero and we want NO TRADE — disagreement
-    // is the bot betting against itself.
+    // ML BYPASSES THE MULTI-FACTOR SCORING (2026-06-07). User
+    // direction: 'remember to take the WE Moneylines. We need to take
+    // them. Just use our odds it shouldnt be that hard.'
     //
-    // Two conditions both required:
-    //   (a) adjusted edge after factor weighting still ≥ threshold
-    //   (b) confidence ≥ min_conviction (default 0.40 = ~2 medium
-    //       factors firing, or model_edge + one strong confirmation)
-    if (score) {
-        const adjEdge   = Number(score.edge_pp) || 0;
-        const conf      = Number(score.confidence) || 0;
-        // ML-SPECIFIC CONVICTION FLOOR (2026-06-07). User direction:
-        // 'we're trying to place more live bets on Moneyline.' ML
-        // only has 3 multi-factor inputs (model_edge, savant_alignment,
-        // pitcher_recent_form) vs player props which have 7. Requiring
-        // the same 0.30 conviction on ML means one factor disagreeing
-        // (especially Savant) tanks confidence and blocks the fire,
-        // even when our WE table — the strongest signal we have —
-        // says +EV. Use 0.20 for ML. Player props stay at the global.
-        const minConf = 0.20;
-        if (adjEdge < effectiveThreshold) {
-            logScoredDecisionOnce(score, {
-                action: "skip", reason: "adjusted_edge_below_threshold",
-                threshold_pp: effectiveThreshold, raw_edge_pp: edgePP,
-            });
-            return;
-        }
-        if (conf < minConf) {
-            logScoredDecisionOnce(score, {
-                action: "skip", reason: "confidence_below_min_conviction",
-                min_conviction: minConf,
-            });
-            return;
-        }
-    }
+    // WE is our strongest signal — 132 seasons of Retrosheet validation.
+    // Layering Savant alignment and pitcher recent-form on top via the
+    // multi-factor framework was filtering out fires where our own
+    // table said +EV. We trust the table. If raw edge ≥ threshold,
+    // we fire. Skip the adjusted-edge AND confidence gates entirely
+    // for moneylines.
+    //
+    // Score is still computed and logged via logScoredDecision for
+    // EOD review — the parallel observation tells us whether the
+    // factors WOULD have agreed in retrospect, without acting on it.
 
     // Already bet this market+side this session?
     const key = `${ticker}:yes`;
