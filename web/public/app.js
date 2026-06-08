@@ -108,6 +108,7 @@ const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
+const watchView = document.getElementById("watch-view");
 const teamView = document.getElementById("team-view");
 const trackRecordView = document.getElementById("track-record-view");
 const howItWorksView  = document.getElementById("how-it-works-view");
@@ -132,6 +133,7 @@ let standingsTimer = null;
 let leadersTimer = null;
 let mvpTimer = null;
 let hotTimer = null;
+let watchTimer = null;
 let marketsDashboardTimer = null;
 let activeGameId = null;
 
@@ -266,6 +268,11 @@ function handleRoute() {
     if (hash === "#hot") {
         showHot();
         setActiveNav("hot");
+        return;
+    }
+    if (hash === "#watch") {
+        showWatch();
+        setActiveNav("watch");
         return;
     }
     if (hash === "#track-record") {
@@ -432,6 +439,7 @@ function hideAllViews() {
     hotView.hidden = true;
     playerView.hidden = true;
     marketsView.hidden = true;
+    if (watchView) watchView.hidden = true;
     teamView.hidden = true;
     if (trackRecordView) trackRecordView.hidden = true;
     if (howItWorksView)  howItWorksView.hidden  = true;
@@ -446,6 +454,7 @@ function clearAllTimers() {
     if (leadersTimer)   { clearInterval(leadersTimer);   leadersTimer = null; }
     if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
+    if (watchTimer)     { clearInterval(watchTimer);     watchTimer = null; }
     if (marketsDashboardTimer) { clearInterval(marketsDashboardTimer); marketsDashboardTimer = null; }
     if (teamTimer)      { clearInterval(teamTimer);      teamTimer = null; activeTeamTricode = null; }
     stopMarketsPoll();
@@ -9301,4 +9310,157 @@ function renderEmpty(container, message, sub) {
         ${sub ? `<p class="sub">${sub}</p>` : ""}
       </div>
     `;
+}
+
+// ── WATCH ────────────────────────────────────────────────────────────
+// A launcher for MLB.tv. MLB's video is DRM-protected, so the browser
+// can't embed it — the companion Chrome extension (web/extension/) does
+// the watching: it opens the chosen game on MLB.tv and floats it into a
+// picture-in-picture window. This tab lists today's slate and hands the
+// pick to the extension; with no extension installed it falls back to
+// opening MLB.tv in a new tab.
+
+// The content-bridge content script sets this attribute on <html> when the
+// extension is installed (a content script can't touch page JS directly,
+// but it can write a DOM attribute the page reads).
+function watchExtInstalled() {
+    return document.documentElement.dataset.dcWatchExt === "1";
+}
+
+function showWatch() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    watchView.hidden = false;
+    refreshWatch();
+    watchTimer = setInterval(refreshWatch, BOARD_REFRESH_MS);
+}
+
+async function refreshWatch() {
+    try {
+        const res = await fetch("/api/games/today");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const games = sortGames(data.games || []);
+        watchView.innerHTML = watchBanner() + (
+            games.length
+                ? `<div class="watch-grid">${games.map(renderWatchCard).join("")}</div>`
+                : `<div class="empty"><p>No games scheduled today.</p></div>`
+        );
+    } catch (e) {
+        renderEmpty(watchView, "Could not load today's games.", `${e.message || e}`);
+    }
+}
+
+function watchBanner() {
+    const ok = watchExtInstalled();
+    return `
+      <header class="watch-head">
+        <h2 class="watch-title">Watch</h2>
+        <p class="watch-sub">Pick a game — it opens on MLB.tv and floats into a
+        picture-in-picture window you can park in the corner of your screen.</p>
+        <div class="watch-ext ${ok ? "ok" : "missing"}">
+          <span class="dot"></span>
+          ${ok
+            ? `Watch extension connected — games open automatically.`
+            : `Watch extension not detected. Install it from
+               <code>web/extension/</code> to auto-open games in PiP; until
+               then, “Watch” just opens MLB.tv in a new tab.`}
+        </div>
+      </header>
+    `;
+}
+
+function renderWatchCard(g) {
+    const live = g.status === "Live";
+    const score = (s) => (g.status === "Preview" ? "" : (s ?? ""));
+    return `
+      <div class="watch-card" data-status="${g.status}">
+        <div class="matchup">
+          <div class="team">
+            <span class="team-id">
+              ${inlineTeamLogo(g.away, { size: 22, class: "team-logo" })}
+              <span class="name">${g.away}</span>
+            </span>
+            <span class="score">${score(g.away_score)}</span>
+          </div>
+          <div class="team">
+            <span class="team-id">
+              ${inlineTeamLogo(g.home, { size: 22, class: "team-logo" })}
+              <span class="name">${g.home}</span>
+            </span>
+            <span class="score">${score(g.home_score)}</span>
+          </div>
+        </div>
+        <div class="watch-state">${stateLabel(g)}</div>
+        <button class="watch-btn ${live ? "is-live" : ""}"
+                data-pk="${g.game_pk}"
+                data-away="${escapeHTMLAttr(g.away)}"
+                data-home="${escapeHTMLAttr(g.home)}">
+          ▶ Watch${live ? " live" : ""}
+        </button>
+      </div>
+    `;
+}
+
+// Delegated click — survives the refreshWatch() innerHTML swaps.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".watch-btn");
+    if (!btn) return;
+    requestWatch(btn.dataset.pk, btn.dataset.away, btn.dataset.home, btn);
+});
+
+function requestWatch(gamePk, away, home, btn) {
+    if (watchExtInstalled()) {
+        // Hand off to the extension. It opens MLB.tv and auto-PiPs the feed
+        // the moment you tab back here.
+        window.postMessage({
+            source: "diamond-context",
+            type: "DC_WATCH",
+            gamePk, away, home,
+            date: todayInET(),
+        }, "*");
+        if (btn) flashWatchBtn(btn, "Opening on MLB.tv…");
+    } else {
+        // No extension — the most a web page can do is open MLB.tv.
+        window.open("https://www.mlb.com/tv", "_blank", "noopener");
+        if (btn) flashWatchBtn(btn, "Opened MLB.tv ↗");
+    }
+}
+
+function flashWatchBtn(btn, text) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = text;
+    btn.disabled = true;
+    setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.disabled = false;
+    }, 2500);
+}
+
+// The extension tells us (via content-bridge → postMessage) when a watch
+// request landed on MLB's login page instead of the player — i.e. the
+// MLB.tv session expired. We surface a one-time, one-click re-login prompt.
+// We never touch the password: the user signs in on MLB themselves and the
+// browser session carries every Watch click after that.
+window.addEventListener("message", (e) => {
+    if (e.source !== window) return;
+    if (e.data?.source === "diamond-context-ext" && e.data.type === "DC_LOGIN_REQUIRED") {
+        showWatchLoginPrompt();
+    }
+});
+
+function showWatchLoginPrompt() {
+    if (document.getElementById("dc-watch-login-toast")) return;
+    const el = document.createElement("div");
+    el.id = "dc-watch-login-toast";
+    el.className = "watch-login-toast";
+    el.innerHTML = `
+      <span>You're signed out of MLB.tv. Sign in once — every Watch click works after that.</span>
+      <a href="https://www.mlb.com/login" target="_blank" rel="noopener">Sign in ↗</a>
+      <button class="wlt-x" aria-label="Dismiss">×</button>
+    `;
+    document.body.appendChild(el);
+    el.querySelector(".wlt-x").addEventListener("click", () => el.remove());
+    setTimeout(() => { if (el.isConnected) el.remove(); }, 20000);
 }

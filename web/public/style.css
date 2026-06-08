@@ -12107,3 +12107,140 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
     border-radius: 8px;
     color: var(--text-dim);
 }
+
+/* ── WATCH TAB ─────────────────────────────────────────────────────────
+   The MLB.tv launcher. Cards mirror the Board's tile look but end in a
+   Watch button instead of being a link to the game view. */
+.watch-view {
+    padding: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+.watch-head {
+    margin-bottom: 16px;
+}
+.watch-title {
+    margin: 0 0 4px;
+    font-size: 1.25rem;
+    letter-spacing: 0.02em;
+}
+.watch-sub {
+    margin: 0 0 12px;
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    max-width: 60ch;
+}
+.watch-ext {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-dim);
+}
+.watch-ext .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+.watch-ext.ok    { color: var(--text); }
+.watch-ext.ok .dot      { background: var(--accent-win); box-shadow: 0 0 6px var(--accent-win); }
+.watch-ext.missing .dot { background: var(--text-faint); }
+.watch-ext code {
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+}
+
+.watch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--tile-w), 1fr));
+    gap: 12px;
+}
+.watch-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+}
+.watch-card .matchup { display: flex; flex-direction: column; gap: 6px; }
+.watch-card .team {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.watch-card .team-id { display: flex; align-items: center; gap: 8px; }
+.watch-card .team .name { font-weight: 600; }
+.watch-card .team .score { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.watch-state {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.watch-btn {
+    margin-top: auto;
+    width: 100%;
+    padding: 9px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--accent-action);
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+}
+.watch-btn:hover { filter: brightness(1.1); }
+.watch-btn:disabled { opacity: 0.7; cursor: default; }
+.watch-btn.is-live { background: var(--accent-live); }
+
+/* Sign-in prompt — shown when the extension finds the MLB.tv session has
+   expired. One click to re-login; never handles the password itself. */
+.watch-login-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 76px; /* clear of the bottom nav */
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(560px, calc(100vw - 24px));
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    font-size: 0.86rem;
+    color: var(--text);
+}
+.watch-login-toast a {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: var(--accent-action);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+}
+.watch-login-toast a:hover { filter: brightness(1.1); }
+.watch-login-toast .wlt-x {
+    flex: 0 0 auto;
+    background: none;
+    border: 0;
+    color: var(--text-faint);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.watch-login-toast .wlt-x:hover { color: var(--text); }
