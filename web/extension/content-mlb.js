@@ -20,6 +20,32 @@
     if (msg?.type === "DC_ENTER_PIP") startWatch(msg);
   });
 
+  // Proactively offer PiP on ANY MLB.tv video page — not just tabs the
+  // extension opened. MLB hides the native Picture-in-Picture control, but
+  // the requestPictureInPicture() API still works, so we supply our own
+  // one-tap button whenever a feed is playing. This is what makes PiP
+  // possible at all on MLB.tv.
+  offerPiPWhenReady();
+
+  async function offerPiPWhenReady() {
+    for (let i = 0; i < 90; i++) {
+      const v = pickVideo();
+      if (
+        v &&
+        !document.getElementById("dc-pip-overlay") &&
+        document.pictureInPictureElement !== v
+      ) {
+        showPiPOverlay(v);
+        return;
+      }
+      await sleep(1000);
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
   async function startWatch(intent) {
     // If the deep link missed and we're on a listing, click into the game.
     await maybeClickIntoGame(intent);
@@ -74,7 +100,7 @@
     if (document.getElementById("dc-pip-overlay")) return;
     const el = document.createElement("div");
     el.id = "dc-pip-overlay";
-    el.textContent = "▶ Click anywhere to watch in the corner";
+    el.textContent = "▶ Watch in the corner (picture-in-picture)";
     Object.assign(el.style, {
       position: "fixed",
       zIndex: "2147483647",
@@ -84,22 +110,22 @@
       background: "#3B82F6",
       color: "#fff",
       font: "600 14px system-ui, sans-serif",
-      padding: "10px 16px",
+      padding: "12px 18px",
       borderRadius: "8px",
       boxShadow: "0 6px 20px rgba(0,0,0,.45)",
       cursor: "pointer",
       pointerEvents: "auto",
     });
-    const go = async () => {
-      document.removeEventListener("click", go, true);
+    // Clicking the button itself is the user gesture that PiP requires. We
+    // bind to the button (not the whole document) so it doesn't hijack
+    // clicks elsewhere on the page.
+    el.addEventListener("click", async (e) => {
+      e.stopPropagation();
       el.remove();
       try {
         await video.requestPictureInPicture();
       } catch (_) {}
-    };
-    // Capture phase so the very first click anywhere (including the MLB
-    // player itself) triggers PiP before the page consumes it.
-    document.addEventListener("click", go, true);
+    });
     document.body.appendChild(el);
   }
 
