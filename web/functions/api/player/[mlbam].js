@@ -63,6 +63,10 @@ export async function onRequest(context) {
         // uncached) so blocking on it serially would noticeably slow
         // the player page. Cached at the edge for 24h.
         const bioPromise = fetchMLBPlayerBio(mlbam);
+        // Fire pitching stats fetch in parallel too — we don't know if
+        // the player is a pitcher yet but the fetch is cheap (edge
+        // cached) and returns null when not applicable.
+        const pitchingStatsPromise = fetchPitcherSeasonStats(mlbam);
 
         // 2. Career rates (one fetch per role; both return [] if the
         //    player isn't in that table). Skip retrosheet-keyed fetches
@@ -124,7 +128,16 @@ export async function onRequest(context) {
             if (y > coverageEnd) coverageEnd = y;
         }
 
-        const bio = await bioPromise;
+        const [bio, pitchingStats] = await Promise.all([bioPromise, pitchingStatsPromise]);
+
+        const pitcher = pitcherRows.length || pitcherSeason.length
+            ? buildPitcher(pitcherRows, pitcherSeason, currentYear)
+            : null;
+        // Attach the conventional pitching headline stats to the
+        // pitcher payload when available. UI leads with these.
+        if (pitcher && pitchingStats) {
+            pitcher.season_stats = pitchingStats;
+        }
 
         return jsonResponse({
             player: {
@@ -133,17 +146,12 @@ export async function onRequest(context) {
                 name: `${player.name_first || ""} ${player.name_last || ""}`.trim(),
                 first: player.name_first,
                 last:  player.name_last,
-                // Bio fields from MLB Stats API. May be null if the
-                // fetch failed — the UI handles that gracefully (the
-                // hero header just degrades to name + handedness only).
                 bio,
             },
             batter:  batterRows.length || batterSeason.length
                 ? buildBatter(batterRows, batterSeason, currentYear)
                 : null,
-            pitcher: pitcherRows.length || pitcherSeason.length
-                ? buildPitcher(pitcherRows, pitcherSeason, currentYear)
-                : null,
+            pitcher,
             historical_years: { start: RETROSHEET_START_YEAR, end: coverageEnd },
             current_year: currentYear,
         }, 300);
@@ -353,6 +361,53 @@ async function fetchMLBPlayerBio(mlbam) {
             position_name: p.primaryPosition?.name || null,
             team_name:     p.currentTeam?.name || null,
             team_id:       p.currentTeam?.id ?? null,
+        };
+    } catch {
+        return null;
+    }
+}
+
+// Conventional pitching stats for the current season. MLB Stats API
+// returns ERA, W-L, IP, K, BB, WHIP — what every major site leads
+// with on a pitcher page. We don't store these in Supabase so this
+// is a per-page MLB API fetch, edge-cached 30 min.
+async function fetchPitcherSeasonStats(mlbam) {
+    try {
+        const res = await fetch(
+            `https://statsapi.mlb.com/api/v1/people/${mlbam}/stats?stats=season&group=pitching`,
+            {
+                headers: { "User-Agent": "DIAMOND:CONTEXT/0.1" },
+                cf: { cacheTtl: 1800, cacheEverything: true },
+            },
+        );
+        if (!res.ok) return null;
+        const d = await res.json();
+        const split = d.stats?.[0]?.splits?.[0]?.stat;
+        if (!split) return null;
+        return {
+            wins:        Number(split.wins) || 0,
+            losses:      Number(split.losses) || 0,
+            era:         split.era || null,
+            ip:          split.inningsPitched || null,
+            games:       Number(split.gamesPlayed) || 0,
+            starts:      Number(split.gamesStarted) || 0,
+            saves:       Number(split.saves) || 0,
+            hits:        Number(split.hits) || 0,
+            earned_runs: Number(split.earnedRuns) || 0,
+            runs:        Number(split.runs) || 0,
+            strikeouts:  Number(split.strikeOuts) || 0,
+            walks:       Number(split.baseOnBalls) || 0,
+            home_runs:   Number(split.homeRuns) || 0,
+            whip:        split.whip || null,
+            k_per_9:     split.strikeoutsPer9Inn || null,
+            bb_per_9:    split.walksPer9Inn || null,
+            hr_per_9:    split.homeRunsPer9 || null,
+            avg_against: split.avg || null,
+            obp_against: split.obp || null,
+            slg_against: split.slg || null,
+            ops_against: split.ops || null,
+            babip:       split.babip || null,
+            war:         null,
         };
     } catch {
         return null;

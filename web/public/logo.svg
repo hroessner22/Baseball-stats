@@ -1,0 +1,13 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-label="DIAMOND:CONTEXT logo">
+  <!-- Rotated square = baseball infield from above.
+       Stroke uses currentColor so the mark inherits text color
+       (white on dark by default, but works on any background). -->
+  <path d="M 12 2.5 L 21.5 12 L 12 21.5 L 2.5 12 Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linejoin="round"/>
+  <!-- Center dot = the 'moment in context' — matches --accent-win
+       (the same green the colon uses in the wordmark). -->
+  <circle cx="12" cy="12" r="2.4" fill="#22C55E"/>
+</svg>

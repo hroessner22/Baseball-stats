@@ -17,9 +17,11 @@
 import {
     listAllMlbMarkets,
     filterMarketsForGame,
+    filterToLiveLineSources,
     groupByQuestion,
     consensusProbability,
     teamTricode,
+    LIVE_LINE_SOURCES,
 } from "../../_markets.js";
 
 const CACHE_SECONDS = 10;   // rapid updates per user feedback
@@ -82,9 +84,42 @@ export async function onRequest(context) {
     } catch (e) {
         return jsonError(502, `markets fetch failed: ${e.message || e}`);
     }
-    const gameMarkets = filterMarketsForGame(
+
+    // Roster cross-reference was removed — Kalshi's per-game player
+    // props (KXMLBHR, KXMLBKS, ...) self-identify the game via their
+    // ticker, so they flow through naturally. Season-long futures (HR
+    // leader, Pitcher of the Month) are tagged with the player's team
+    // in the adapter via description parsing and belong on the team
+    // profile page; they get filtered out below for the per-game tab.
+
+    // Filter to this game's teams + time window, THEN drop every
+    // source that doesn't publish LIVE in-play lines. The pregame
+    // sources (espn_dk, thescore, vegasinsider + all vi_* sub-books,
+    // odds_api free-tier) freeze at first pitch and pollute every
+    // downstream calculation — see LIVE_LINE_SOURCES in _markets.js
+    // for the full source-by-source classification. User feedback
+    // 2026-05-28: live consensus was averaging pregame openers with
+    // current live lines and reporting nonsense numbers.
+    const allGameMarkets = filterMarketsForGame(
         allMarkets, homeAbbr, awayAbbr, game.start_time,
     );
+    let gameMarkets = filterToLiveLineSources(allGameMarkets);
+    // Strict per-game filter for player_prop: require BOTH home and
+    // away tricodes (i.e. the market is for THIS specific game).
+    // Per-game Kalshi props (KXMLBHR/KXMLBKS/...) have both set by
+    // parseKalshiPerGameTicker. Season-long futures (HR leader,
+    // Pitcher of Month) only have home_tricode (player's team), and
+    // those belong on the team page, not the per-game tab.
+    gameMarkets = gameMarkets.filter((m) => {
+        if (m.question_type !== "player_prop") return true;
+        return !!(m.home_tricode && m.away_tricode);
+    });
+    const droppedPregame    = allGameMarkets.length - gameMarkets.length;
+    const pregameSourcesSeen = Array.from(new Set(
+        allGameMarkets
+            .filter((m) => !LIVE_LINE_SOURCES.has(m.source))
+            .map((m) => m.source)
+    )).sort();
 
     // 3. Group by question type so the dashboard can render sections.
     const grouped = groupByQuestion(gameMarkets);
@@ -157,13 +192,26 @@ export async function onRequest(context) {
         sources_present: Array.from(new Set(gameMarkets.map((m) => m.source))).sort(),
         // Our model's headline WE (forwarded so the UI can show side-by-side).
         our_we_home: game.win_expectancy,
-        // Consensus across all sources that quote the question.
+        // Consensus across all LIVE-LINE sources that quote the
+        // question. Pregame-only sources (espn_dk, thescore,
+        // vegasinsider + all vi_*) are deliberately excluded — see
+        // LIVE_LINE_SOURCES in _markets.js for the source breakdown
+        // and the 2026-05-28 evidence for why mixing was broken.
         consensus: {
             home_win:  homeWinConsensus,
             away_win:  awayWinConsensus,
             edge_home: homeWinConsensus != null && game.win_expectancy != null
                 ? game.win_expectancy - homeWinConsensus
                 : null,
+            // Live-only metadata so the UI can show "consensus of N
+            // LIVE sources" and surface what was filtered out as
+            // pregame-stale.
+            live_only:               true,
+            contributing_sources:    Array.from(new Set(
+                (grouped.moneyline || []).map((m) => m.source)
+            )).sort(),
+            pregame_sources_dropped: pregameSourcesSeen,
+            dropped_market_count:    droppedPregame,
         },
         // Per-source individual quotes — one row per book. UI renders
         // these in the header instead of (or alongside) the averaged
@@ -228,4 +276,28 @@ function jsonError(status, message) {
         status,
         headers: { "content-type": "application/json" },
     });
+}
+
+// MLB Stats API roster fetch — returns the active roster's full names
+// as a plain string[]. Used by the player-prop cross-reference logic
+// above to figure out which Kalshi season-long player futures should
+// surface on this specific game.
+//
+// Cached 10 min at the edge — rosters don't change mid-game.
+async function fetchRoster(teamId) {
+    if (!teamId) return [];
+    const url = `https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active`;
+    try {
+        const res = await fetch(url, {
+            headers: { "User-Agent": "DIAMOND-CONTEXT/0.1 (+https://diamond-context.pages.dev)" },
+            cf: { cacheTtl: 600, cacheEverything: true },
+        });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data.roster || [])
+            .map((p) => p.person?.fullName)
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
 }

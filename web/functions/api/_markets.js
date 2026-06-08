@@ -153,14 +153,33 @@ function findTricodesInText(text) {
 // ── HTTP helpers ──────────────────────────────────────────────────
 
 async function fetchJson(url, opts = {}) {
-    const res = await fetch(url, {
-        headers: { "User-Agent": UA, ...(opts.headers || {}) },
-        cf: { cacheTtl: opts.cacheTtl ?? 30, cacheEverything: true },
-    });
-    if (!res.ok) {
-        throw new Error(`${url} → HTTP ${res.status}`);
+    // Per-request timeout so ONE slow upstream in a Promise.allSettled
+    // fan-out doesn't hang the whole worker until Cloudflare kills it
+    // (which surfaces as a 5xx on our endpoint and trips the
+    // 'our_markets degraded' banner). 6s is generous for Kalshi / MLB
+    // Stats API responses; anything slower than that we want to skip
+    // rather than wait for. Pass opts.timeoutMs to override.
+    const ctrl = new AbortController();
+    const timeoutMs = opts.timeoutMs ?? 6000;
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, {
+            headers: { "User-Agent": UA, ...(opts.headers || {}) },
+            cf: { cacheTtl: opts.cacheTtl ?? 30, cacheEverything: true },
+            signal: ctrl.signal,
+        });
+        if (!res.ok) {
+            throw new Error(`${url} → HTTP ${res.status}`);
+        }
+        return await res.json();
+    } catch (e) {
+        if (e.name === "AbortError") {
+            throw new Error(`${url} → timeout after ${timeoutMs}ms`);
+        }
+        throw e;
+    } finally {
+        clearTimeout(timer);
     }
-    return res.json();
 }
 
 function parseJsonArray(s) {
@@ -179,6 +198,52 @@ function parseJsonArray(s) {
 // one parent event + N child markets). We flatten to one Market per
 // sub-market so the UI can render them individually.
 
+// Polymarket's event.startDate is the contract creation time (often a
+// week before the underlying game). The descriptions, however,
+// reliably embed the actual game time in the phrase
+//   "scheduled for {Month} {day} at {h}:{mm} {AM/PM} ET"
+// Parse that to a UTC millis timestamp so the per-game endpoint's
+// 48h time-window check can match correctly. If parsing fails, we
+// fall back to whatever was passed in (typically event.startDate).
+const POLY_MONTH_INDEX = {
+    jan:0,feb:1,mar:2,apr:3,may:4,jun:5,
+    jul:6,aug:7,sep:8,oct:9,nov:10,dec:11,
+};
+function parsePolymarketGameTime(description, fallbackIso) {
+    const fallbackMs = fallbackIso ? Date.parse(fallbackIso) : null;
+    if (!description) return fallbackMs;
+    const m = description.match(
+        /scheduled for ([A-Z][a-z]+)\s+(\d{1,2})(?:[a-z]*)?(?:,\s*(\d{4}))?(?:[^.]*?at\s+(\d{1,2}):(\d{2})\s*(AM|PM)\s*ET)?/i
+    );
+    if (!m) return fallbackMs;
+    const [, monStr, dayStr, yearStr, hhStr, mmStr, ampm] = m;
+    const monIdx = POLY_MONTH_INDEX[monStr.slice(0, 3).toLowerCase()];
+    if (monIdx == null) return fallbackMs;
+    const day = Number(dayStr);
+    if (!Number.isFinite(day) || day < 1 || day > 31) return fallbackMs;
+
+    // Year: explicit > fallback's year > current year. (Polymarket
+    // doesn't usually print a year, since the contracts resolve within
+    // the same calendar season.)
+    const year = yearStr ? Number(yearStr) :
+        fallbackMs ? new Date(fallbackMs).getUTCFullYear() :
+        new Date().getUTCFullYear();
+
+    // Time: default to 7 PM ET when the description doesn't specify
+    // (rare but possible). MLB regular-season games are in DST so
+    // ET = UTC-4 → add 4 hours to convert ET clock time → UTC.
+    let h24 = 19, mins = 0;
+    if (hhStr) {
+        h24 = Number(hhStr);
+        mins = Number(mmStr) || 0;
+        const tag = (ampm || "").toUpperCase();
+        if (tag === "PM" && h24 < 12) h24 += 12;
+        if (tag === "AM" && h24 === 12) h24 = 0;
+    }
+    return Date.UTC(year, monIdx, day, h24 + 4, mins);
+}
+
+
 async function listPolymarketMlbMarkets() {
     const url = `${POLY_GAMMA}/events`
               + `?tag_slug=baseball&active=true&closed=false&limit=200`;
@@ -196,7 +261,15 @@ async function listPolymarketMlbMarkets() {
     for (const ev of events) {
         const evTitle = ev.title || "";
         const evSlug  = ev.slug || "";
-        const startMs = ev.startDate ? Date.parse(ev.startDate) : null;
+        // ev.startDate on Polymarket is the contract CREATION time
+        // (often a week before the game). ev.endDate is the resolution
+        // cut-off (often a week after the game). Neither matches "first
+        // pitch", which the per-game time-window check needs. Parse the
+        // real game time out of the description's "scheduled for X" line
+        // and fall back to startDate only if the description is missing.
+        // Without this, every Polymarket MLB market gets silently
+        // dropped from /api/game/{id}/markets by the 48h window.
+        const startMs = parsePolymarketGameTime(ev.description, ev.startDate);
         const endMs   = ev.endDate ? Date.parse(ev.endDate) : null;
         const evVol   = Number(ev.volume) || Number(ev.volume24hr) || undefined;
         const evLiq   = Number(ev.liquidity) || undefined;
@@ -226,6 +299,10 @@ async function listPolymarketMlbMarkets() {
                 ? `https://polymarket.com/event/${evSlug || m.slug}`
                 : `https://polymarket.com/`;
 
+            // Sub-market may have its own scheduled date too — prefer
+            // it over the event-level parse so per-game-of-a-series
+            // contracts (rare but possible) bind to the right night.
+            const subStartMs = parsePolymarketGameTime(m.description, null) || startMs;
             out.push(flat({
                 id: `polymarket:${m.id || m.conditionId}`,
                 source: "polymarket",
@@ -239,7 +316,7 @@ async function listPolymarketMlbMarkets() {
                 })),
                 question_type: qType,
                 status: m.closed ? "closed" : "open",
-                start_time: startMs ? new Date(startMs).toISOString() : null,
+                start_time: subStartMs ? new Date(subStartMs).toISOString() : null,
                 close_time: endMs ? new Date(endMs).toISOString() : null,
                 home_tricode: teams.home,
                 away_tricode: teams.away,
@@ -262,30 +339,135 @@ async function listPolymarketMlbMarkets() {
 // the UI renders one card per game. Tickers carry the date + teams,
 // which we parse to set start_time + home/away tricode.
 
-// Series we pull. Game-day moneylines + a curated list of season
-// futures we know exist on Kalshi today.
+// Series we pull. Game-day moneylines + season futures + per-game
+// player props / team props. Kalshi exposes a clean per-game ticker
+// convention for sports — every market in the per-game series carries
+// the game date + team pair in the ticker (e.g.
+// KXMLBHR-26MAY301410DETCWS-DETFVALDEZ59-9), so we can attach the
+// game's home/away tricodes at parse time and the markets flow
+// straight into the per-game endpoint without needing roster
+// cross-reference.
 const KALSHI_SERIES = [
-    { ticker: "KXMLBGAME",        type: "game" },          // per-game moneyline
-    { ticker: "KXLEADERMLBHR",    type: "future_player" }, // HR leader
-    { ticker: "KXMLBRBI",         type: "future_player" }, // RBI leader
-    { ticker: "KXMLBPITCHEROTM",  type: "future_player" }, // pitcher of the month
+    // Per-game moneyline
+    { ticker: "KXMLBGAME",        type: "game" },
+
+    // ── Team season futures (per-team binary markets) ─────────────
+    // Each market is "Will {team} win {category}?" with the team
+    // tricode as the LAST hyphen-segment of the market ticker
+    // (e.g. KXMLBALEAST-26-NYY). extractTeamTricodeFromKalshiTicker
+    // walks the ticker from the right and matches against
+    // MLB_TRICODE_SET to attach home_tricode.
+    { ticker: "KXMLB",            type: "future_team" }, // World Series champion
+    { ticker: "KXMLBAL",          type: "future_team" }, // AL pennant
+    { ticker: "KXMLBNL",          type: "future_team" }, // NL pennant
+    { ticker: "KXMLBALEAST",      type: "future_team" }, // AL East division
+    { ticker: "KXMLBALCENT",      type: "future_team" }, // AL Central division
+    { ticker: "KXMLBALWEST",      type: "future_team" }, // AL West division
+    { ticker: "KXMLBNLEAST",      type: "future_team" }, // NL East division
+    { ticker: "KXMLBNLCENT",      type: "future_team" }, // NL Central division
+    { ticker: "KXMLBNLWEST",      type: "future_team" }, // NL West division
+    { ticker: "KXMLBPLAYOFFS",    type: "future_team" }, // Will {team} make the playoffs
+    { ticker: "KXMLBBESTRECORD",  type: "future_team" }, // Best regular-season record
+    { ticker: "KXMLBWORSTRECORD", type: "future_team" }, // Worst regular-season record
+
+    // ── Player season futures (awards + leaderboards) ─────────────
+    // Each market is "Will {player} win/lead?" — team attribution
+    // via extractKalshiDescTeam reading the subtitle, same as the
+    // existing KXLEADERMLBHR / KXMLBRBI flow.
+    { ticker: "KXLEADERMLBHR",      type: "future_player" }, // HR leader
+    { ticker: "KXLEADERMLBRBI",     type: "future_player" }, // RBI leader
+    { ticker: "KXLEADERMLBAVG",     type: "future_player" }, // Batting average leader
+    { ticker: "KXLEADERMLBHITS",    type: "future_player" }, // Hits leader
+    { ticker: "KXLEADERMLBRUNS",    type: "future_player" }, // Runs leader
+    { ticker: "KXLEADERMLBDOUBLES", type: "future_player" }, // Doubles leader
+    { ticker: "KXLEADERMLBTRIPLES", type: "future_player" }, // Triples leader
+    { ticker: "KXLEADERMLBSTEALS",  type: "future_player" }, // Stolen bases leader
+    { ticker: "KXLEADERMLBOPS",     type: "future_player" }, // OPS leader
+    { ticker: "KXLEADERMLBWAR",     type: "future_player" }, // WAR leader
+    { ticker: "KXLEADERMLBKS",      type: "future_player" }, // Strikeouts leader (pitcher)
+    { ticker: "KXLEADERMLBWINS",    type: "future_player" }, // Wins leader (pitcher)
+    { ticker: "KXLEADERMLBERA",     type: "future_player" }, // Lowest ERA (pitcher)
+    { ticker: "KXMLBALMVP",         type: "future_player" }, // AL MVP
+    { ticker: "KXMLBNLMVP",         type: "future_player" }, // NL MVP
+    { ticker: "KXMLBALCY",          type: "future_player" }, // AL Cy Young
+    { ticker: "KXMLBNLCY",          type: "future_player" }, // NL Cy Young
+    { ticker: "KXMLBALROTY",        type: "future_player" }, // AL Rookie of the Year
+    { ticker: "KXMLBNLROTY",        type: "future_player" }, // NL Rookie of the Year
+    { ticker: "KXMLBALMOTY",        type: "future_player" }, // AL Manager of the Year
+    { ticker: "KXMLBNLMOTY",        type: "future_player" }, // NL Manager of the Year
+    { ticker: "KXMLBALRELOTY",      type: "future_player" }, // AL Reliever of the Year
+    { ticker: "KXMLBNLRELOTY",      type: "future_player" }, // NL Reliever of the Year
+    { ticker: "KXMLBALCPOTY",       type: "future_player" }, // AL Comeback Player of the Year
+    { ticker: "KXMLBNLCPOTY",       type: "future_player" }, // NL Comeback Player of the Year
+    { ticker: "KXMLBALHAARON",      type: "future_player" }, // AL Hank Aaron Award
+    { ticker: "KXMLBNLHAARON",      type: "future_player" }, // NL Hank Aaron Award
+    { ticker: "KXMLBPITCHEROTM",    type: "future_player" }, // Pitcher of the Month
+
+    // Per-game player props (titled "Will X get Y+ stat?")
+    { ticker: "KXMLBHR",          type: "per_game_player" }, // home runs in game
+    { ticker: "KXMLBKS",          type: "per_game_player" }, // pitcher strikeouts in game
+    { ticker: "KXMLBHIT",         type: "per_game_player" }, // hits in game
+    { ticker: "KXMLBTB",          type: "per_game_player" }, // total bases in game
+    { ticker: "KXMLBHRR",         type: "per_game_player" }, // hits+runs+RBIs combo
+    // Per-game team props. Granular types so the slate dashboard
+    // can match KXMLBSPREAD → 'spread' column and KXMLBTOTAL →
+    // 'total' column. Without the split they all came through as
+    // question_type 'team_prop' and the dashboard's Run Line and
+    // Total cells showed 'no kalshi market' on every game.
+    { ticker: "KXMLBSPREAD",      type: "per_game_spread" },  // run line
+    { ticker: "KXMLBTOTAL",       type: "per_game_total" },   // total runs O/U
+    { ticker: "KXMLBTEAMTOTAL",   type: "per_game_team" },    // team total runs
+    { ticker: "KXMLBF5",          type: "per_game_team" },    // first 5 innings winner
+    { ticker: "KXMLBF5SPREAD",    type: "per_game_team" },    // first 5 spread
+    { ticker: "KXMLBF5TOTAL",     type: "per_game_team" },    // first 5 total
+    { ticker: "KXMLBRFI",         type: "per_game_team" },    // run in 1st inning
 ];
 
 async function listKalshiMlbMarkets() {
     const all = [];
-    for (const s of KALSHI_SERIES) {
+
+    // Fan ALL Kalshi series fetches out in parallel — sequential await
+    // pushed total wall-time past the per-worker budget, so the later
+    // series (HIT, TB, SPREAD, TOTAL, F5...) silently never landed.
+    // With Promise.allSettled the slowest fetch sets total latency
+    // instead of the sum, and we still get every series that succeeds.
+    const seriesResults = await Promise.allSettled(KALSHI_SERIES.map((s) =>
+        fetchJson(
+            `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`,
+            { cacheTtl: 30 },
+        ).then((data) => ({ s, mkts: Array.isArray(data?.markets) ? data.markets : [] }))
+    ));
+
+    for (const r of seriesResults) {
+        if (r.status !== "fulfilled") continue;
+        const { s, mkts } = r.value;
         try {
-            const url = `${KALSHI_BASE}/markets`
-                      + `?series_ticker=${s.ticker}&status=open&limit=400`;
-            const data = await fetchJson(url, { cacheTtl: 30 });
-            const mkts = Array.isArray(data?.markets) ? data.markets : [];
             if (s.type === "game") {
                 all.push(...foldKalshiGameMarkets(mkts));
+            } else if (
+                s.type === "per_game_player" ||
+                s.type === "per_game_team"   ||
+                s.type === "per_game_spread" ||
+                s.type === "per_game_total"
+            ) {
+                // Per-game series carry the game date + team pair in
+                // the ticker so we can attach home/away tricodes at
+                // parse time, no roster cross-reference needed.
+                for (const m of mkts) {
+                    const market = toKalshiSingleMarket(m, s.type);
+                    const parsed = parseKalshiPerGameTicker(m.ticker);
+                    if (parsed) {
+                        market.home_tricode = parsed.home;
+                        market.away_tricode = parsed.away;
+                        market.start_time   = parsed.game_start;
+                    }
+                    all.push(market);
+                }
             } else {
                 for (const m of mkts) all.push(toKalshiSingleMarket(m, s.type));
             }
         } catch {
-            // skip this series, keep going with the rest
+            // single-series mapping failure shouldn't drop the rest
         }
     }
     // Team season-wins futures (KXMLBWINS-{TRI}) — previously one
@@ -350,11 +532,55 @@ function parseKalshiGameTicker(ticker) {
     };
 }
 
+// Parse the per-game prop ticker convention into game info. Examples:
+//   KXMLBHR-26MAY301410DETCWS-DETFVALDEZ59-9   → DET @ CHW, May 30 14:10 ET
+//   KXMLBKS-26MAY301410DETCWS-DETFVALDEZ59-9   → same
+//   KXMLBSPREAD-26MAY301410DETCWS-CWS5         → same
+//   KXMLBTOTAL-26MAY301605SDWSH-9              → SD @ WSH, May 30 16:05 ET
+//
+// Returns { game_start, away, home } with team tricodes canonicalized
+// to MLB-Stats abbreviations (CHW not CWS). Returns null if the
+// ticker doesn't match the per-game series pattern (e.g. for KXMLBGAME
+// or season-future tickers).
+function parseKalshiPerGameTicker(ticker) {
+    const m = (ticker || "").match(
+        /^KX[A-Z]+-(\d{2})([A-Z]{3})(\d{2})(\d{2})(\d{2})([A-Z]+)-/
+    );
+    if (!m) return null;
+    const [, yy, monStr, dd, hh, mm, pair] = m;
+    const months = { JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11 };
+    const monIdx = months[monStr];
+    if (monIdx == null) return null;
+    const split = splitMlbTeamPair(pair);
+    if (!split) return null;
+    const year = 2000 + Number(yy);
+    // Kalshi encodes ET clock time; convert to UTC by adding 4h (DST).
+    const startUtc = Date.UTC(year, monIdx, Number(dd), Number(hh) + 4, Number(mm));
+    return {
+        game_start: new Date(startUtc).toISOString(),
+        away: split.t1,
+        home: split.t2,
+    };
+}
+
 // Deterministically split a concatenated two-team tricode pair. Tries
 // every valid (2 or 3) + (2 or 3) split and returns the first where
-// BOTH halves are recognized MLB tricodes. Returns null if no split
-// works — caller should drop the market.
-const MLB_TRICODE_SET = new Set(MLB_TEAMS.map(([tri]) => tri));
+// BOTH halves are recognized MLB tricodes — or known aliases (CWS for
+// White Sox, ATH for Athletics, etc.). Both halves get canonicalized
+// to MLB-Stats abbrs (CHW, OAK, ...) before return so downstream
+// team-pair matching works against the MLB feed.
+//
+// Returns null if no split works — caller should drop the market.
+const MLB_TRICODE_SET = new Set();
+for (const [tri, _name, aliases] of MLB_TEAMS) {
+    MLB_TRICODE_SET.add(tri);
+    for (const a of aliases || []) {
+        const up = String(a).toUpperCase();
+        if (up.length >= 2 && up.length <= 4 && /^[A-Z]+$/.test(up)) {
+            MLB_TRICODE_SET.add(up);
+        }
+    }
+}
 function splitMlbTeamPair(pair) {
     if (!pair || pair.length < 4 || pair.length > 6) return null;
     // Order matters: try 3+3 (most common), then 2+3, 3+2, 2+2.
@@ -366,7 +592,12 @@ function splitMlbTeamPair(pair) {
         const t1 = pair.slice(0, a);
         const t2 = pair.slice(a, a + b);
         if (MLB_TRICODE_SET.has(t1) && MLB_TRICODE_SET.has(t2)) {
-            return { t1, t2 };
+            // Canonicalize via teamTricode so "CWS" becomes "CHW",
+            // matching the MLB Stats API abbreviation.
+            return {
+                t1: teamTricode(t1) || t1,
+                t2: teamTricode(t2) || t2,
+            };
         }
     }
     return null;
@@ -427,6 +658,76 @@ function foldKalshiGameMarkets(markets) {
     return out;
 }
 
+// Kalshi season-long player futures (HR leader, Pitcher of the Month,
+// etc.) embed the player's team in the market's `subtitle`/description
+// using their own shorthand (":: Colorado", ":: A's", ":: Chicago WS").
+// Map that to our canonical tricode so we can attach it to home_tricode
+// on the market — that lets the team-profile page surface the future
+// for the right team via its existing tricode filter.
+const KALSHI_DESC_TO_TRI = {
+    "arizona":       "ARI", "atlanta":      "ATL", "baltimore":    "BAL",
+    "boston":        "BOS", "chicago c":    "CHC", "chicago ws":   "CHW",
+    "chicago w":     "CHW", "cincinnati":   "CIN", "cleveland":    "CLE",
+    "colorado":      "COL", "detroit":      "DET", "houston":      "HOU",
+    "kansas city":   "KC",  "los angeles a":"LAA", "los angeles d":"LAD",
+    "miami":         "MIA", "milwaukee":    "MIL", "minnesota":    "MIN",
+    "new york m":    "NYM", "new york y":   "NYY", "a's":          "OAK",
+    "oakland":       "OAK", "philadelphia": "PHI", "pittsburgh":   "PIT",
+    "san diego":     "SD",  "seattle":      "SEA", "san francisco":"SF",
+    "st. louis":     "STL", "tampa bay":    "TB",  "texas":        "TEX",
+    "toronto":       "TOR", "washington":   "WSH",
+};
+// Keys ordered longest-first so "los angeles a" matches before "los angeles".
+const KALSHI_DESC_KEYS = Object.keys(KALSHI_DESC_TO_TRI).sort((a, b) => b.length - a.length);
+function extractKalshiDescTeam(desc) {
+    if (!desc) return null;
+    const d = desc.toLowerCase().replace(/::/g, "").trim();
+    for (const k of KALSHI_DESC_KEYS) {
+        if (d.includes(k)) return KALSHI_DESC_TO_TRI[k];
+    }
+    return null;
+}
+
+// Per-team season-futures markets carry the team tricode as the LAST
+// hyphen-segment of the market ticker — KXMLB-26-NYY (World Series),
+// KXMLBALEAST-26-NYY (AL East), KXMLBPLAYOFFS-26-NYY, etc. Walk the
+// ticker right-to-left and accept the first segment that resolves
+// against MLB_TRICODE_SET, then canonicalize via aliases (CWS→CWS,
+// ATH→OAK on the schedule API side). Returns null when no segment
+// matches — that's fine, the market just won't surface on team pages.
+function extractTeamTricodeFromKalshiTicker(ticker) {
+    if (!ticker) return null;
+    const parts = String(ticker).split("-");
+    for (let i = parts.length - 1; i >= 0; i--) {
+        const tok = parts[i].toUpperCase();
+        if (MLB_TRICODE_SET.has(tok)) return tok;
+    }
+    return null;
+}
+
+// Kalshi shortens shared-city team names to single-letter
+// disambiguators in their market titles: "New York Y" for Yankees,
+// "New York M" for Mets, "Chicago C" / "Chicago WS", "Los Angeles A"
+// / "Los Angeles D". Useless in headlines — replace with the proper
+// nickname so "Will New York Y win the AL East" reads as "Will
+// Yankees win the AL East" everywhere downstream.
+const KALSHI_TEAM_NAME_FIX = [
+    [/\bNew York Y\b/g,    "Yankees"],
+    [/\bNew York M\b/g,    "Mets"],
+    [/\bChicago WS\b/g,    "White Sox"],
+    [/\bChicago C\b/g,     "Cubs"],
+    [/\bLos Angeles A\b/g, "Angels"],
+    [/\bLos Angeles D\b/g, "Dodgers"],
+];
+function fixKalshiTeamNames(s) {
+    if (!s) return s;
+    let out = String(s);
+    for (const [rx, repl] of KALSHI_TEAM_NAME_FIX) {
+        out = out.replace(rx, repl);
+    }
+    return out;
+}
+
 function toKalshiSingleMarket(m, type) {
     const yb = Number(m.yes_bid);
     const ya = Number(m.yes_ask);
@@ -435,25 +736,45 @@ function toKalshiSingleMarket(m, type) {
         ? (yb + ya) / 200
         : (Number.isFinite(last) && last > 0 ? last / 100 : undefined);
     const noProb = yesProb != null ? 1 - yesProb : undefined;
-    const title = m.title || m.subtitle || m.ticker;
+    const title = fixKalshiTeamNames(m.title || m.subtitle || m.ticker);
+    // For season-long player futures (HR leader, Pitcher of the Month),
+    // tag home_tricode with the player's team from the description so
+    // the team-profile page can pick them up via its tricode filter.
+    // We DELIBERATELY leave away_tricode null — that single-tricode
+    // shape is what the per-game endpoint uses to distinguish season
+    // futures from real per-game props.
+    let derivedHome = null;
+    if (type === "future_player") {
+        derivedHome = extractKalshiDescTeam(m.subtitle || "");
+    } else if (type === "future_team") {
+        // Per-team binary markets (KXMLB-26-NYY, KXMLBALEAST-26-NYY, …)
+        // carry the team tricode in the ticker tail. Subtitle fallback
+        // catches any series that names the team in the subtitle
+        // instead (e.g. some manager / executive futures).
+        derivedHome = extractTeamTricodeFromKalshiTicker(m.ticker)
+                   || extractKalshiDescTeam(m.subtitle || "");
+    }
     return flat({
         id: `kalshi:${m.ticker}`,
         source: "kalshi",
         title,
-        description: m.subtitle || "",
+        description: fixKalshiTeamNames(m.subtitle || ""),
         url: `https://kalshi.com/markets/${(m.ticker || "").toLowerCase()}`,
         outcomes: [
-            { id: `${m.ticker}:yes`, name: m.yes_sub_title || "Yes", probability: yesProb },
-            { id: `${m.ticker}:no`,  name: m.no_sub_title  || "No",  probability: noProb },
+            { id: `${m.ticker}:yes`, name: fixKalshiTeamNames(m.yes_sub_title || "Yes"), probability: yesProb },
+            { id: `${m.ticker}:no`,  name: fixKalshiTeamNames(m.no_sub_title  || "No"),  probability: noProb },
         ],
         question_type:
-            type === "future_player" ? "player_prop"
+            type === "future_player" || type === "per_game_player" ? "player_prop"
             : type === "future_team" ? "future"
+            : type === "per_game_spread" ? "spread"
+            : type === "per_game_total" ? "total"
+            : type === "per_game_team" ? "team_prop"
             : classifyQuestion(title),
         status: m.status === "active" ? "open" : (m.status || "unknown"),
         start_time: m.open_time || null,
         close_time: m.close_time || null,
-        home_tricode: null,
+        home_tricode: derivedHome,
         away_tricode: null,
         liquidity_usd: undefined,
         volume_usd:    undefined,
@@ -851,20 +1172,32 @@ function flat(o) {
 // Optional second return value `diagnostics` exposes per-adapter
 // outcomes (count or error) — used by /api/markets?debug=1 to surface
 // silent adapter failures without spamming user-facing responses.
-export async function listAllMlbMarkets(env) {
-    const labeled = [
-        ["polymarket", listPolymarketMlbMarkets()],
-        ["kalshi",     listKalshiMlbMarkets()],
-        ["manifold",   listManifoldMlbMarkets()],
-        ["odds_api",   listOddsApiMlbMarkets(env || {})],
-        ["bovada",     listBovadaMlbMarkets()],
-        ["pinnacle",   listPinnacleMlbMarkets()],
-        ["smarkets",   listSmarketsMlbMarkets()],
-        ["sxbet",      listSxBetMlbMarkets()],
-        ["thescore",   listTheScoreMlbMarkets()],
-        ["espn_dk",    listEspnDraftKingsMlbMarkets()],
-        ["vegasinsider", listVegasInsiderMlbMarkets()],
+export async function listAllMlbMarkets(env, opts = {}) {
+    // Source filter: when the caller declares it only needs one
+    // source (the frontend is in Kalshi-only mode and throws the
+    // other 10 sources' data away on the client anyway), skip the
+    // dead adapters entirely. Saves ~10 fan-outs worth of
+    // subrequests + CPU per /api/markets call — the difference
+    // between "/api/markets degraded, slowed auto-refresh to 30s"
+    // and the endpoint just working.
+    const onlySource = opts.source || null;
+    const ALL_ADAPTERS = [
+        ["polymarket", listPolymarketMlbMarkets],
+        ["kalshi",     listKalshiMlbMarkets],
+        ["manifold",   listManifoldMlbMarkets],
+        ["odds_api",   () => listOddsApiMlbMarkets(env || {})],
+        ["bovada",     listBovadaMlbMarkets],
+        ["pinnacle",   listPinnacleMlbMarkets],
+        ["smarkets",   listSmarketsMlbMarkets],
+        ["sxbet",      listSxBetMlbMarkets],
+        ["thescore",   listTheScoreMlbMarkets],
+        ["espn_dk",    listEspnDraftKingsMlbMarkets],
+        ["vegasinsider", listVegasInsiderMlbMarkets],
     ];
+    const labeled = onlySource
+        ? ALL_ADAPTERS.filter(([name]) => name === onlySource)
+                      .map(([name, fn]) => [name, fn()])
+        : ALL_ADAPTERS.map(([name, fn]) => [name, fn()]);
     const results = await Promise.allSettled(labeled.map((x) => x[1]));
     const out = [];
     const diagnostics = {};
@@ -1186,7 +1519,17 @@ export function filterMarketsForGame(markets, home, away, gameStartTime) {
 
         if (startMs && m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - startMs);
-            if (dt > PER_GAME_WINDOW_MS) continue;
+            if (dt > PER_GAME_WINDOW_MS) {
+                // Player / team props can be season-long futures
+                // (Kalshi: HR leader, RBI leader, Pitcher of the Month).
+                // Their start_time is when the market opened, often
+                // weeks before tonight's first pitch — but they're
+                // still relevant to every game during the open window.
+                // Skip the time-window rejection for those question
+                // types; team-pair match alone is enough.
+                if (m.question_type !== "player_prop"
+                    && m.question_type !== "team_prop") continue;
+            }
         }
         matches.push(m);
     }
@@ -1300,7 +1643,23 @@ async function listPinnacleMlbMarkets() {
             let outcomes = [];
             if (type === "moneyline") {
                 qType = "moneyline";
-                outcomes = prices.map((p) => {
+                // Pinnacle's straight markets endpoint sometimes
+                // returns MULTIPLE prices for the same designation
+                // (alternate moneylines without the isAlternate flag
+                // set). Without de-duping, one Pinnacle moneyline can
+                // emit 50+ outcomes all labelled "Milwaukee Brewers"
+                // at different prices — which then flooded the
+                // dashboard card. Keep only the first price per
+                // designation (home/away) so the market has at most 2
+                // outcomes, matching how every other sportsbook shows
+                // a moneyline.
+                const byDesignation = {};
+                for (const p of prices) {
+                    if (!byDesignation[p.designation]) {
+                        byDesignation[p.designation] = p;
+                    }
+                }
+                outcomes = Object.values(byDesignation).map((p) => {
                     const am = p.price;
                     const decimal = americanToDecimal(am);
                     return {
@@ -2095,6 +2454,104 @@ async function listEspnDraftKingsMlbMarkets() {
         }
     }
     return out;
+}
+
+
+// ── Live-line source whitelist ────────────────────────────────────
+//
+// Some sources serve LIVE in-play odds (updated continuously while the
+// game is in progress); others are PREGAME-ONLY (the line is frozen at
+// first pitch and stays stuck on the opener until the next slate).
+// Mixing both into a "cross-source consensus" makes the average
+// meaningless once a game starts moving — the stale pregame number
+// drags consensus toward the pregame opinion even as live sources have
+// already moved 50pp the other way.
+//
+// CLASSIFICATION DISCIPLINE: every source listed below was verified
+// against MLB's official Baseball Savant home_win probability on a
+// real live game. A source qualifies as LIVE only if its quote is
+// within ~10pp of Savant on at least one in-progress game (and the
+// adapter actually covers in-progress games rather than next-up ones).
+// Anything else is PREGAME. Verification harness lives at
+// docs/markets/source-verification.md — re-run when adding a source.
+//
+// LIVE (verified against in-progress games):
+//   polymarket : prediction-market CLOB, 24/7 trading. Verified
+//                2026-05-28 game 822896: 6.5% home vs Savant 6.6%
+//                (0.1pp error).
+//   bovada     : sportsbook, public coupon endpoint serves live events
+//                (the league listing intentionally has preMatchOnly off).
+//                Verified 2026-05-28 game 822896: 12.6% home vs Savant
+//                6.6% (6pp sportsbook lag, but tracking live state).
+//   kalshi     : KXMLBGAME tickers trade until the game ends. No
+//                traders during tonight's game so the row was null
+//                (harmless — null skips consensus), but the model is
+//                live by design.
+//   sxbet      : on-chain orderbook, continuous. Same as kalshi —
+//                null tonight, harmless.
+//   manifold   : prediction market, continuously priced. Often missing
+//                from MLB games entirely (low volume); harmless.
+//
+// PREGAME / BROKEN (DO NOT use in live consensus):
+//   pinnacle     : VERIFIED 2026-05-28 — adapter's
+//                  /leagues/246/matchups endpoint excludes in-progress
+//                  matches by default. Every one of pinnacle's 62
+//                  moneyline rows tonight pointed at TOMORROW's slate
+//                  (TEX-KC, LAD-PHI, PIT-MIN, ...) — none covered the
+//                  live HOU-TEX. Add to LIVE_LINE_SOURCES only after
+//                  the adapter is rewritten to fetch the in-play
+//                  matchups endpoint and verified live.
+//   smarkets     : 2026-05-28 — adapter hits Cloudflare's per-Worker
+//                  subrequest cap on the prices fetch; when prices
+//                  come back empty, the adapter still emits outcomes
+//                  with probability=0 instead of probability=null,
+//                  which would land in consensus as a 0% home-win
+//                  quote and drag the average to the floor. Stays
+//                  PREGAME until the adapter is fixed.
+//   espn_dk      : VERIFIED 2026-05-28 game 823378 — reported PIT
+//                  -175 (~64% home) while PIT was getting blown out
+//                  and Savant had them at ~2%. The ESPN odds endpoint
+//                  reports the pregame line and does not refresh
+//                  in-play.
+//   thescore     : VERIFIED 2026-05-28 game 822896 — reported TEX
+//                  -145 (~57% home) for an in-progress game where
+//                  Savant had TEX at 6.6%. Also serves the prior
+//                  day's date in start_time (May 28 00:05Z) instead
+//                  of tonight's, suggesting `timestamped_odds[]`
+//                  freezes at the previous day's close-time line.
+//   vegasinsider : Las Vegas OPENING odds grid HTML — by design a
+//                  pregame snapshot of where the retail books opened.
+//                  Tonight's grid even returned TEX @ DET (a
+//                  tomorrow-or-later game), not tonight's HOU @ TEX.
+//   vi_*         : every VegasInsider sub-book (bet365, betmgm,
+//                  draftkings, caesars, fanduel, hardrock, fanatics,
+//                  riverscasino) inherits the grid's pregame-ness.
+//   odds_api     : free-tier sport-level h2h/spreads/totals are
+//                  pregame. (Currently disabled — no key configured.)
+//
+// 2026-05-28 user report: live UI showed market consensus 36.3% for
+// TEX while bovada had 12.6% and thescore had 57.1% — averaging the
+// stale thescore line into the live bovada line gave a number 30pp
+// off from reality. This whitelist is the fix.
+export const LIVE_LINE_SOURCES = new Set([
+    "polymarket",
+    "bovada",
+    "kalshi",
+    "sxbet",
+    "manifold",
+]);
+
+export function isLiveLineSource(source) {
+    return LIVE_LINE_SOURCES.has(source);
+}
+
+// Drop every market whose source doesn't update continuously through
+// the game. Use this before computing cross-source consensus or before
+// handing markets to the UI — pregame-only sources freeze at first
+// pitch and quietly pollute every downstream calc with stale prices.
+export function filterToLiveLineSources(markets) {
+    if (!Array.isArray(markets)) return [];
+    return markets.filter((m) => LIVE_LINE_SOURCES.has(m.source));
 }
 
 

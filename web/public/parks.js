@@ -206,6 +206,42 @@ function parkWarningTrackPath(park, insetFt) {
     return parts.join(" ");
 }
 
+// SVG path for an OFFSET version of the outfield wall — same Catmull-Rom
+// shape, with every posted distance pushed outward by `offsetFt` feet
+// (positive) or inward (negative). Stadium rendering uses this to draw
+// the seating decks behind the wall:
+//   +30 ft  ≈ lower bleachers
+//   +60 ft  ≈ upper deck
+//   +90 ft  ≈ outer concourse / stadium perimeter
+// The existing parkWarningTrackPath uses -12 internally; this helper
+// generalizes that.
+function parkOffsetWallPath(park, offsetFt, opts) {
+    opts = opts || {};
+    const closeAtHome = !!opts.closeAtHome;
+    if (!park) return null;
+    const pts = [];
+    for (const key of POINT_ORDER) {
+        const d = park[key];
+        if (d == null) continue;
+        const dOff = d + offsetFt;
+        if (dOff <= 0) continue;
+        pts.push({ key, ...dirToXY(dOff, ANGLE_OF[key]) });
+    }
+    if (pts.length < 3) return null;
+    const ext = [pts[0]].concat(pts).concat([pts[pts.length - 1]]);
+    const parts = [`M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`];
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = ext[i], p1 = ext[i + 1], p2 = ext[i + 2], p3 = ext[i + 3];
+        parts.push(
+            `C ${(p1.x + (p2.x - p0.x) / 6).toFixed(1)},${(p1.y + (p2.y - p0.y) / 6).toFixed(1)} `
+          + `${(p2.x - (p3.x - p1.x) / 6).toFixed(1)},${(p2.y - (p3.y - p1.y) / 6).toFixed(1)} `
+          + `${p2.x.toFixed(1)},${p2.y.toFixed(1)}`,
+        );
+    }
+    if (closeAtHome) parts.push(`L ${HOME_X},${HOME_Y} Z`);
+    return parts.join(" ");
+}
+
 // Foul pole positions for a park (LL/RL distances along the foul lines).
 function parkFoulPoles(park) {
     if (!park) return null;
@@ -247,6 +283,7 @@ root.PARK_NAME_TO_ID   = PARK_NAME_TO_ID;
 root.resolvePark       = resolvePark;
 root.parkWallPath      = parkWallPath;
 root.parkWarningTrackPath = parkWarningTrackPath;
+root.parkOffsetWallPath = parkOffsetWallPath;
 root.parkFoulPoles     = parkFoulPoles;
 root.parkFlavorChips   = parkFlavorChips;
 

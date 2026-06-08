@@ -15,20 +15,57 @@ const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 // table (inning, half, outs, bases, home_lead) first; falls back to the
 // half-level table (using the previous half's end as an approximation
 // of "WP at start of current half") if the v2 cell is missing.
+//
+// Lead clipping: the table only covers home_lead ∈ [-10, +10]. For
+// games beyond that range (e.g. LAA 14, TB 3 → home_lead = -11)
+// naive clipping returned the lead-10 probability, which left a
+// trailing team like Tampa Bay at ~5% in the bottom of the 9th
+// despite needing 11 runs with 2 outs left. We post-process the
+// clipped result with asymptotic dampening on the trailing team's
+// share — each additional run beyond the clip multiplies the
+// trailing-team WP by DAMPEN_PER_RUN. Calibrated against
+// historical comeback frequency in MLB blowouts:
+//   lead 11 → trailing WP × 0.25  (~25% of lead-10 value)
+//   lead 12 → × 0.0625
+//   lead 13 → × 0.015
+//   lead 15 → < 0.1% of original
+const DAMPEN_PER_RUN = 0.25;
+const HARD_FLOOR_TRAILING = 0.0001;
 function lookupWE(inning, half, outs, bases, homeLead) {
     const innC  = clip(inning, 1, 9);
     const leadC = clip(homeLead, -10, 10);
     const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
-    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
-    // Fallback path (rare — only when v2 has a hole the smoothing
-    // couldn't fill). Use the half-level table at the start of the
-    // current half, same approximation as before v2 landed.
-    const prev = previousHalfState(innC, half);
-    if (prev) {
-        const k1 = `${Math.min(prev.inning, 9)}|${prev.half}|${homeLead}`;
-        if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
+    let wpHome = WE_TABLE_V2[k2];
+    if (wpHome === undefined) {
+        // Fallback path (rare — only when v2 has a hole the smoothing
+        // couldn't fill). Use the half-level table at the start of the
+        // current half, same approximation as before v2 landed.
+        const prev = previousHalfState(innC, half);
+        if (prev) {
+            const k1 = `${Math.min(prev.inning, 9)}|${prev.half}|${homeLead}`;
+            wpHome = WE_TABLE[k1];
+        }
     }
-    return null;
+    if (wpHome === undefined) return null;
+    // Beyond the ±10 clip, dampen the trailing team's share by
+    // DAMPEN_PER_RUN per extra run. A 14-3 game (home_lead -11) gets
+    // 1 run of dampening; a 22-3 game (home_lead -19) gets 9 runs of
+    // dampening → essentially 0.
+    const excess = Math.abs(homeLead) - 10;
+    if (excess > 0) {
+        const dampen = Math.pow(DAMPEN_PER_RUN, excess);
+        if (homeLead > 10) {
+            // Home leading by 11+. Trailing = away.
+            let awayWP = (1 - wpHome) * dampen;
+            if (awayWP < HARD_FLOOR_TRAILING) awayWP = HARD_FLOOR_TRAILING;
+            wpHome = 1 - awayWP;
+        } else {
+            // Away leading by 11+. Trailing = home.
+            wpHome = wpHome * dampen;
+            if (wpHome < HARD_FLOOR_TRAILING) wpHome = HARD_FLOOR_TRAILING;
+        }
+    }
+    return wpHome;
 }
 
 function previousHalfState(inning, half) {

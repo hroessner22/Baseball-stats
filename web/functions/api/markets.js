@@ -30,11 +30,19 @@ export async function onRequest(context) {
     const env = context.env || {};
     const url = new URL(context.request.url);
     const scope = url.searchParams.get("scope");
+    const sourceFilter = url.searchParams.get("source");
 
     let markets;
     let initialDiagnostics = null;
     try {
-        markets = await listAllMlbMarkets(env);
+        // ?source=kalshi drops the fan-out from 11 adapters down to 1.
+        // The frontend runs in Kalshi-only mode and throws every other
+        // source's data away on the client, so calling them is pure
+        // waste — and that waste is what blows the worker over
+        // Cloudflare's subrequest/CPU budgets and 503s the endpoint.
+        // This is the prevention half of the 'degraded our_markets'
+        // fix; the recovery half lives in public/health.js.
+        markets = await listAllMlbMarkets(env, { source: sourceFilter || null });
         initialDiagnostics = markets._diagnostics || null;
     } catch (e) {
         return new Response(
@@ -85,11 +93,20 @@ export async function onRequest(context) {
 // slate" view. Also dedupes by (team_pair × question × source) so
 // the same team-pair moneyline doesn't appear 3x (doubleheaders,
 // next-day series).
+// Tighter game-day filter for the slate dashboard. Drops player_prop
+// and team_prop entirely — those are 80%+ of the wire bytes once
+// we started pulling every Kalshi per-game prop series (HR / KS /
+// HIT / TB / spreads / totals / first-5 / etc.), and they're only
+// needed on the per-game Markets tab anyway (served by
+// /api/game/{id}/markets which scopes to a single game). The
+// slate-wide endpoint only needs moneyline + spread + total to
+// render the dashboard cards.
 function filterToGameDay(markets) {
     const now = Date.now();
+    const DASH_TYPES = new Set(["moneyline", "spread", "total"]);
     const kept = markets.filter((m) => {
         if (GAME_DAY_EXCLUDE.has(m.question_type)) return false;
-        if (!GAME_DAY_TYPES.has(m.question_type))   return false;
+        if (!DASH_TYPES.has(m.question_type))   return false;
         if (m.start_time) {
             const dt = Math.abs(new Date(m.start_time).getTime() - now);
             if (dt > GAME_DAY_WINDOW_MS) return false;

@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "DIAMOND:CONTEXT — Watch",
+  "version": "0.1.0",
+  "description": "Opens the MLB.tv game you pick in DIAMOND:CONTEXT and floats it into a picture-in-picture window.",
+  "permissions": ["tabs", "scripting", "storage", "activeTab"],
+  "host_permissions": ["https://www.mlb.com/*", "https://*.mlb.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DIAMOND:CONTEXT Watch"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://diamond-context.pages.dev/*",
+        "https://*.pages.dev/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.mlb.com/*"],
+      "js": ["content-mlb.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
