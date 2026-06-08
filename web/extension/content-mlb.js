@@ -157,7 +157,12 @@
     const url = location.href.toLowerCase();
     if (/\/login|\/account\/login|signin|sign-in/.test(url)) return true;
     if (document.querySelector('input[type="password"]')) return true;
-    return /(log|sign) ?in|subscribe to mlb\.tv|content you requested is not available/.test(txt);
+    // Signed-out / paywall copy seen on the live MLB.tv player: a sign-in or
+    // "Authenticate" CTA, the "Already A Subscriber?" / Buy / All Packages
+    // upsell, or the generic "content not available" error.
+    return /(log|sign) ?in|authenticate|already a subscriber|all packages|subscribe|content you requested is not available/.test(
+      txt
+    );
   }
 
   // Listing-page fallback: find a card mentioning the matchup and click its
