@@ -825,19 +825,15 @@ async function scanOneGame(g) {
         recordPreScan("no_we_for_game");
     } else {
         const gInning = parseInt(g.inning, 10) || 0;
-        // HARDCODED ML inning floor at 1 (2026-06-08). User's persisted
-        // min_inning_for_moneyline at 3+ blocked every inning 1-2 ML
-        // scan yesterday, and the migration didn't propagate because
-        // the user reloaded before that commit shipped. Pre-game cases
-        // are handled by the upstream scanOneGame guard; the user-tunable
-        // setting now only RAISES the floor above 1 if explicitly desired.
-        const mlFloorInning = Math.max(1, _state.settings.min_inning_for_moneyline || 1);
+        // HARDCODED ML inning floor at 1 (2026-06-08). The persisted
+        // min_inning_for_moneyline setting is IGNORED — user's persisted
+        // value of 3+ blocked every inning 1-2 scan yesterday, and the
+        // migration didn't propagate because the user reloaded before
+        // that commit shipped. Pre-first-pitch is already handled by
+        // the upstream scanOneGame guard, so the only thing this gate
+        // needs to do is keep gInning >= 1.
         if (gInning < 1) {
             log("skip", `Moneyline scan blocked — ${g.away}@${g.home} inning ${gInning} < 1 (pregame)`);
-            recordPreScan("inning_too_early");
-        } else if (gInning < mlFloorInning && mlFloorInning > 1) {
-            // User has explicitly raised the floor above 1.
-            log("skip", `Moneyline scan blocked — ${g.away}@${g.home} inning ${gInning} < user floor ${mlFloorInning}`);
             recordPreScan("inning_too_early");
         } else {
             const moneylines = (d.markets?.moneyline || []).filter((m) => m.source === "kalshi");
