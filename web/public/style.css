@@ -12244,3 +12244,18 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
     padding: 0 2px;
 }
 .watch-login-toast .wlt-x:hover { color: var(--text); }
+
+/* Upcoming game on the Watch tab — not yet streamable, so a muted start-time
+   chip stands in for the Watch button. */
+.watch-soon {
+    margin-top: auto;
+    width: 100%;
+    padding: 9px;
+    text-align: center;
+    border-radius: 6px;
+    background: var(--surface-2);
+    border: 1px dashed var(--border);
+    color: var(--text-faint);
+    font-size: 0.84rem;
+    font-weight: 600;
+}

@@ -9357,8 +9357,9 @@ function watchBanner() {
     return `
       <header class="watch-head">
         <h2 class="watch-title">Watch</h2>
-        <p class="watch-sub">Pick a game — it opens on MLB.tv and floats into a
-        picture-in-picture window you can park in the corner of your screen.</p>
+        <p class="watch-sub">Watch any live game — it opens on MLB.tv and floats
+        into a picture-in-picture window you can park in the corner of your
+        screen. Upcoming games show their start time until first pitch.</p>
         <div class="watch-ext ${ok ? "ok" : "missing"}">
           <span class="dot"></span>
           ${ok
@@ -9372,8 +9373,25 @@ function watchBanner() {
 }
 
 function renderWatchCard(g) {
-    const live = g.status === "Live";
+    const live  = g.status === "Live";
+    const final = g.status === "Final";
     const score = (s) => (g.status === "Preview" ? "" : (s ?? ""));
+
+    // Only Live (the stream) and Final (the replay) are actually watchable.
+    // MLB.tv has nothing to show for a game that hasn't started — opening it
+    // just spins on "content not available" — so upcoming games show their
+    // start time instead of a dead Watch button.
+    const action = (live || final)
+        ? `<button class="watch-btn ${live ? "is-live" : ""}"
+                   data-pk="${g.game_pk}"
+                   data-away="${escapeHTMLAttr(g.away)}"
+                   data-home="${escapeHTMLAttr(g.home)}">
+             ▶ ${live ? "Watch live" : "Watch replay"}
+           </button>`
+        : `<div class="watch-soon" title="Watchable once the game starts">
+             🕒 Starts ${stateLabel(g)}
+           </div>`;
+
     return `
       <div class="watch-card" data-status="${g.status}">
         <div class="matchup">
@@ -9392,13 +9410,8 @@ function renderWatchCard(g) {
             <span class="score">${score(g.home_score)}</span>
           </div>
         </div>
-        <div class="watch-state">${stateLabel(g)}</div>
-        <button class="watch-btn ${live ? "is-live" : ""}"
-                data-pk="${g.game_pk}"
-                data-away="${escapeHTMLAttr(g.away)}"
-                data-home="${escapeHTMLAttr(g.home)}">
-          ▶ Watch${live ? " live" : ""}
-        </button>
+        ${(live || final) ? `<div class="watch-state">${stateLabel(g)}</div>` : ""}
+        ${action}
       </div>
     `;
 }
