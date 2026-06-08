@@ -76,9 +76,28 @@ So the flow is **one tap**: when the feed starts, the extension shows a small
 **Drag it to the bottom-right once** and Chrome reuses that spot every time
 after. (The popup's "Pop current video into PiP" button does the same thing.)
 
-True programmatic "always bottom-right" pinning would need an OS-level window
-manager (a macOS Shortcut / Hammerspoon rule) — out of scope here, easy to add
-later.
+## Auto-snap the PiP to the corner (macOS)
+
+To pin the PiP window to the bottom-right *automatically* (no dragging), a
+small Hammerspoon helper is included: `hammerspoon-dc-pip.lua`. It watches for
+Chrome's PiP window and snaps it into the bottom-right of whatever screen it
+appears on (each window is moved once, so you can still re-drag it).
+
+Setup:
+
+1. Install Hammerspoon: `brew install --cask hammerspoon`.
+2. `~/.hammerspoon/init.lua` loads the helper from this repo (already created).
+   If you cloned the repo elsewhere, update the path in that file.
+3. Launch Hammerspoon, then grant it **Accessibility** permission:
+   System Settings → Privacy & Security → Accessibility → enable **Hammerspoon**.
+   (Moving windows is a protected action — this can't be scripted.)
+4. Reload the config: Hammerspoon menu-bar icon → *Reload Config*
+   (or ⌘⌃R). You'll see a "D:C PiP auto-snap loaded" toast.
+
+Now every time the feed pops into PiP, it jumps to the bottom-right corner. If
+detection ever misses (a Chrome update changes the PiP window), run
+`dcPiPDebug()` in the Hammerspoon console to list Chrome windows and tune the
+match in `hammerspoon-dc-pip.lua`.
 
 ## Things that may need tuning
 
