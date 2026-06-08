@@ -438,6 +438,16 @@ function loadState() {
             }
             try { localStorage.setItem(ML_THRESHOLD_1PP_FLAG, "1"); } catch {}
         }
+        // 2026-06-07: reset min_inning_for_moneyline to 1. Diagnostic
+        // recorder showed users with this persisted at 3+, which was
+        // blocking every live ML scan in innings 2-3 — exactly when
+        // WE has the most signal vs Kalshi. Force back to 1 so the
+        // bot scans every live inning.
+        const ML_MIN_INNING_1_FLAG = "diamond_context_ml_min_inning_1_2026_06_07";
+        if (!localStorage.getItem(ML_MIN_INNING_1_FLAG)) {
+            s.min_inning_for_moneyline = 1;
+            try { localStorage.setItem(ML_MIN_INNING_1_FLAG, "1"); } catch {}
+        }
         _state.settings = clampSettings({ ...DEFAULTS, ...s });
         persistSettings();
     } catch { _state.settings = { ...DEFAULTS }; }
