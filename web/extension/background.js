@@ -28,10 +28,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const origin = sender.tab?.id;
     // watchUrl (test mode) wins; otherwise build the per-game deep link.
     const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
-    chrome.tabs.create({ url, active: true }).then((tab) => {
-      pending.set(tab.id, msg);
-      if (origin != null) originTab.set(tab.id, origin);
-    });
+    // Open in its OWN window (not a tab next to DIAMOND:CONTEXT) so it
+    // doesn't clutter the app's tab bar and Hammerspoon can snap it to the
+    // corner. 'popup' drops the tab bar/omnibox for a cleaner watch window.
+    chrome.windows
+      .create({ url, type: "popup", width: 760, height: 470, focused: true })
+      .then((win) => {
+        const tab = win.tabs && win.tabs[0];
+        if (tab) {
+          pending.set(tab.id, msg);
+          if (origin != null) originTab.set(tab.id, origin);
+        }
+      });
     sendResponse?.({ ok: true });
     return true;
   }
