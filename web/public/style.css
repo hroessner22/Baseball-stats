@@ -12270,3 +12270,73 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
     color: var(--text-dim);
     font-size: 0.82rem;
 }
+
+/* ── PERSISTENT WATCH WIDGET ───────────────────────────────────────────
+   Always-on launcher pinned bottom-right on every page. Hands the featured
+   game to the Watch extension (corner picture-in-picture). */
+.dcw-widget {
+    position: fixed;
+    right: 16px;
+    bottom: 84px;            /* clear of the bottom nav */
+    z-index: 5200;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 320px;
+    padding: 8px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    font-size: 0.82rem;
+    color: var(--text);
+}
+.dcw-grip { font-size: 1rem; flex: 0 0 auto; }
+.dcw-info { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.dcw-teams { font-weight: 600; white-space: nowrap; }
+.dcw-at { color: var(--text-faint); font-weight: 400; }
+.dcw-status { font-size: 0.72rem; color: var(--text-dim); white-space: nowrap; }
+.dcw-live { color: var(--accent-live); font-weight: 700; }
+.dcw-label { color: var(--text-dim); }
+.dcw-btn {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 6px;
+    background: var(--accent-action);
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.8rem;
+    padding: 7px 12px;
+    cursor: pointer;
+}
+.dcw-btn.is-live { background: var(--accent-live); }
+.dcw-btn:hover { filter: brightness(1.1); }
+.dcw-setup { font-size: 0.7rem; color: var(--text-faint); cursor: pointer; text-decoration: underline; }
+.dcw-x {
+    flex: 0 0 auto;
+    background: none; border: 0; color: var(--text-faint);
+    font-size: 1.05rem; line-height: 1; cursor: pointer; padding: 0 2px;
+}
+.dcw-x:hover { color: var(--text); }
+
+#dcw-setup-panel {
+    position: fixed;
+    right: 16px;
+    bottom: 140px;
+    z-index: 5300;
+    width: min(360px, calc(100vw - 32px));
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--accent-action);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    color: var(--text);
+    font-size: 0.84rem;
+}
+.dcw-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.dcw-panel-x { background: none; border: 0; color: var(--text-faint); font-size: 1.1rem; cursor: pointer; }
+.dcw-panel-sub { color: var(--text-dim); margin: 0 0 10px; font-size: 0.8rem; }
+.dcw-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+.dcw-steps code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 0.76rem; }
+.dcw-steps a { color: var(--accent-action); }
+.dcw-panel-foot { margin: 10px 0 0; font-size: 0.78rem; color: var(--text-faint); }
