@@ -15,23 +15,28 @@ local MARGIN = 16        -- gap from the screen edges, in points
 local SCAN_INTERVAL = 0.6
 local snapped = {}       -- window id -> true (so each PiP window moves once)
 
--- Is this a Chrome Picture-in-Picture window? Primary test is the title;
--- the fallback catches PiP even if a Chrome version changes that title, by
--- looking for a small, non-standard Chrome window.
-local function looksLikePiP(win)
+local MAX_W = 820       -- clamp the corner window so it stays compact
+local MAX_H = 520
+
+-- Should this window be snapped to the corner? Catches both:
+--   1. Chrome's Picture-in-Picture window (always-on-top, just the video), and
+--   2. the dedicated "MLB.TV Web Player" window (the game in its own window).
+-- The fallback catches PiP even if a Chrome update renames its title, by
+-- looking for a small, non-standard floating window.
+local function shouldSnap(win)
   if not win then return false end
   local app = win:application()
   if not app then return false end
-  local appName = app:name() or ""
-  if not appName:find("Chrome") then return false end
+  if not (app:name() or ""):find("Chrome") then return false end
 
   local title = (win:title() or ""):lower()
   if title:find("picture in picture") or title:find("picture%-in%-picture") then
     return true
   end
+  if title:find("mlb%.tv web player") then
+    return true
+  end
 
-  -- Fallback: a small, non-standard floating window (PiP has no tab bar and
-  -- isn't a standard document window).
   local sub = win:subrole() or ""
   if sub ~= "AXStandardWindow" then
     local f = win:frame()
@@ -46,9 +51,13 @@ local function snap(win)
   local screen = win:screen() or hs.screen.mainScreen()
   local sf = screen:frame()          -- usable area (excludes menu bar + Dock)
   local wf = win:frame()
-  win:setTopLeft({
-    x = sf.x + sf.w - wf.w - MARGIN,
-    y = sf.y + sf.h - wf.h - MARGIN,
+  local w = math.min(wf.w, MAX_W)
+  local h = math.min(wf.h, MAX_H)
+  win:setFrame({
+    x = sf.x + sf.w - w - MARGIN,
+    y = sf.y + sf.h - h - MARGIN,
+    w = w,
+    h = h,
   })
 end
 
@@ -56,7 +65,7 @@ local function scan()
   local chrome = hs.application.get("Google Chrome")
   if chrome then
     for _, win in ipairs(chrome:allWindows()) do
-      if looksLikePiP(win) then
+      if shouldSnap(win) then
         local id = win:id()
         if id and not snapped[id] then
           snapped[id] = true
