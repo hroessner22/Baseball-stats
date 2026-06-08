@@ -52,23 +52,33 @@ Watch tab  ──postMessage──▶  content-bridge.js  ──runtime msg─�
   the worker.
 - `background.js` opens the MLB.tv deep link for that game's `gamePk` and, when
   the player reports in, tells it to play and float.
-- `content-mlb.js` finds the game video, starts it, and sets
-  `video.autoPictureInPicture = true`.
+- `content-mlb.js` finds the game video, starts it, and shows the one-tap
+  "click to watch in the corner" overlay that floats it into PiP. If the feed
+  is signed out, it sends you to MLB's login first (it never handles the
+  password).
 
-## The picture-in-picture corner — read this
+## The picture-in-picture flow — read this
 
-Browser/extension APIs **cannot pin a native PiP window to a screen corner** —
-the OS owns its position, and Chrome reopens it wherever you last left it. So:
+Two browser constraints shape how this works (both verified against the live
+MLB.tv player):
 
-- The video pops into PiP **automatically the moment you switch back to the
-  DIAMOND:CONTEXT tab** (that's what `autoPictureInPicture` does — no per-click
-  gesture needed).
-- **Drag it to the bottom-right once.** Chrome remembers that spot and reuses
-  it every time after.
+1. `requestPictureInPicture()` **requires a user gesture**, and the Watch click
+   happens in the DIAMOND:CONTEXT tab — a gesture there doesn't carry to the
+   MLB.tv tab. `video.autoPictureInPicture` is also unsupported in current
+   Chrome. So there's **no reliable zero-click PiP**.
+2. Browser/extension APIs **cannot pin a native PiP window to a screen corner** —
+   the OS owns its position.
 
-If you want *true* programmatic "always bottom-right" pinning, that needs an
-OS-level window manager (e.g. a macOS Shortcut / Hammerspoon rule that moves
-the PiP window) — out of scope for the extension, but easy to bolt on later.
+So the flow is **one tap**: when the feed starts, the extension shows a small
+"▶ Click anywhere to watch in the corner" overlay. Your first click in that tab
+(a real gesture) floats it into PiP — confirmed working on the live feed at
+1080p. Then switch back to DIAMOND:CONTEXT and the PiP window stays on top.
+**Drag it to the bottom-right once** and Chrome reuses that spot every time
+after. (The popup's "Pop current video into PiP" button does the same thing.)
+
+True programmatic "always bottom-right" pinning would need an OS-level window
+manager (a macOS Shortcut / Hammerspoon rule) — out of scope here, easy to add
+later.
 
 ## Things that may need tuning
 

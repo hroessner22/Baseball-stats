@@ -26,35 +26,81 @@
 
     const video = await waitForVideo();
     if (!video) {
-      // No player showed up. If it's because the MLB.tv session expired,
-      // tell DIAMOND:CONTEXT so it can prompt a one-time re-login (we never
-      // handle the password — the user signs in themselves and the browser
-      // session carries from there).
+      // No player showed up. If it's because the MLB.tv session is signed
+      // out, prompt DIAMOND:CONTEXT (the one-click toast) AND send this tab
+      // to MLB's login so the user can sign in right here — then they re-click
+      // Watch. We never handle the password: the user signs in themselves and
+      // the browser session carries every click after that.
       if (looksLoggedOut()) {
         chrome.runtime.sendMessage({ type: "DC_LOGIN_REQUIRED" });
+        if (!/\/login/i.test(location.href)) {
+          location.href = "https://www.mlb.com/login";
+        }
       }
       return;
     }
 
     await tryPlay(video);
+    await enablePiP(video);
+  }
 
-    // The key line: pop to PiP automatically the moment this tab is hidden.
-    video.autoPictureInPicture = true;
-
-    // Also try to pop immediately — works if a recent user gesture carries
-    // over or the tab is already backgrounded. If it throws (needs a
-    // gesture in this tab), the autoPictureInPicture flag above covers it
-    // as soon as the user tabs away.
+  // Float the feed into picture-in-picture.
+  //
+  // requestPictureInPicture() requires a user gesture, and the Watch click
+  // happened in the DIAMOND:CONTEXT tab (a gesture there doesn't carry to
+  // this one). video.autoPictureInPicture isn't supported in this Chrome
+  // either. So: try once (covers browsers/States where it's allowed), and
+  // if that's blocked, show a one-tap overlay — the user's first click in
+  // THIS tab is a gesture that pops PiP. After it floats out, switching back
+  // to DIAMOND:CONTEXT leaves the PiP window on top; drag it to the corner
+  // once and Chrome keeps it there.
+  async function enablePiP(video) {
+    video.autoPictureInPicture = true; // harmless where unsupported; helps Safari
     try {
       if (
         document.pictureInPictureEnabled &&
         video !== document.pictureInPictureElement
       ) {
         await video.requestPictureInPicture();
+        return; // a gesture was available — done
       }
     } catch (_) {
-      /* handled by autoPictureInPicture on tab-hide */
+      /* needs a gesture in this tab — fall through to the overlay */
     }
+    showPiPOverlay(video);
+  }
+
+  function showPiPOverlay(video) {
+    if (document.getElementById("dc-pip-overlay")) return;
+    const el = document.createElement("div");
+    el.id = "dc-pip-overlay";
+    el.textContent = "▶ Click anywhere to watch in the corner";
+    Object.assign(el.style, {
+      position: "fixed",
+      zIndex: "2147483647",
+      left: "50%",
+      top: "16px",
+      transform: "translateX(-50%)",
+      background: "#3B82F6",
+      color: "#fff",
+      font: "600 14px system-ui, sans-serif",
+      padding: "10px 16px",
+      borderRadius: "8px",
+      boxShadow: "0 6px 20px rgba(0,0,0,.45)",
+      cursor: "pointer",
+      pointerEvents: "auto",
+    });
+    const go = async () => {
+      document.removeEventListener("click", go, true);
+      el.remove();
+      try {
+        await video.requestPictureInPicture();
+      } catch (_) {}
+    };
+    // Capture phase so the very first click anywhere (including the MLB
+    // player itself) triggers PiP before the page consumes it.
+    document.addEventListener("click", go, true);
+    document.body.appendChild(el);
   }
 
   // Largest visible <video> on the page is the game feed.
@@ -96,15 +142,22 @@
     if (btn) btn.click();
   }
 
-  // Did we land on a login / signed-out page rather than the player? Checks
-  // the URL, a visible password field, and the usual "log in to watch" copy.
-  // Best-effort — MLB's auth pages shift, so this errs toward prompting.
+  // Did we land on a signed-out / paywall page rather than the player?
+  //
+  // The reliable signal (verified against the live MLB.tv DOM): a signed-IN
+  // page always carries account chrome — "Log out", "Account Settings",
+  // "Manage Subscriptions". If any of those are present we're authenticated,
+  // so never redirect to login (this guards against a slow-loading video
+  // being mistaken for a logout). Otherwise fall back to the usual cues:
+  // a login URL, a password field, or "sign in / not available" copy.
   function looksLoggedOut() {
+    const txt = (document.body?.innerText || "").toLowerCase();
+    if (/log ?out|account settings|manage subscriptions/.test(txt)) return false;
+
     const url = location.href.toLowerCase();
     if (/\/login|\/account\/login|signin|sign-in/.test(url)) return true;
     if (document.querySelector('input[type="password"]')) return true;
-    const txt = (document.body?.innerText || "").toLowerCase();
-    return /(log|sign) ?in to (watch|mlb\.tv)|please (log|sign) ?in/.test(txt);
+    return /(log|sign) ?in|subscribe to mlb\.tv|content you requested is not available/.test(txt);
   }
 
   // Listing-page fallback: find a card mentioning the matchup and click its
