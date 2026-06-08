@@ -26,7 +26,9 @@ const originTab = new Map();
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "DC_WATCH") {
     const origin = sender.tab?.id;
-    chrome.tabs.create({ url: mlbTvUrl(msg.gamePk), active: true }).then((tab) => {
+    // watchUrl (test mode) wins; otherwise build the per-game deep link.
+    const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
+    chrome.tabs.create({ url, active: true }).then((tab) => {
       pending.set(tab.id, msg);
       if (origin != null) originTab.set(tab.id, origin);
     });

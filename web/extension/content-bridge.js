@@ -25,6 +25,7 @@
       away: msg.away,
       home: msg.home,
       date: msg.date,
+      watchUrl: msg.watchUrl, // when set (test mode), overrides the deep link
     });
   });
 

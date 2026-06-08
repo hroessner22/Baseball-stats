@@ -9320,6 +9320,13 @@ function renderEmpty(container, message, sub) {
 // pick to the extension; with no extension installed it falls back to
 // opening MLB.tv in a new tab.
 
+// TEST MODE — until real games are live, route EVERY Watch click to MLB
+// Network (the always-on MLB.tv channel) so the open → play → PiP flow can
+// be exercised end to end before first pitch. Flip to false to go back to
+// per-game streaming gated by game state.
+const WATCH_TEST_MODE = true;
+const WATCH_TEST_URL = "https://www.mlb.com/tv/watch/mlbn";
+
 // The content-bridge content script sets this attribute on <html> when the
 // extension is installed (a content script can't touch page JS directly,
 // but it can write a DOM attribute the page reads).
@@ -9360,6 +9367,9 @@ function watchBanner() {
         <p class="watch-sub">Watch any live game — it opens on MLB.tv and floats
         into a picture-in-picture window you can park in the corner of your
         screen. Upcoming games show their start time until first pitch.</p>
+        ${WATCH_TEST_MODE ? `<div class="watch-test-note">⚙️ Test mode — every
+          Watch opens the always-on MLB Network feed so you can test the PiP
+          flow before games start.</div>` : ""}
         <div class="watch-ext ${ok ? "ok" : "missing"}">
           <span class="dot"></span>
           ${ok
@@ -9377,16 +9387,20 @@ function renderWatchCard(g) {
     const final = g.status === "Final";
     const score = (s) => (g.status === "Preview" ? "" : (s ?? ""));
 
-    // Only Live (the stream) and Final (the replay) are actually watchable.
-    // MLB.tv has nothing to show for a game that hasn't started — opening it
-    // just spins on "content not available" — so upcoming games show their
-    // start time instead of a dead Watch button.
-    const action = (live || final)
+    // Normally only Live (the stream) and Final (the replay) are watchable —
+    // MLB.tv has nothing to show for a game that hasn't started, so upcoming
+    // games show a start-time chip instead of a dead Watch button. In test
+    // mode every game is watchable (it opens the always-on MLB Network feed).
+    const watchable = WATCH_TEST_MODE || live || final;
+    const btnText = WATCH_TEST_MODE ? "▶ Watch (test feed)"
+                  : live           ? "▶ Watch live"
+                  :                   "▶ Watch replay";
+    const action = watchable
         ? `<button class="watch-btn ${live ? "is-live" : ""}"
                    data-pk="${g.game_pk}"
                    data-away="${escapeHTMLAttr(g.away)}"
                    data-home="${escapeHTMLAttr(g.home)}">
-             ▶ ${live ? "Watch live" : "Watch replay"}
+             ${btnText}
            </button>`
         : `<div class="watch-soon" title="Watchable once the game starts">
              🕒 Starts ${stateLabel(g)}
@@ -9410,7 +9424,7 @@ function renderWatchCard(g) {
             <span class="score">${score(g.home_score)}</span>
           </div>
         </div>
-        ${(live || final) ? `<div class="watch-state">${stateLabel(g)}</div>` : ""}
+        <div class="watch-state">${stateLabel(g)}</div>
         ${action}
       </div>
     `;
@@ -9424,6 +9438,9 @@ document.addEventListener("click", (e) => {
 });
 
 function requestWatch(gamePk, away, home, btn) {
+    // In test mode every click targets the always-on MLB Network feed; a
+    // null watchUrl means the extension builds the per-game deep link.
+    const watchUrl = WATCH_TEST_MODE ? WATCH_TEST_URL : null;
     if (watchExtInstalled()) {
         // Hand off to the extension. It opens MLB.tv and auto-PiPs the feed
         // the moment you tab back here.
@@ -9432,11 +9449,12 @@ function requestWatch(gamePk, away, home, btn) {
             type: "DC_WATCH",
             gamePk, away, home,
             date: todayInET(),
+            watchUrl,
         }, "*");
         if (btn) flashWatchBtn(btn, "Opening on MLB.tv…");
     } else {
         // No extension — the most a web page can do is open MLB.tv.
-        window.open("https://www.mlb.com/tv", "_blank", "noopener");
+        window.open(watchUrl || "https://www.mlb.com/tv", "_blank", "noopener");
         if (btn) flashWatchBtn(btn, "Opened MLB.tv ↗");
     }
 }
