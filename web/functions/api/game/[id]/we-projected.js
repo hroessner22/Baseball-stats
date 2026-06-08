@@ -24,12 +24,28 @@ const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 const popcount = (n) =>
     ((n >> 0) & 1) + ((n >> 1) & 1) + ((n >> 2) & 1);
 
+// See games/today.js for the dampening rationale. Keep in sync.
+const DAMPEN_PER_RUN = 0.25;
+const HARD_FLOOR_TRAILING = 0.0001;
 function lookupWE(inning, half, outs, bases, homeLead) {
     const innC  = clip(inning, 1, 9);
     const leadC = clip(homeLead, -10, 10);
     const k = `${innC}|${half}|${outs}|${bases}|${leadC}`;
-    if (WE_TABLE_V2[k] !== undefined) return WE_TABLE_V2[k];
-    return null;
+    let wpHome = WE_TABLE_V2[k];
+    if (wpHome === undefined) return null;
+    const excess = Math.abs(homeLead) - 10;
+    if (excess > 0) {
+        const dampen = Math.pow(DAMPEN_PER_RUN, excess);
+        if (homeLead > 10) {
+            let awayWP = (1 - wpHome) * dampen;
+            if (awayWP < HARD_FLOOR_TRAILING) awayWP = HARD_FLOOR_TRAILING;
+            wpHome = 1 - awayWP;
+        } else {
+            wpHome = wpHome * dampen;
+            if (wpHome < HARD_FLOOR_TRAILING) wpHome = HARD_FLOOR_TRAILING;
+        }
+    }
+    return wpHome;
 }
 
 // Map (current state, outcome) → next state. Approximations are honest

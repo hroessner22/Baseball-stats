@@ -113,10 +113,21 @@ export async function onRequest(context) {
 
     const battingLineup = extractLineup(boxscoreTeams[battingSide]);
     const pitchingLineup = extractLineup(boxscoreTeams[pitchingSide]);
+    // Score margin from the pitching team's perspective — needed for
+    // score-aware bullpen sequencing (high-leverage arms in close games,
+    // mop-up arms in blowouts).
+    const pitchingTeamScore = pitchingSide === "home"
+        ? (game.score?.home ?? 0)
+        : (game.score?.away ?? 0);
+    const battingTeamScore  = battingSide === "home"
+        ? (game.score?.home ?? 0)
+        : (game.score?.away ?? 0);
+    const pitchingTeamMargin = pitchingTeamScore - battingTeamScore;
     const pitcherSequence = buildPitcherSequence(
         boxscoreTeams[pitchingSide],
         game.pitcher.id,
         game.inning,
+        pitchingTeamMargin,
     );
 
     if (battingLineup.length < 9 || pitcherSequence.length === 0) {
@@ -244,14 +255,23 @@ function extractLineup(teamBox) {
     return lineup;
 }
 
-// Build the pitcher sequence — who's pitching when. v1 is rules-based:
-//   current starter:  continues until pitch count > STARTER_PITCH_LIMIT
-//                     OR we're in inning ≥ LATE_INNING_FROM and not blowout
-//   first reliever:   first available bullpen arm, pitches 1 inning
-//   second reliever:  next bullpen arm, pitches 1 inning
-//   closer:           last bullpen arm (typical MLB roster ordering puts
-//                     the closer at the end), pitches 9th
-function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInning) {
+// Build the pitcher sequence — who's pitching when. SCORE-AWARE: the
+// arms a manager uses depend on the game state.
+//
+// Roles are identified from SEASON stats (saves, holds, IP/appearance)
+// not roster position. The previous version called whoever was last
+// in the bullpen list 'closer' — that's how Yarbrough (a swingman /
+// long reliever) ended up listed as the Yankees' closer.
+//
+// Score-aware leverage logic:
+//   margin within 3:  CLOSE → leverage arms (setup → closer)
+//   margin 4-5:       MEDIUM → setup + middle, closer if leading
+//   margin >= 6:      BLOWOUT → mop-up / long relief only
+//
+// pitchingTeamMargin is positive when the pitching team is leading,
+// negative when trailing. Closers come in for SAVE situations (lead
+// of 1-3) — not when trailing in a blowout.
+function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInning, pitchingTeamMargin = 0) {
     if (!pitchingTeamBox) return [];
     const players = pitchingTeamBox.players || {};
     const bullpenIds = pitchingTeamBox.bullpen || [];
@@ -262,34 +282,39 @@ function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInnin
         if (!p) return null;
         const g  = (p.stats || {}).pitching || {};
         const ss = (p.seasonStats || {}).pitching || {};
-        // Season role indicators. gamesStarted vs games tells us whether
-        // this arm is a starter (large GS), a swingman (some GS + some
-        // relief), or a true reliever (GS == 0 or very small).
         const gamesStarted = Number(ss.gamesStarted || 0);
         const gamesPlayed  = Number(ss.gamesPlayed  || 0);
+        // ROLE INDICATORS pulled from season stats:
+        //   saves         — 9th-inning lead protectors. > 5 = closer.
+        //   holds         — 7th/8th-inning lead protectors. > 8 = setup.
+        //   inningsPitched / gamesPlayed — IP per appearance. > 1.5
+        //                   suggests long relief, < 1 suggests
+        //                   one-inning specialist.
+        const saves = Number(ss.saves || 0);
+        const holds = Number(ss.holds || 0);
+        const ipStr = ss.inningsPitched || "0.0";
+        const seasonIP = parseIp(ipStr);
+        const ipPerGame = gamesPlayed > 0 ? seasonIP / gamesPlayed : 0;
         return {
             mlbam:    id,
             name:     p.person?.fullName || "",
             throws:   p.pitchHand?.code || null,
             pitches_thrown:   g.pitchesThrown || 0,
             innings_pitched:  g.inningsPitched || "0.0",
-            // Carried so the filter below can drop starters from the
-            // relief pool — the user complained that scheduled starters
-            // were showing up as "future relievers" in the chain.
             season_gs:      gamesStarted,
             season_games:   gamesPlayed,
+            season_saves:   saves,
+            season_holds:   holds,
+            season_ip:      seasonIP,
+            season_ip_per_game: round2(ipPerGame),
             is_starter:     isLikelyStarter(gamesStarted, gamesPlayed),
-            role:     null,  // assigned below
+            role:     null,
         };
     };
 
     const currentPitcher = namedById(currentPitcherMlbam);
     if (!currentPitcher) return [];
 
-    // Bullpen arms NOT already used today AND not season-long starters.
-    // Two filters: (1) excludes anyone who's already pitched today (most
-    // won't re-enter); (2) excludes scheduled starters/SP4/SP5 types who
-    // happen to be on the active roster but aren't real relievers.
     const usedSet = new Set(usedIds.map(String));
     const availableBullpen = bullpenIds
         .filter((id) => !usedSet.has(String(id)))
@@ -297,20 +322,74 @@ function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInnin
         .filter(Boolean)
         .filter((p) => !p.is_starter);
 
-    // Conventional MLB roster ordering — the closer is at the END of
-    // the bullpen list (it's how teams list 9th-inning specialists).
-    // Pull him to a separate slot so we use him last.
+    // ── Role classification (saves-first, then holds) ────────────────
+    // The closer is the arm with the most saves IF that count is real
+    // (>= 5 on a major-league season). Otherwise the team doesn't have
+    // a designated closer (early season / committee bullpen) and we
+    // skip the closer slot entirely.
     let closer = null;
-    if (availableBullpen.length > 0) {
-        closer = availableBullpen.pop();
-        closer.role = "closer";
+    let bestSaves = 0;
+    for (const a of availableBullpen) {
+        if (a.season_saves > bestSaves) {
+            bestSaves = a.season_saves;
+            closer = a;
+        }
+    }
+    if (bestSaves < 5) closer = null;
+    if (closer) closer.role_class = "closer";
+
+    // Setup arms (excluding the closer): highest holds counts.
+    // Sorted descending so we use the top setup in the 8th.
+    const setupArms = availableBullpen
+        .filter((a) => a !== closer)
+        .filter((a) => a.season_holds >= 5)
+        .sort((a, b) => b.season_holds - a.season_holds);
+    for (const a of setupArms) a.role_class = "setup";
+
+    // Long-relief arms: > 1.5 IP per appearance. Used for blowouts and
+    // to bridge multiple innings of garbage time.
+    const longArms = availableBullpen
+        .filter((a) => a !== closer)
+        .filter((a) => !setupArms.includes(a))
+        .filter((a) => a.season_ip_per_game >= 1.5)
+        .sort((a, b) => b.season_ip - a.season_ip);
+    for (const a of longArms) a.role_class = "long_relief";
+
+    // Everyone else is middle relief / mop-up. Order them by total
+    // workload (more IP = more trusted, even if not setup-quality).
+    const otherArms = availableBullpen
+        .filter((a) => a !== closer)
+        .filter((a) => !setupArms.includes(a))
+        .filter((a) => !longArms.includes(a))
+        .sort((a, b) => b.season_ip - a.season_ip);
+    for (const a of otherArms) a.role_class = "middle_relief";
+
+    // ── Sequence depends on game state ───────────────────────────────
+    const margin = Math.abs(pitchingTeamMargin);
+    const leading = pitchingTeamMargin > 0;
+    let chain;
+    if (margin <= 3) {
+        // CLOSE GAME — leverage arms come in. Setup in 7th/8th,
+        // closer in 9th if leading (save situation).
+        chain = setupArms.slice(0, 2);
+        if (closer && leading) chain = [...chain, closer];
+        // If trailing in a close game, modern managers also use their
+        // closer to keep it close (Aaron Boone / Brian Snitker style).
+        // Allow closer to come in even when down 1-2.
+        else if (closer && margin <= 2) chain = [...chain, closer];
+    } else if (margin <= 5) {
+        // MEDIUM lead/deficit — setup arms, then closer only if a
+        // legitimate save situation could develop.
+        chain = [...setupArms.slice(0, 1), ...otherArms.slice(0, 1)];
+        if (closer && leading) chain.push(closer);
+    } else {
+        // BLOWOUT — long relief and mop-up arms. Closer NEVER pitches
+        // in a 7-run game. This is what the previous code got wrong;
+        // closer was assigned by roster order regardless of game state.
+        chain = [...longArms.slice(0, 1), ...otherArms.slice(0, 2)];
     }
 
     const sequence = [{ ...currentPitcher, role: "current_starter" }];
-
-    // Estimate the inning when the starter gets pulled — earliest of:
-    //   pitch count crossing 95 (assume ~15 pitches/inning going forward)
-    //   inning ≥ 7
     const pitchesRemaining = Math.max(0, STARTER_PITCH_LIMIT - currentPitcher.pitches_thrown);
     const inningsLeftInStarter = Math.min(
         Math.floor(pitchesRemaining / 15),
@@ -318,19 +397,32 @@ function buildPitcherSequence(pitchingTeamBox, currentPitcherMlbam, currentInnin
     );
     sequence[0].estimated_innings_left = inningsLeftInStarter;
 
-    // Fill 7th/8th with the first 1-2 bullpen arms, then closer in 9th.
     let inningPtr = currentInning + inningsLeftInStarter;
-    for (const r of availableBullpen.slice(0, 2)) {
-        if (inningPtr > 8) break;
-        sequence.push({ ...r, role: `inning_${inningPtr}` });
+    for (const r of chain) {
+        if (inningPtr > 9) break;
+        // Tag the leverage role IN the sequence so the frontend can
+        // label arms as 'SETUP', 'CLOSER', 'LONG RELIEF' etc. Falls
+        // back to the inning-based label if no class.
+        const label = r.role_class === "closer" ? "closer"
+                    : r.role_class === "setup" ? `setup_${inningPtr}`
+                    : r.role_class === "long_relief" ? `long_${inningPtr}`
+                    : `inning_${inningPtr}`;
+        sequence.push({ ...r, role: label });
         inningPtr += 1;
-    }
-    if (closer) {
-        sequence.push({ ...closer, role: "closer" });
     }
 
     return sequence;
 }
+
+function parseIp(s) {
+    // MLB API innings_pitched: "12.1" = 12 and 1/3, "12.2" = 12 and 2/3.
+    const str = String(s || "0.0");
+    const [whole, third] = str.split(".");
+    const w = Number(whole) || 0;
+    const t = Number(third) || 0;
+    return w + (t / 3);
+}
+function round2(n) { return Math.round(n * 100) / 100; }
 
 // Heuristic: is this arm a season-long starter, not a real reliever?
 // Three cases qualify:
@@ -706,14 +798,32 @@ function postPAState(state, outcome) {
     return { inning, half, outs, bases: new_bases, home_lead, batting_team };
 }
 
+// See games/today.js for the dampening rationale. Keep in sync.
+const DAMPEN_PER_RUN = 0.25;
+const HARD_FLOOR_TRAILING = 0.0001;
 function lookupWE(inning, half, outs, bases, homeLead) {
     const innC  = clip(inning, 1, 9);
     const leadC = clip(homeLead, LEAD_CLIP[0], LEAD_CLIP[1]);
     const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
-    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
-    const k1 = `${innC}|${half}|${leadC}`;
-    if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
-    return null;
+    let wpHome = WE_TABLE_V2[k2];
+    if (wpHome === undefined) {
+        const k1 = `${innC}|${half}|${leadC}`;
+        wpHome = WE_TABLE[k1];
+    }
+    if (wpHome === undefined) return null;
+    const excess = Math.abs(homeLead) - Math.abs(LEAD_CLIP[1]);
+    if (excess > 0) {
+        const dampen = Math.pow(DAMPEN_PER_RUN, excess);
+        if (homeLead > LEAD_CLIP[1]) {
+            let awayWP = (1 - wpHome) * dampen;
+            if (awayWP < HARD_FLOOR_TRAILING) awayWP = HARD_FLOOR_TRAILING;
+            wpHome = 1 - awayWP;
+        } else if (homeLead < LEAD_CLIP[0]) {
+            wpHome = wpHome * dampen;
+            if (wpHome < HARD_FLOOR_TRAILING) wpHome = HARD_FLOOR_TRAILING;
+        }
+    }
+    return wpHome;
 }
 
 

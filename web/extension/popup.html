@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font: 13px/1.4 system-ui, -apple-system, sans-serif;
+        width: 250px;
+        margin: 0;
+        padding: 14px;
+        background: #0b1220;
+        color: #e8eef7;
+      }
+      h1 {
+        font-size: 13px;
+        margin: 0 0 6px;
+        letter-spacing: 0.04em;
+      }
+      .muted {
+        opacity: 0.7;
+        font-size: 12px;
+        margin: 6px 0;
+      }
+      button {
+        width: 100%;
+        padding: 9px;
+        margin-top: 8px;
+        border: 0;
+        border-radius: 6px;
+        background: #22c55e;
+        color: #06210f;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+      #status {
+        min-height: 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>DIAMOND<span style="color:#22c55e">:</span>CONTEXT — Watch</h1>
+    <p class="muted">
+      Pick a game in the Watch tab and it opens here, then floats into
+      picture-in-picture when you switch back.
+    </p>
+    <button id="pip">Pop current video into PiP</button>
+    <p class="muted" id="status"></p>
+    <script src="popup.js"></script>
+  </body>
+</html>

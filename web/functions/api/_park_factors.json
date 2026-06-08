@@ -1,0 +1,501 @@
+{
+  "source": "Retrosheet game logs",
+  "seasons": "2018-2024",
+  "league_per_team_game": {
+    "runs": 4.525,
+    "hits": 8.313,
+    "hr": 1.2
+  },
+  "factors": {
+    "LAA": {
+      "park_id": "ANA01",
+      "home_team": "LAA",
+      "games": 516,
+      "runs": 1.032,
+      "hits": 0.986,
+      "hr": 1.124
+    },
+    "TEX": {
+      "park_id": "ARL02,ARL03",
+      "home_team": "TEX",
+      "games": 516,
+      "runs": 1.088,
+      "hits": 1.031,
+      "hr": 1.106
+    },
+    "ATL": {
+      "park_id": "ATL03",
+      "home_team": "ATL",
+      "games": 515,
+      "runs": 1.028,
+      "hits": 1.008,
+      "hr": 1.03
+    },
+    "BAL": {
+      "park_id": "BAL12",
+      "home_team": "BAL",
+      "games": 518,
+      "runs": 1.045,
+      "hits": 1.046,
+      "hr": 1.128
+    },
+    "BOS": {
+      "park_id": "BOS07",
+      "home_team": "BOS",
+      "games": 515,
+      "runs": 1.128,
+      "hits": 1.104,
+      "hr": 0.995
+    },
+    "CHC": {
+      "park_id": "CHI11",
+      "home_team": "CHC",
+      "games": 520,
+      "runs": 0.969,
+      "hits": 0.976,
+      "hr": 0.962
+    },
+    "CHW": {
+      "park_id": "CHI12",
+      "home_team": "CHW",
+      "games": 514,
+      "runs": 0.986,
+      "hits": 0.994,
+      "hr": 1.012
+    },
+    "CIN": {
+      "park_id": "CIN09",
+      "home_team": "CIN",
+      "games": 512,
+      "runs": 1.069,
+      "hits": 1.014,
+      "hr": 1.21
+    },
+    "CLE": {
+      "park_id": "CLE08",
+      "home_team": "CLE",
+      "games": 514,
+      "runs": 0.946,
+      "hits": 0.975,
+      "hr": 0.944
+    },
+    "COL": {
+      "park_id": "DEN02",
+      "home_team": "COL",
+      "games": 514,
+      "runs": 1.259,
+      "hits": 1.19,
+      "hr": 1.121
+    },
+    "DET": {
+      "park_id": "DET05",
+      "home_team": "DET",
+      "games": 513,
+      "runs": 0.958,
+      "hits": 0.998,
+      "hr": 0.851
+    },
+    "HOU": {
+      "park_id": "HOU03",
+      "home_team": "HOU",
+      "games": 514,
+      "runs": 0.974,
+      "hits": 0.973,
+      "hr": 1.06
+    },
+    "KC": {
+      "park_id": "KAN06",
+      "home_team": "KC",
+      "games": 515,
+      "runs": 1.052,
+      "hits": 1.077,
+      "hr": 0.835
+    },
+    "LAD": {
+      "park_id": "LOS03",
+      "home_team": "LAD",
+      "games": 516,
+      "runs": 0.959,
+      "hits": 0.943,
+      "hr": 1.168
+    },
+    "MIA": {
+      "park_id": "MIA02",
+      "home_team": "MIA",
+      "games": 512,
+      "runs": 0.949,
+      "hits": 1.002,
+      "hr": 0.823
+    },
+    "MIL": {
+      "park_id": "MIL06",
+      "home_team": "MIL",
+      "games": 515,
+      "runs": 0.962,
+      "hits": 0.924,
+      "hr": 1.062
+    },
+    "MIN": {
+      "park_id": "MIN04",
+      "home_team": "MIN",
+      "games": 515,
+      "runs": 1.018,
+      "hits": 1.018,
+      "hr": 1.042
+    },
+    "NYM": {
+      "park_id": "NYC20",
+      "home_team": "NYM",
+      "games": 514,
+      "runs": 0.906,
+      "hits": 0.928,
+      "hr": 0.97
+    },
+    "NYY": {
+      "park_id": "NYC21",
+      "home_team": "NYY",
+      "games": 517,
+      "runs": 0.997,
+      "hits": 0.952,
+      "hr": 1.198
+    },
+    "OAK": {
+      "park_id": "OAK01",
+      "home_team": "OAK",
+      "games": 515,
+      "runs": 0.932,
+      "hits": 0.956,
+      "hr": 0.88
+    },
+    "PHI": {
+      "park_id": "PHI13",
+      "home_team": "PHI",
+      "games": 516,
+      "runs": 1.021,
+      "hits": 1.002,
+      "hr": 1.088
+    },
+    "ARI": {
+      "park_id": "PHO01",
+      "home_team": "ARI",
+      "games": 516,
+      "runs": 1.044,
+      "hits": 1.037,
+      "hr": 0.895
+    },
+    "PIT": {
+      "park_id": "PIT08",
+      "home_team": "PIT",
+      "games": 516,
+      "runs": 1.004,
+      "hits": 1.019,
+      "hr": 0.824
+    },
+    "SD": {
+      "park_id": "SAN02",
+      "home_team": "SD",
+      "games": 512,
+      "runs": 0.92,
+      "hits": 0.951,
+      "hr": 0.963
+    },
+    "SEA": {
+      "park_id": "SEA03",
+      "home_team": "SEA",
+      "games": 510,
+      "runs": 0.901,
+      "hits": 0.915,
+      "hr": 0.995
+    },
+    "SF": {
+      "park_id": "SFO03",
+      "home_team": "SF",
+      "games": 519,
+      "runs": 0.922,
+      "hits": 0.989,
+      "hr": 0.78
+    },
+    "STL": {
+      "park_id": "STL10",
+      "home_team": "STL",
+      "games": 510,
+      "runs": 0.943,
+      "hits": 0.986,
+      "hr": 0.859
+    },
+    "TB": {
+      "park_id": "STP01",
+      "home_team": "TB",
+      "games": 515,
+      "runs": 0.906,
+      "hits": 0.932,
+      "hr": 0.89
+    },
+    "TOR": {
+      "park_id": "TOR02",
+      "home_team": "TOR",
+      "games": 441,
+      "runs": 0.997,
+      "hits": 1.006,
+      "hr": 1.096
+    },
+    "WSH": {
+      "park_id": "WAS11",
+      "home_team": "WSH",
+      "games": 518,
+      "runs": 1.038,
+      "hits": 1.044,
+      "hr": 1.042
+    }
+  },
+  "parks_seen": [
+    {
+      "park_id": "ANA01",
+      "home_team": "LAA",
+      "games": 516,
+      "runs": 1.032,
+      "hits": 0.986,
+      "hr": 1.124
+    },
+    {
+      "park_id": "ARL02",
+      "home_team": "TEX",
+      "games": 162,
+      "runs": 1.26,
+      "hits": 1.137,
+      "hr": 1.214
+    },
+    {
+      "park_id": "ARL03",
+      "home_team": "TEX",
+      "games": 354,
+      "runs": 1.009,
+      "hits": 0.983,
+      "hr": 1.057
+    },
+    {
+      "park_id": "ATL03",
+      "home_team": "ATL",
+      "games": 515,
+      "runs": 1.028,
+      "hits": 1.008,
+      "hr": 1.03
+    },
+    {
+      "park_id": "BAL12",
+      "home_team": "BAL",
+      "games": 518,
+      "runs": 1.045,
+      "hits": 1.046,
+      "hr": 1.128
+    },
+    {
+      "park_id": "BOS07",
+      "home_team": "BOS",
+      "games": 515,
+      "runs": 1.128,
+      "hits": 1.104,
+      "hr": 0.995
+    },
+    {
+      "park_id": "CHI11",
+      "home_team": "CHC",
+      "games": 520,
+      "runs": 0.969,
+      "hits": 0.976,
+      "hr": 0.962
+    },
+    {
+      "park_id": "CHI12",
+      "home_team": "CHW",
+      "games": 514,
+      "runs": 0.986,
+      "hits": 0.994,
+      "hr": 1.012
+    },
+    {
+      "park_id": "CIN09",
+      "home_team": "CIN",
+      "games": 512,
+      "runs": 1.069,
+      "hits": 1.014,
+      "hr": 1.21
+    },
+    {
+      "park_id": "CLE08",
+      "home_team": "CLE",
+      "games": 514,
+      "runs": 0.946,
+      "hits": 0.975,
+      "hr": 0.944
+    },
+    {
+      "park_id": "DEN02",
+      "home_team": "COL",
+      "games": 514,
+      "runs": 1.259,
+      "hits": 1.19,
+      "hr": 1.121
+    },
+    {
+      "park_id": "DET05",
+      "home_team": "DET",
+      "games": 513,
+      "runs": 0.958,
+      "hits": 0.998,
+      "hr": 0.851
+    },
+    {
+      "park_id": "HOU03",
+      "home_team": "HOU",
+      "games": 514,
+      "runs": 0.974,
+      "hits": 0.973,
+      "hr": 1.06
+    },
+    {
+      "park_id": "KAN06",
+      "home_team": "KC",
+      "games": 515,
+      "runs": 1.052,
+      "hits": 1.077,
+      "hr": 0.835
+    },
+    {
+      "park_id": "LOS03",
+      "home_team": "LAD",
+      "games": 516,
+      "runs": 0.959,
+      "hits": 0.943,
+      "hr": 1.168
+    },
+    {
+      "park_id": "MIA02",
+      "home_team": "MIA",
+      "games": 512,
+      "runs": 0.949,
+      "hits": 1.002,
+      "hr": 0.823
+    },
+    {
+      "park_id": "MIL06",
+      "home_team": "MIL",
+      "games": 515,
+      "runs": 0.962,
+      "hits": 0.924,
+      "hr": 1.062
+    },
+    {
+      "park_id": "MIN04",
+      "home_team": "MIN",
+      "games": 515,
+      "runs": 1.018,
+      "hits": 1.018,
+      "hr": 1.042
+    },
+    {
+      "park_id": "NYC20",
+      "home_team": "NYM",
+      "games": 514,
+      "runs": 0.906,
+      "hits": 0.928,
+      "hr": 0.97
+    },
+    {
+      "park_id": "NYC21",
+      "home_team": "NYY",
+      "games": 517,
+      "runs": 0.997,
+      "hits": 0.952,
+      "hr": 1.198
+    },
+    {
+      "park_id": "OAK01",
+      "home_team": "OAK",
+      "games": 515,
+      "runs": 0.932,
+      "hits": 0.956,
+      "hr": 0.88
+    },
+    {
+      "park_id": "PHI13",
+      "home_team": "PHI",
+      "games": 516,
+      "runs": 1.021,
+      "hits": 1.002,
+      "hr": 1.088
+    },
+    {
+      "park_id": "PHO01",
+      "home_team": "ARI",
+      "games": 516,
+      "runs": 1.044,
+      "hits": 1.037,
+      "hr": 0.895
+    },
+    {
+      "park_id": "PIT08",
+      "home_team": "PIT",
+      "games": 516,
+      "runs": 1.004,
+      "hits": 1.019,
+      "hr": 0.824
+    },
+    {
+      "park_id": "SAN02",
+      "home_team": "SD",
+      "games": 512,
+      "runs": 0.92,
+      "hits": 0.951,
+      "hr": 0.963
+    },
+    {
+      "park_id": "SEA03",
+      "home_team": "SEA",
+      "games": 510,
+      "runs": 0.901,
+      "hits": 0.915,
+      "hr": 0.995
+    },
+    {
+      "park_id": "SFO03",
+      "home_team": "SF",
+      "games": 519,
+      "runs": 0.922,
+      "hits": 0.989,
+      "hr": 0.78
+    },
+    {
+      "park_id": "STL10",
+      "home_team": "STL",
+      "games": 510,
+      "runs": 0.943,
+      "hits": 0.986,
+      "hr": 0.859
+    },
+    {
+      "park_id": "STP01",
+      "home_team": "TB",
+      "games": 515,
+      "runs": 0.906,
+      "hits": 0.932,
+      "hr": 0.89
+    },
+    {
+      "park_id": "TOR02",
+      "home_team": "TOR",
+      "games": 441,
+      "runs": 0.997,
+      "hits": 1.006,
+      "hr": 1.096
+    },
+    {
+      "park_id": "WAS11",
+      "home_team": "WSH",
+      "games": 518,
+      "runs": 1.038,
+      "hits": 1.044,
+      "hr": 1.042
+    }
+  ]
+}

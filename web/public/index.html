@@ -8,12 +8,28 @@
     <title>DIAMOND:CONTEXT — Live Baseball Companion</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <!-- Inter Variable — any weight 100-900 renders cleanly so the
+         mid-weights (550, 650) we use to dial back the boldness
+         actually exist rather than silently rounding to the nearest
+         discrete weight. -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=20260608WATCH5">
+    <link rel="icon" type="image/svg+xml" href="logo.svg">
 </head>
 <body>
     <header>
-        <h1>DIAMOND<span class="colon">:</span>CONTEXT</h1>
+        <a class="brand" href="#live" aria-label="DIAMOND:CONTEXT home">
+            <!-- Inline SVG so the logo renders without an extra
+                 HTTP request and inherits currentColor for the
+                 stroke (white in the header; works on any bg). -->
+            <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M 12 2.5 L 21.5 12 L 12 21.5 L 2.5 12 Z"
+                      fill="none" stroke="currentColor"
+                      stroke-width="1.8" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="2.5" fill="#22C55E"/>
+            </svg>
+            <h1>DIAMOND<span class="colon">:</span>CONTEXT</h1>
+        </a>
         <div class="live-indicator" aria-label="Live">
             <span class="dot"></span><span class="label">LIVE</span>
         </div>
@@ -28,7 +44,10 @@
     <main id="about-view" class="about-view" hidden></main>
     <main id="player-view" class="player-view" hidden></main>
     <main id="markets-view" class="markets-view" hidden></main>
+    <main id="watch-view" class="watch-view" hidden></main>
     <main id="team-view" class="team-view" hidden></main>
+    <main id="track-record-view" class="page-view" hidden></main>
+    <main id="how-it-works-view" class="page-view" hidden></main>
 
     <nav aria-label="sections">
         <a href="#live" class="nav-item active" data-route="live"><span class="num">01</span> LIVE</a>
@@ -36,7 +55,7 @@
         <a href="#markets" class="nav-item" data-route="markets"><span class="num">03</span> MARKETS</a>
         <a href="#standings" class="nav-item" data-route="standings"><span class="num">04</span> STANDINGS</a>
         <a href="#leaders" class="nav-item" data-route="leaders"><span class="num">05</span> LEADERS</a>
-        <a href="#mvp" class="nav-item" data-route="mvp"><span class="num">06</span> MVP</a>
+        <a href="#watch" class="nav-item" data-route="watch"><span class="num">06</span> WATCH</a>
     </nav>
 
     <footer class="page-footer">
@@ -47,13 +66,43 @@
         <span class="model-accuracy" id="footer-accuracy" hidden></span>
         <span class="build-meta">
             <a href="#game/demo" title="Synthetic high-leverage scenario for testing the live UI">Demo</a>
-            <a href="#about">How it works</a>
+            <a href="#track-record" title="Bot performance — fires, hit rate, ROI">Track record</a>
+            <a href="#how-it-works" title="Empirical methodology — every coefficient derived from data">How it works</a>
+            <a href="#about">About</a>
             <a href="https://github.com/hroessner22/Baseball-stats" target="_blank" rel="noopener">Source</a>
             <span class="version">v1.0</span>
         </span>
     </footer>
 
     <script src="parks.js"></script>
-    <script src="app.js"></script>
+    <script src="kalshi.js?v=20260608MLFORCE1"></script>
+    <script src="health.js?v=20260608MLFORCE1"></script>
+    <script src="app.js?v=20260608WATCH5"></script>
+    <!-- Loaded as a module so it can import @supabase/supabase-js
+         from the ESM CDN. Exposes window.Auth for any non-module
+         caller that wants to gate behavior on sign-in state. -->
+    <script type="module" src="auth.js"></script>
+    <!-- Bot scoring framework — multi-factor scoring of buy / cash-out
+         decisions. Exposes window.BotScoring; loaded BEFORE autobot.js
+         so the bot can call scoreBet() / logScoredDecision().
+         Query-string version pins Cloudflare cache so a fresh deploy
+         doesn't serve stale JS from CDN edge. */ -->
+    <script src="bot-scoring.js?v=20260608MLFORCE1"></script>
+    <!-- Notifications log — surfaces only what the bot can't fix
+         on its own (stuck position, auth loss, balance empty, daily
+         loss limit). Must load BEFORE autobot.js so the bot can
+         push to it from any failure path. -->
+    <script src="bot-notifications.js?v=20260608MLFORCE1"></script>
+    <!-- AutoBot: edge-detection bot + Open Bets drawer. Loads last
+         so it can read window.Kalshi (must already be initialized). -->
+    <script src="autobot.js?v=20260608MLFORCE1"></script>
+    <!-- Active Bets strip: slim bottom widget showing every active
+         position with deep-links + DraftKings-style progress bars
+         on player props. Reads window.Kalshi and the bot fires log. -->
+    <script src="active-bets-strip.js?v=20260608MLFORCE1"></script>
+    <!-- Persistent Watch widget: always-on launcher (bottom-right) that
+         hands the featured game to the Watch extension for corner PiP.
+         Present on every page so watching is one click from anywhere. -->
+    <script src="watch-widget.js?v=20260608WATCH5"></script>
 </body>
 </html>

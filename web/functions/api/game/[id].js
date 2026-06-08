@@ -15,17 +15,41 @@ const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 // PA-state win probability for the home team. Tries the new v2 table
 // (15M-PA aggregation keyed by inning, half, outs, bases, home_lead)
 // first; falls back to the half-level table if v2 has a hole.
+//
+// For leads beyond ±10 (e.g. LAA 14, TB 3 → home_lead = -11), the
+// raw lookup returns the lead-10 probability, which left a trailing
+// team like Tampa Bay at ~5% in the bottom of the 9th despite
+// needing 11 runs with 2 outs left. Dampen the trailing team's
+// share by 0.25 per extra run beyond the clip — calibrated so a
+// 12-run lead → trailing WP × 0.0625, a 15-run lead → essentially 0.
+const DAMPEN_PER_RUN = 0.25;
+const HARD_FLOOR_TRAILING = 0.0001;
 function lookupWE(inning, half, outs, bases, homeLead) {
     const innC  = clip(inning, 1, 9);
     const leadC = clip(homeLead, -10, 10);
     const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
-    if (WE_TABLE_V2[k2] !== undefined) return WE_TABLE_V2[k2];
-    const prev = previousHalfState(innC, half);
-    if (prev) {
-        const k1 = `${Math.min(prev.inning, 9)}|${prev.half}|${homeLead}`;
-        if (WE_TABLE[k1] !== undefined) return WE_TABLE[k1];
+    let wpHome = WE_TABLE_V2[k2];
+    if (wpHome === undefined) {
+        const prev = previousHalfState(innC, half);
+        if (prev) {
+            const k1 = `${Math.min(prev.inning, 9)}|${prev.half}|${homeLead}`;
+            wpHome = WE_TABLE[k1];
+        }
     }
-    return null;
+    if (wpHome === undefined) return null;
+    const excess = Math.abs(homeLead) - 10;
+    if (excess > 0) {
+        const dampen = Math.pow(DAMPEN_PER_RUN, excess);
+        if (homeLead > 10) {
+            let awayWP = (1 - wpHome) * dampen;
+            if (awayWP < HARD_FLOOR_TRAILING) awayWP = HARD_FLOOR_TRAILING;
+            wpHome = 1 - awayWP;
+        } else {
+            wpHome = wpHome * dampen;
+            if (wpHome < HARD_FLOOR_TRAILING) wpHome = HARD_FLOOR_TRAILING;
+        }
+    }
+    return wpHome;
 }
 
 function previousHalfState(inning, half) {
@@ -203,8 +227,17 @@ function buildGame(d, teamAdj) {
                 description: p.result?.description || null,
                 away_score:  p.result?.awayScore ?? 0,
                 home_score:  p.result?.homeScore ?? 0,
+                pitches: (p.playEvents || [])
+                    .filter((e) => e.type === "pitch")
+                    .map(shapePitchEvent),
             }))
         : [];
+
+    // Pitch sequence for the IN-PROGRESS PA — same shape the Gamecast
+    // uses for completed PAs.
+    const currentPitches = (currentPlay.playEvents || [])
+        .filter((e) => e.type === "pitch")
+        .map(shapePitchEvent);
 
     return {
         game_pk: gameData.game?.pk,
@@ -218,6 +251,7 @@ function buildGame(d, teamAdj) {
         inning, half, outs, balls, strikes,
         runners,
         batter, pitcher,
+        current_pitches: currentPitches,
         // win_expectancy = state-based + team-strength adjustment.
         // state_we is the raw "average teams" empirical lookup, kept
         // alongside so the UI can show "AZ 53% (+3pp from team form)".
@@ -250,6 +284,40 @@ function compactTeamStrength(s) {
         l30:             s.l30,
         streak:          s.streak,
         combined_pct:    s.combined_pct,
+    };
+}
+
+// Single source of truth for shaping a Statcast pitch event into the
+// payload the frontend pitch row renders. Used by both current_pitches
+// and the per-PA pitches array. Hit data is attached ONLY when the
+// pitch was put in play — Statcast reports exit velocity, distance,
+// and launch angle on those events; everything else gets null.
+function shapePitchEvent(e) {
+    const result_code = e.details?.call?.code || null;
+    // 'X' = in play (out), 'D' = in play (run-scoring out / hit),
+    // 'E' = in play (error). Statcast attaches hitData on all three.
+    const isBip = result_code === "X" || result_code === "D" || result_code === "E";
+    const hd = isBip ? (e.hitData || null) : null;
+    return {
+        number:      e.pitchNumber || null,
+        type:        e.details?.type?.description || "Unknown",
+        type_code:   e.details?.type?.code || null,
+        velo:        e.pitchData?.startSpeed != null
+            ? Math.round(e.pitchData.startSpeed * 10) / 10
+            : null,
+        result:      e.details?.call?.description || e.details?.description || "?",
+        result_code,
+        count_after: e.count
+            ? { balls: e.count.balls, strikes: e.count.strikes }
+            : null,
+        // Statcast hit data — exit velo (mph), distance (ft), launch
+        // angle (deg), trajectory ('fly_ball', 'ground_ball', etc).
+        hit: hd ? {
+            exit_velo:    hd.launchSpeed != null ? Math.round(hd.launchSpeed * 10) / 10 : null,
+            distance:     hd.totalDistance != null ? Math.round(hd.totalDistance) : null,
+            launch_angle: hd.launchAngle != null ? Math.round(hd.launchAngle) : null,
+            trajectory:   hd.trajectory || null,
+        } : null,
     };
 }
 

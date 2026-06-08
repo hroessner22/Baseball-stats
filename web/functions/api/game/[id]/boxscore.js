@@ -163,6 +163,11 @@ function shapeBattingLines(team) {
             AB:        b.atBats || 0,
             R:         b.runs || 0,
             H:         b.hits || 0,
+            // 2B/3B/HR exposed so practice-settlement can compute
+            // total_bases for props like 'over 2 total bases.'
+            _2B:       b.doubles    || 0,
+            _3B:       b.triples    || 0,
+            HR:        b.homeRuns   || 0,
             RBI:       b.rbi || 0,
             BB:        b.baseOnBalls || 0,
             K:         b.strikeOuts || 0,

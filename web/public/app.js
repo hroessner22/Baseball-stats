@@ -6,6 +6,101 @@
 
 const board = document.getElementById("board");
 const gameView = document.getElementById("game-view");
+
+// ── safeSetHTML ───────────────────────────────────────────────────
+// Scroll-preserving innerHTML swap. Used wherever the game view's
+// children re-render so the user can stay where they are during the
+// 5-second GAME_REFRESH_MS polling cycle.
+//
+// v5 (more aggressive). Locks BOTH the swapping element AND the
+// document body's minHeight so total document height absolutely
+// cannot shrink during the swap. Restores scroll via FOUR methods
+// covering every browser quirk, on 30+ ticks spanning ~500ms
+// (~half a second of layout-shift cushion), mixing RAF + setTimeout
+// so we don't miss any reflow.
+//
+// Aborts if the user scrolls (wheel / touch / keydown) — but only
+// if the user genuinely moved, not on the restore-induced scroll
+// events we generate ourselves.
+function safeSetHTML(el, html) {
+    if (!el) return;
+    // ROOT CAUSE found: the right-side panel (.card-pane) has its OWN
+    // overflow-y: auto (set in style.css around line 3274). It scrolls
+    // independently from the window. When the user scrolls the right
+    // column, it's cardPane.scrollTop that changes — window.scrollY
+    // never moves at all. My v1-v5 restored window.scrollY (always 0)
+    // instead of cardPane.scrollTop. That's why nothing held.
+    //
+    // Fix: snapshot scrollTop on every scrollable child BEFORE the
+    // swap, and restore each one by selector AFTER. Plus window
+    // scroll, for safety on other layouts.
+    const savedY = window.scrollY || document.documentElement.scrollTop || 0;
+    const scrollableSelectors = [".card-pane", ".field-narrative"];
+    const savedScrolls = new Map();
+    for (const sel of scrollableSelectors) {
+        const node = el.querySelector(sel);
+        if (node) savedScrolls.set(sel, node.scrollTop);
+    }
+    const elHeight   = el.offsetHeight;
+    const bodyHeight = document.body.offsetHeight;
+    if (elHeight   > 0) el.style.minHeight           = `${elHeight}px`;
+    if (bodyHeight > 0) document.body.style.minHeight = `${bodyHeight}px`;
+
+    el.innerHTML = html;
+
+    const restoreAll = () => {
+        window.scrollTo(0, savedY);
+        if (document.scrollingElement)   document.scrollingElement.scrollTop = savedY;
+        if (document.documentElement)    document.documentElement.scrollTop  = savedY;
+        if (document.body)               document.body.scrollTop             = savedY;
+        // Internal scrollable children (the right card-pane is the
+        // one the user actually scrolls).
+        for (const [sel, top] of savedScrolls) {
+            const node = el.querySelector(sel);
+            if (node) node.scrollTop = top;
+        }
+    };
+    restoreAll();
+
+    let userScrolled = false;
+    const onUserScroll = () => { userScrolled = true; };
+    window.addEventListener("wheel",     onUserScroll, { passive: true });
+    window.addEventListener("touchmove", onUserScroll, { passive: true });
+    window.addEventListener("keydown",   onUserScroll, { passive: true });
+    // Both side rails have their own scroll context — wheel events
+    // over them pump their own scrollTop, not window.scrollY. Watch
+    // both so user-scroll abort fires correctly on either side.
+    const cardPane = el.querySelector(".card-pane");
+    const narrPane = el.querySelector(".field-narrative");
+    const onPaneScroll = () => { userScrolled = true; };
+    if (cardPane) cardPane.addEventListener("wheel", onPaneScroll, { passive: true });
+    if (narrPane) narrPane.addEventListener("wheel", onPaneScroll, { passive: true });
+
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30;
+    const tick = () => {
+        attempts += 1;
+        if (userScrolled || attempts > MAX_ATTEMPTS) {
+            el.style.minHeight = "";
+            document.body.style.minHeight = "";
+            window.removeEventListener("wheel",     onUserScroll);
+            window.removeEventListener("touchmove", onUserScroll);
+            window.removeEventListener("keydown",   onUserScroll);
+            const cp2 = el.querySelector(".card-pane");
+            const np2 = el.querySelector(".field-narrative");
+            if (cp2) cp2.removeEventListener("wheel", onPaneScroll);
+            if (np2) np2.removeEventListener("wheel", onPaneScroll);
+            return;
+        }
+        restoreAll();
+        if (attempts % 2 === 0) {
+            requestAnimationFrame(tick);
+        } else {
+            setTimeout(tick, 8);
+        }
+    };
+    requestAnimationFrame(tick);
+}
 const standingsView = document.getElementById("standings-view");
 const leadersView = document.getElementById("leaders-view");
 const mvpView = document.getElementById("mvp-view");
@@ -13,7 +108,10 @@ const aboutView = document.getElementById("about-view");
 const hotView = document.getElementById("hot-view");
 const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
+const watchView = document.getElementById("watch-view");
 const teamView = document.getElementById("team-view");
+const trackRecordView = document.getElementById("track-record-view");
+const howItWorksView  = document.getElementById("how-it-works-view");
 
 const BOARD_REFRESH_MS = 30_000;
 // Game view polls fast — every PA boundary (out, hit, walk, run scoring,
@@ -35,6 +133,7 @@ let standingsTimer = null;
 let leadersTimer = null;
 let mvpTimer = null;
 let hotTimer = null;
+let watchTimer = null;
 let marketsDashboardTimer = null;
 let activeGameId = null;
 
@@ -118,11 +217,15 @@ function escapeHTMLAttr(s) {
 
 function handleRoute() {
     const hash = window.location.hash;
-    // Accept numeric MLBAM game_pk or the literal "demo" sentinel.
-    const m = hash.match(/^#game\/(demo|\d+)/);
+    // Accept numeric MLBAM game_pk or the literal "demo" sentinel,
+    // optionally followed by /live, /gamecast, /boxscore, /markets
+    // so deep-links into a specific view work (the dashboard's
+    // "View all markets →" link uses /markets to skip the live tab).
+    const m = hash.match(/^#game\/(demo|\d+)(?:\/(live|gamecast|boxscore|markets))?/);
     if (m) {
-        const id = m[1];
-        if (id !== activeGameId) showGameView(id);
+        const id     = m[1];
+        const mode   = m[2] || null;
+        if (id !== activeGameId || mode) showGameView(id, mode);
         setActiveNav("live");
         return;
     }
@@ -137,11 +240,20 @@ function handleRoute() {
         return;
     }
     if (hash === "#mvp") {
-        showMVP();
-        setActiveNav("mvp");
+        // Legacy / deep-link route — MVP is now a tab inside Leaders.
+        // Force the leaders-mode toggle to 'mvp', then re-route to
+        // #leaders so the nav highlight + URL stay consistent.
+        leadersMode = "mvp";
+        try { localStorage.setItem("diamond_context_leaders_mode", "mvp"); } catch {}
+        window.location.hash = "#leaders";
         return;
     }
-    if (hash === "#markets") {
+    if (hash === "#markets" || hash.startsWith("#markets/")) {
+        // Markets now has a sub-tab: 'lines' (default) vs 'edges'.
+        // /#markets        → game lines (the existing dashboard)
+        // /#markets/edges  → the EDGES list
+        const sub = hash === "#markets/edges" ? "edges" : "lines";
+        try { localStorage.setItem("diamond_context_markets_sub", sub); } catch {}
         showMarketsDashboard();
         setActiveNav("markets");
         return;
@@ -156,6 +268,28 @@ function handleRoute() {
     if (hash === "#hot") {
         showHot();
         setActiveNav("hot");
+        return;
+    }
+    if (hash === "#watch") {
+        showWatch();
+        setActiveNav("watch");
+        return;
+    }
+    if (hash === "#track-record") {
+        showTrackRecord();
+        setActiveNav(null);
+        return;
+    }
+    if (hash === "#how-it-works") {
+        showHowItWorks();
+        setActiveNav(null);
+        return;
+    }
+    if (hash === "#edges") {
+        // Legacy / deep-link route — Edges is now a sub-tab of Markets.
+        // Set the markets sub-view to 'edges' and re-route.
+        try { localStorage.setItem("diamond_context_markets_sub", "edges"); } catch {}
+        window.location.hash = "#markets/edges";
         return;
     }
     const playerMatch = hash.match(/^#player\/(\d+)/);
@@ -305,7 +439,10 @@ function hideAllViews() {
     hotView.hidden = true;
     playerView.hidden = true;
     marketsView.hidden = true;
+    if (watchView) watchView.hidden = true;
     teamView.hidden = true;
+    if (trackRecordView) trackRecordView.hidden = true;
+    if (howItWorksView)  howItWorksView.hidden  = true;
 }
 
 // Centralized timer-clear so each show* doesn't have to know about every
@@ -317,6 +454,7 @@ function clearAllTimers() {
     if (leadersTimer)   { clearInterval(leadersTimer);   leadersTimer = null; }
     if (mvpTimer)       { clearInterval(mvpTimer);       mvpTimer = null; }
     if (hotTimer)       { clearInterval(hotTimer);       hotTimer = null; }
+    if (watchTimer)     { clearInterval(watchTimer);     watchTimer = null; }
     if (marketsDashboardTimer) { clearInterval(marketsDashboardTimer); marketsDashboardTimer = null; }
     if (teamTimer)      { clearInterval(teamTimer);      teamTimer = null; activeTeamTricode = null; }
     stopMarketsPoll();
@@ -430,12 +568,26 @@ function renderTile(g) {
     const recHome = g.record?.home || "";
     const fmtScore = (s) => g.status === "Preview" ? "—" : s;
 
+    // For Preview games, stack the pitchers on the LEFT with the
+    // start time on the RIGHT — sportsbook layout, cleaner read.
+    // For Live / Final games, keep the original "state on its own
+    // line, body below" arrangement because the live state can
+    // include rich content (count + outs + inning) that benefits
+    // from full-width centering.
+    const previewLayout = g.status === "Preview" && g.probables;
+
     return `
       <a class="tile" href="#game/${g.game_pk}" data-status="${g.status}" data-pk="${g.game_pk}">
         ${hotPill(g)}
+        ${previewLayout ? "" : `
+          <div class="tile-top">
+            <span class="state">${stateLabel(g)}</span>
+          </div>
+        `}
         <div class="matchup">
           <div class="team">
             <span class="team-id">
+              ${inlineTeamLogo(g.away, { size: 24, class: "team-logo" })}
               <span class="name">${g.away}</span>
               ${recAway ? `<span class="rec">${recAway}</span>` : ""}
             </span>
@@ -443,14 +595,19 @@ function renderTile(g) {
           </div>
           <div class="team">
             <span class="team-id">
+              ${inlineTeamLogo(g.home, { size: 24, class: "team-logo" })}
               <span class="name">${g.home}</span>
               ${recHome ? `<span class="rec">${recHome}</span>` : ""}
             </span>
             <span class="score">${fmtScore(g.home_score)}</span>
           </div>
         </div>
-        <div class="state">${stateLabel(g)}</div>
-        ${tileBody(g)}
+        ${previewLayout
+          ? `<div class="tile-preview-row">
+               ${tileBody(g)}
+               <div class="tile-time-side">${stateLabel(g)}</div>
+             </div>`
+          : tileBody(g)}
         ${tileWeBar(g)}
       </a>
     `;
@@ -469,15 +626,29 @@ function tileBody(g) {
         `;
     }
     if (g.status === "Preview" && g.probables) {
-        const fmt = (p) => p
-            ? `<span class="tile-pitcher">
-                 ${inlineAvatar(p.id, { size: 28, class: "tile-photo", alt: p.name })}
-                 <span class="tile-pitcher-text">${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}</span>
-               </span>`
-            : `<span class="tile-pitcher-tba">TBA</span>`;
+        // Stacked two-row layout so the avatars/text align cleanly
+        // across every tile — including the case where one side is
+        // TBA. TBA still renders a placeholder photo slot so its row
+        // has the same height + left edge as a known pitcher's row.
+        const row = (p, trailing) => {
+            const photo = p
+                ? inlineAvatar(p.id, { size: 24, class: "tile-photo", alt: p.name })
+                : `<span class="tile-photo-empty" aria-hidden="true"></span>`;
+            const text = p
+                ? `${p.throws ? p.throws + "HP " : ""}${shortName(p.name)}`
+                : "TBA";
+            return `
+              <div class="tile-pitcher-row${p ? "" : " is-tba"}">
+                ${photo}
+                <span class="tile-pitcher-text">${text}</span>
+                ${trailing ? `<span class="dim">vs</span>` : ""}
+              </div>
+            `;
+        };
         return `
           <div class="tile-extra probables">
-            ${fmt(g.probables.away)} <span class="dim">vs</span> ${fmt(g.probables.home)}
+            ${row(g.probables.away, true)}
+            ${row(g.probables.home, false)}
           </div>
         `;
     }
@@ -503,9 +674,20 @@ function tileBody(g) {
 // the /api/game/{id} response.
 function livePlayersHTML(detail) {
     const dim = detail ? "" : "dim";
+    // Split name + hand into separate spans so we can style them
+    // independently (name = primary glyph, hand = quiet meta).
+    // Convention follows MLB At Bat: name reads clean, hand is
+    // a small parenthetical step down in weight + color.
     const fmt = (p, hand) => {
-        if (!p) return "—";
-        return `${p.name ? shortName(p.name) : "—"}${p[hand] ? " (" + p[hand] + ")" : ""}`;
+        if (!p) return `<span class="pname">—</span>`;
+        const nameStr = p.name ? shortName(p.name) : "—";
+        const handStr = p[hand] ? p[hand] : "";
+        return (
+            `<span class="pname">${escapeHTML(nameStr)}</span>` +
+            (handStr
+                ? ` <span class="phand" data-hand="${escapeHTMLAttr(handStr)}">${escapeHTML(handStr)}</span>`
+                : "")
+        );
     };
     const photo = (p) => inlineAvatar(p?.id, { size: 28, class: "tile-live-photo", alt: p?.name });
     return `
@@ -586,6 +768,48 @@ function inlineAvatar(mlbam, opts = {}) {
     }
     return `<img class="${cls}" src="${playerHeadshotSpot(mlbam, cdnSize)}" alt="${escapeHTMLAttr(label)}" loading="lazy" width="${size}" height="${size}" onerror="this.style.opacity='0';"/>`;
 }
+
+// ESPN CDN serves MLB team logos keyed by lowercase tri-code. Same
+// pattern every baseball site uses; we follow suit so users see the
+// real club marks inline next to abbreviations rather than 3-letter
+// text shouting in isolation. Falls back to a placeholder (which
+// onerror hides) when the abbreviation isn't recognized.
+const TEAM_LOGO_OVERRIDE = {
+    // ESPN's CDN serves AZ for Arizona Diamondbacks even though
+    // most baseball APIs (incl. MLB Stats) say "ARI". A few similar
+    // mismatches; map them here so the right glyph loads.
+    "ARI": "ari", "AZ": "ari",
+    "ATH": "oak", "OAK": "oak",
+    "WSH": "wsh", "WAS": "wsh",
+    "TBR": "tb",  "TB":  "tb",
+    "KCR": "kc",  "KC":  "kc",
+    "SDP": "sd",  "SD":  "sd",
+    "SFG": "sf",  "SF":  "sf",
+    "CWS": "chw", "CHW": "chw",
+};
+function teamLogoCdnSlug(abbr) {
+    if (!abbr) return null;
+    const up = String(abbr).toUpperCase().trim();
+    if (TEAM_LOGO_OVERRIDE[up]) return TEAM_LOGO_OVERRIDE[up];
+    return up.toLowerCase();
+}
+function teamLogoUrl(abbr, size = 40) {
+    const slug = teamLogoCdnSlug(abbr);
+    if (!slug) return null;
+    return `https://a.espncdn.com/i/teamlogos/mlb/500/scoreboard/${slug}.png`;
+}
+function inlineTeamLogo(abbr, opts = {}) {
+    const size = opts.size || 18;
+    const cls  = opts.class || "team-logo";
+    if (!abbr) {
+        return `<span class="${cls} ${cls}-empty" aria-hidden="true" style="width:${size}px;height:${size}px;display:inline-block;"></span>`;
+    }
+    const url = teamLogoUrl(abbr);
+    if (!url) {
+        return `<span class="${cls} ${cls}-empty" aria-hidden="true" style="width:${size}px;height:${size}px;display:inline-block;"></span>`;
+    }
+    return `<img class="${cls}" src="${url}" alt="${escapeHTMLAttr(abbr)}" loading="lazy" width="${size}" height="${size}" onerror="this.style.opacity='0';"/>`;
+}
 function bsPhoto(mlbam) {
     return inlineAvatar(mlbam, { size: 32, class: "bs-photo" });
 }
@@ -609,8 +833,14 @@ function playerHeadshotLarge(mlbam, width = 240) {
 
 // ── GAME VIEW ────────────────────────────────────────────────────────
 
-function showGameView(id) {
+function showGameView(id, initialMode = null) {
     activeGameId = id;
+    // Set the view mode BEFORE rendering so deep-links like
+    // #game/123/markets land on the Markets tab directly, not the
+    // live tab. Valid modes: "live" | "gamecast" | "boxscore" | "markets".
+    if (initialMode && ["live", "gamecast", "boxscore", "markets"].includes(initialMode)) {
+        gameViewMode = initialMode;
+    }
     clearAllTimers();
     hideAllViews();
     gameView.hidden = false;
@@ -733,6 +963,12 @@ function renderTeamRow(t, isLeader) {
 function showLeaders() {
     activeGameId = null;
     clearAllTimers();
+    // MVP race is now a tab WITHIN Leaders — when the user's saved
+    // mode is 'mvp', route to the MVP view but keep the unified
+    // mode toggle. The nav highlight stays on Leaders either way.
+    if (leadersMode === "mvp") {
+        return showMVP();
+    }
     hideAllViews();
     leadersView.hidden = false;
     renderEmpty(leadersView, "Loading leaders…", "");
@@ -740,9 +976,22 @@ function showLeaders() {
     leadersTimer = setInterval(refreshLeaders, LEADERS_REFRESH_MS);
 }
 
+// Leaders mode: 'standard' = MLB Stats API counting stats / rate stats
+//                'advanced' = Baseball Savant Statcast (xBA, xSLG, barrel%,
+//                              hard-hit%, xERA, etc.)
+// Persists across the 30s refresh + tab switches via localStorage so
+// the user's pick survives a page reload too.
+let leadersMode = (() => {
+    try { return localStorage.getItem("diamond_context_leaders_mode") || "standard"; }
+    catch { return "standard"; }
+})();
+
 async function refreshLeaders() {
+    const endpoint = leadersMode === "advanced"
+        ? "/api/leaders/advanced"
+        : "/api/leaders";
     try {
-        const res = await fetch("/api/leaders");
+        const res = await fetch(endpoint);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (!data.hitting && !data.pitching) {
@@ -750,16 +999,20 @@ async function refreshLeaders() {
             return;
         }
         leadersView.innerHTML = renderLeaders(data);
+        bindLeadersToggle();
     } catch (e) {
         renderEmpty(leadersView, "Could not load leaders.", `${e.message || e}`);
     }
 }
 
 function renderLeaders(data) {
+    const isAdv = leadersMode === "advanced";
+    const sourceTag = isAdv ? "Baseball Savant" : `${data.season} season`;
     return `
       <header class="leaders-head">
         <h2>LEADERS</h2>
-        <span class="leaders-meta">${data.season} season · top 5</span>
+        <span class="leaders-meta">${sourceTag} · top 5</span>
+        ${renderLeadersModeToggle()}
       </header>
       <section class="leaders-section">
         <h3 class="leaders-section-label">Hitting</h3>
@@ -774,6 +1027,43 @@ function renderLeaders(data) {
         </div>
       </section>
     `;
+}
+
+// Shared 3-way toggle rendered in BOTH the Leaders header and the
+// MVP header. Clicking 'MVP Race' switches the view to mvpView,
+// clicking 'Standard' or 'Statcast' switches back to leadersView.
+// Keeps the user oriented across the two sibling views — they
+// feel like tabs of one section.
+function renderLeadersModeToggle() {
+    return `
+      <div class="leaders-mode-toggle" role="tablist">
+        <button type="button" role="tab" class="leaders-mode-btn ${leadersMode === "standard" ? "active" : ""}"
+                data-leaders-mode="standard">Standard</button>
+        <button type="button" role="tab" class="leaders-mode-btn ${leadersMode === "advanced" ? "active" : ""}"
+                data-leaders-mode="advanced">Statcast</button>
+        <button type="button" role="tab" class="leaders-mode-btn ${leadersMode === "mvp" ? "active" : ""}"
+                data-leaders-mode="mvp">MVP Race</button>
+      </div>
+    `;
+}
+
+function bindLeadersToggle() {
+    document.querySelectorAll("[data-leaders-mode]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const next = btn.dataset.leadersMode;
+            if (next === leadersMode) return;
+            leadersMode = next;
+            try { localStorage.setItem("diamond_context_leaders_mode", next); } catch {}
+            // Route to the matching view. MVP mode swaps to the
+            // mvpView; the other two stay on leadersView.
+            if (next === "mvp") {
+                showMVP();
+            } else {
+                renderEmpty(leadersView, "Loading leaders…", "");
+                showLeaders();
+            }
+        });
+    });
 }
 
 function renderLeaderCard(cat) {
@@ -796,7 +1086,9 @@ function renderLeaderCard(cat) {
 }
 
 function renderLeaderRow(l) {
-    const team = l.team ? `<span class="leader-team">${l.team}</span>` : "";
+    const team = l.team
+        ? `<span class="leader-team">${inlineTeamLogo(l.team, { size: 14, class: "team-logo team-logo-sm" })}${l.team}</span>`
+        : "";
     const photo = inlineAvatar(l.person_id, { size: 32, class: "leader-photo", alt: l.name });
     const nameHtml = l.person_id
         ? `<a class="leader-name player-link" href="#player/${l.person_id}">${shortName(l.name)}</a>`
@@ -845,16 +1137,127 @@ function showMarketsDashboard() {
     renderEmpty(marketsView, "Pulling every public MLB market…", "");
     refreshMarketsDashboard();
     marketsDashboardTimer = setInterval(refreshMarketsDashboard, MARKETS_REFRESH_MS);
+    // Expose the handle so health.js can replace it with a slower
+    // cadence when the checker goes yellow (autonomous throttle).
+    if (typeof window !== "undefined") {
+        window.marketsDashboardTimer = marketsDashboardTimer;
+    }
+}
+
+// Hard "show only Kalshi" mode. Harris is in NY where Bovada is
+// geo-blocked and Polymarket isn't cleanly accessible, so showing
+// non-Kalshi prices is misleading (the user can't act on them).
+// When ON, every market view filters the upstream data to Kalshi-only
+// before render, and the per-game Kalshi cards hydrate live prices
+// from /markets/{ticker}/orderbook (since /markets returns nulls).
+// Flip to false later if we want a multi-source view back.
+const KALSHI_ONLY_MODE = true;
+
+// Strip every non-Kalshi market from a markets-endpoint response
+// shape ({ markets: { moneyline: [], spread: [], ... }, all: [],
+// sources_present: [], market_count, per_source: [] }). Mutates in
+// place so callers don't have to rewire the references they hold.
+function filterToKalshi(data) {
+    if (!KALSHI_ONLY_MODE || !data) return data;
+    const isKalshi = (m) => m && m.source === "kalshi";
+    if (data.markets) {
+        for (const k of Object.keys(data.markets)) {
+            data.markets[k] = (data.markets[k] || []).filter(isKalshi);
+        }
+    }
+    if (data.all)             data.all = data.all.filter(isKalshi);
+    if (data.per_source)      data.per_source = data.per_source.filter((r) => r.source === "kalshi");
+    if (data.sources_present) data.sources_present = data.sources_present.filter((s) => s === "kalshi");
+    if (data.all)             data.market_count = data.all.length;
+    // Dashboard-specific header fields. Without these the chip strip
+    // at the top still advertises "bovada 716, pinnacle 278, …" even
+    // though none of those render anywhere — confusing.
+    if (data.sources)         data.sources = (data.sources || []).filter((s) => s === "kalshi");
+    if (data.counts_by_source) {
+        data.counts_by_source = { kalshi: data.counts_by_source.kalshi || 0 };
+    }
+    if (data.total != null && data.counts_by_source) {
+        data.total = data.counts_by_source.kalshi || 0;
+    }
+    return data;
+}
+
+// /api/markets is flaky on Cloudflare Pages Functions — empirically
+// ~15% of requests 503 because the fan-out to 11 upstream adapters
+// occasionally exceeds the CPU/memory headroom on certain edge nodes.
+// Backend is fine (200 on retry). Wrap the fetch in a small retry so
+// one transient 503 doesn't blow the dashboard.
+async function fetchWithRetry(url, maxRetries = 3, baseDelayMs = 500) {
+    let lastErr;
+    for (let i = 0; i <= maxRetries; i++) {
+        try {
+            const res = await fetch(url);
+            // 5xx is the transient case — retry. 4xx is a real client
+            // error — surface immediately.
+            if (res.status >= 500 && res.status < 600 && i < maxRetries) {
+                await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+                continue;
+            }
+            return res;
+        } catch (e) {
+            lastErr = e;
+            if (i < maxRetries) {
+                await new Promise((r) => setTimeout(r, baseDelayMs * (i + 1)));
+                continue;
+            }
+        }
+    }
+    throw lastErr || new Error("network failed after retries");
+}
+
+// Markets view now has a sub-tab: 'lines' (default — every game's
+// Kalshi quotes) vs 'edges' (the ranked list of mispriced props
+// our model disagrees with). The sub-tab is rendered as a toggle
+// in the markets header.
+function getMarketsSub() {
+    try { return localStorage.getItem("diamond_context_markets_sub") || "lines"; }
+    catch { return "lines"; }
+}
+function renderMarketsSubToggle() {
+    const sub = getMarketsSub();
+    return `
+      <div class="markets-sub-toggle" role="tablist">
+        <button type="button" role="tab" class="markets-sub-btn ${sub === "lines" ? "active" : ""}"
+                data-markets-sub="lines">Game Lines</button>
+        <button type="button" role="tab" class="markets-sub-btn ${sub === "edges" ? "active" : ""}"
+                data-markets-sub="edges">Edges</button>
+      </div>
+    `;
+}
+function bindMarketsSubToggle() {
+    document.querySelectorAll("[data-markets-sub]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const sub = btn.dataset.marketsSub;
+            if (sub === getMarketsSub()) return;
+            try { localStorage.setItem("diamond_context_markets_sub", sub); } catch {}
+            window.location.hash = sub === "edges" ? "#markets/edges" : "#markets";
+            renderEmpty(marketsView, "Loading…", "");
+            refreshMarketsDashboard();
+        });
+    });
 }
 
 async function refreshMarketsDashboard() {
+    // Branch on sub-tab. Edges has its own (much lighter) fetch
+    // path; lines uses the existing aggregated markets endpoint.
+    if (getMarketsSub() === "edges") {
+        return refreshMarketsEdges();
+    }
     try {
         // Two parallel fetches: today's game-day markets AND the day's
         // schedule. The schedule gives us the game_pk → team-pair lookup
         // so each dashboard card can link directly into its live tracker.
         const [marketsRes, gamesRes] = await Promise.all([
-            fetch(`/api/markets?scope=game_day`),
-            fetch(`/api/games/today`),
+            // KALSHI_ONLY_MODE on the client throws every other
+            // source's data away — pass ?source=kalshi so the
+            // worker doesn't waste subrequests fetching them.
+            fetchWithRetry(`/api/markets?scope=game_day&source=kalshi`),
+            fetchWithRetry(`/api/games/today`),
         ]);
         if (!marketsRes.ok) throw new Error(`HTTP ${marketsRes.status}`);
         const data = await marketsRes.json();
@@ -867,12 +1270,103 @@ async function refreshMarketsDashboard() {
             if (key) gameLookup[key] = { pk: g.game_pk, status: g.status };
         }
         data._game_lookup = gameLookup;
+        filterToKalshi(data);
         marketsView.innerHTML = renderMarketsDashboard(data);
+        hydrateKalshiBookCells();
+        bindMarketsSubToggle();
+        // The dashboard render replaces the entire innerHTML which
+        // wipes the Kalshi "My Bets" panel back to its loading shell.
+        // Immediately repopulate so the user doesn't stare at
+        // "Loading…" between dashboard polls.
+        if (window.Kalshi && Kalshi.isConnected && Kalshi.isConnected()) {
+            Kalshi.refreshMyBets();
+        }
     } catch (e) {
+        // Keep showing the prior render if we have one — only render
+        // an empty / loading state when there's nothing on screen.
+        // The state is intentionally NOT a hard "couldn't load"
+        // error: the markets endpoint flakes 15% of the time and the
+        // health monitor + this auto-retry will recover within a few
+        // seconds. Showing a friendly "Loading…" + retrying silently
+        // means a transient 503 doesn't blow the page.
         if (!marketsView.querySelector(".markets-dashboard")) {
-            renderEmpty(marketsView, "Couldn't load markets.", `${e.message || e}`);
+            renderEmpty(
+                marketsView,
+                "Loading markets…",
+                "First-load 503 — retrying every 5s, will appear automatically when it succeeds.",
+            );
+            // Auto-retry every 5s until we get markets up. This is on
+            // top of the regular 10s dashboard poll interval and only
+            // runs while the user has nothing on screen.
+            setTimeout(() => {
+                if (!marketsView.querySelector(".markets-dashboard")) {
+                    refreshMarketsDashboard();
+                }
+            }, 5_000);
         }
     }
+}
+
+// Expose so the health monitor (web/public/health.js) can trigger a
+// fast retry when the markets endpoint comes back from a failure.
+if (typeof window !== "undefined") {
+    window.refreshMarketsDashboard = refreshMarketsDashboard;
+}
+
+// Render the EDGES sub-view inside the Markets chrome. Same
+// container, header, and sub-tab toggle as the Lines view — just
+// different body content (a ranked list of mispriced props).
+async function refreshMarketsEdges() {
+    try {
+        const res = await fetch("/api/edges");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (marketsView.hidden) return;
+        marketsView.innerHTML = renderMarketsEdges(data);
+        bindMarketsSubToggle();
+    } catch (e) {
+        renderEmpty(marketsView, "Couldn't load edges.", `${e.message || e}`);
+    }
+}
+
+function renderMarketsEdges(data) {
+    const edges = data.edges || [];
+    const games = data.counted_games || 0;
+    const fetchedAt = data.fetched_at ? formatRelativeTime(data.fetched_at) : "just now";
+    const body = edges.length
+        ? `<ol class="edges-list">${edges.map(renderEdgeRow).join("")}</ol>`
+        : `<div class="empty" style="padding:48px 16px;text-align:center;color:var(--text-dim);">
+             <strong style="display:block;color:var(--text);font-size:14px;margin-bottom:8px;">
+               No edges right now
+             </strong>
+             Scanned ${games} live games. The bot only sees a mispricing
+             when our model disagrees with Kalshi's price — and right now,
+             it agrees on every prop. Check back after the next PA.
+           </div>`;
+    return `
+      <div class="markets-dashboard">
+        <header class="md-header">
+          <h2 class="md-title">Mispriced markets — our model vs Kalshi</h2>
+          ${renderMarketsSubToggle()}
+          <div class="md-sub">
+            ${edges.length} mispriced prop${edges.length === 1 ? "" : "s"} across ${games} live game${games === 1 ? "" : "s"}
+            · sorted by |our model − market|
+          </div>
+          <div class="md-meta">
+            Auto-refreshes every 30s · Pulled ${fetchedAt}
+          </div>
+        </header>
+        ${body}
+        ${edges.length ? `
+          <footer class="edges-foot">
+            Edge = absolute difference between our tail probability and
+            Kalshi's implied probability, in percentage points.
+            A 5pp+ edge is the bot's default fire threshold for player
+            props (7pp for the auto-bot).
+          </footer>
+        ` : ""}
+      </div>
+    `;
 }
 
 function renderMarketsDashboard(d) {
@@ -914,17 +1408,31 @@ function renderMarketsDashboard(d) {
         const tb = b.start_time ? new Date(b.start_time).getTime() : Infinity;
         return ta - tb;
     });
+    // Stash the per-game grouped markets on the window so the
+    // dashboard's inline bet calculator can look up the Kalshi
+    // market for the selected side without re-fetching.
+    stashMdGames(gameList);
 
     return `
       <div class="markets-dashboard">
         <header class="md-header">
           <h2 class="md-title">Tonight's MLB game-day lines</h2>
+          ${renderMarketsSubToggle()}
           <div class="md-sub">${totalLine}</div>
           <div class="md-sources">${sourceChips}</div>
           <div class="md-meta">
             Auto-refreshes every 10s · Pulled ${formatRelativeTime(d.fetched_at)}
           </div>
         </header>
+
+        <!-- My Kalshi: balance + open orders + cancel buttons.
+             Rendered inline so the user can see what they have on the
+             markets view. Auto-refreshes every 20s via kalshi.js. -->
+        <div data-kalshi-mybets>${
+          (typeof window !== "undefined" && window.Kalshi)
+              ? window.Kalshi.renderMyBetsPanel()
+              : ""
+        }</div>
 
         <div class="md-games">
           ${gameList.map((g) => renderMarketsDashboardGameCard(g, d._game_lookup || {})).join("")}
@@ -966,27 +1474,35 @@ function renderMarketsDashboardGameCard(g, lookup) {
     const away = g.away || "AWAY";
     const startLbl = g.start_time ? formatGameClockShort(g.start_time) : "";
     const game = lookup[g.key] || null;
-    const href = game?.pk ? `#game/${game.pk}` : `#standings`;
+    // Deep-link straight into the per-game Markets tab so this card
+    // lives up to its 'View all markets' promise. Falls back to the
+    // slate-wide standings only if the game_pk lookup fails (Kalshi
+    // has a market but MLB doesn't show this game in today's slate
+    // — usually a tomorrow-evening game listed early).
+    const href = game?.pk ? `#game/${game.pk}/markets` : `#standings`;
     const statusLbl = game?.status === "Live" ? "LIVE"
                     : game?.status === "Final" ? "FINAL"
                     : "";
 
-    const pickMain = (arr) => arr.find((x) => x.is_main_line) || arr[0] || null;
-    const mainMl    = pickMain(m.moneyline);
-    const mainSpread = pickMain(m.spread);
-    const mainTotal  = pickMain(m.total);
-
     const nPp = (m.player_prop || []).length;
     const nTp = (m.team_prop   || []).length;
+    const gameKey = g.key;
+
+    // Whether we have a Kalshi market for this game's moneyline — if
+    // yes, the bet calculator's "Place via Kalshi" button is live.
+    // Polymarket comes in Phase 2 of the trading integration.
+    const kalshiMl = (m.moneyline || []).find((x) => x.source === "kalshi");
 
     return `
-      <a class="md-game-card ${statusLbl ? "md-game-card-" + statusLbl.toLowerCase() : ""}" href="${href}">
+      <article class="md-game-card ${statusLbl ? "md-game-card-" + statusLbl.toLowerCase() : ""}" data-game-key="${escapeHTMLAttr(gameKey)}">
         <header class="md-game-head">
-          <div class="md-game-teams">
-            <span class="md-game-away">${away}</span>
-            <span class="md-game-at">@</span>
-            <span class="md-game-home">${home}</span>
-          </div>
+          <a class="md-game-teams-link" href="${href}">
+            <div class="md-game-teams">
+              <span class="md-game-away">${inlineTeamLogo(away, { size: 18, class: "md-team-logo" })}${away}</span>
+              <span class="md-game-at">@</span>
+              <span class="md-game-home">${inlineTeamLogo(home, { size: 18, class: "md-team-logo" })}${home}</span>
+            </div>
+          </a>
           <div class="md-game-meta">
             ${statusLbl ? `<span class="md-game-status md-game-status-${statusLbl.toLowerCase()}">${statusLbl}</span>` : ""}
             ${startLbl ? `<span class="md-game-time">${startLbl}</span>` : ""}
@@ -995,48 +1511,586 @@ function renderMarketsDashboardGameCard(g, lookup) {
         <div class="md-game-lines">
           <div class="md-game-col">
             <div class="md-game-col-label">Moneyline</div>
-            ${renderMdMiniMarket(mainMl)}
+            ${renderMdMiniMarket(m.moneyline, "moneyline")}
           </div>
           <div class="md-game-col">
             <div class="md-game-col-label">Run line</div>
-            ${renderMdMiniMarket(mainSpread)}
+            ${renderMdMiniMarket(m.spread, "spread")}
           </div>
           <div class="md-game-col">
             <div class="md-game-col-label">Total</div>
-            ${renderMdMiniMarket(mainTotal)}
+            ${renderMdMiniMarket(m.total, "total")}
           </div>
         </div>
+        ${renderMdBetCalculator(g, kalshiMl)}
         <footer class="md-game-foot">
           ${nPp ? `<span class="md-game-chip">${nPp} player prop${nPp === 1 ? "" : "s"}</span>` : ""}
           ${nTp ? `<span class="md-game-chip md-game-chip-dim">${nTp} team prop${nTp === 1 ? "" : "s"}</span>` : ""}
-          <span class="md-game-cta">View all markets →</span>
+          <a href="${href}" class="md-game-cta">View all markets →</a>
         </footer>
-      </a>
+      </article>
     `;
 }
 
-// Two-outcome mini-line inside a dashboard game card. Just the rows
-// for the favored + dog with American odds + implied %. No bar.
-function renderMdMiniMarket(market) {
-    if (!market) return `<div class="md-game-empty">—</div>`;
-    const outcomes = (market.outcomes || [])
-        .slice()
-        .sort((a, b) => (b.probability || 0) - (a.probability || 0));
-    if (!outcomes.some((o) => o.probability != null)) {
-        return `<div class="md-game-empty">no quote</div>`;
+// Inline bet calculator under each game card. User picks a side
+// (any of the up-to-6 outcomes — 2 per market), types a stake in $,
+// sees the win / total payout computed live from the American odds,
+// clicks Place if we have a tradeable source (Kalshi today, Polymarket
+// later) hooked up.
+//
+// Standard sportsbook payout formulas:
+//   American +X  (underdog):  win = stake * (X / 100)
+//   American -X  (favorite):  win = stake * (100 / X)
+//   Total return = stake + win
+//
+// State (stake input) is persisted in localStorage per game key so
+// the 10-second dashboard auto-refresh doesn't wipe out what the user
+// typed mid-thought.
+function renderMdBetCalculator(g, kalshiMl) {
+    // In Kalshi-only mode the per-card calculator is dead code — the
+    // global stake widget (top-right) drives every bet on the page,
+    // and onMdOutcomePick opens the Kalshi bet modal directly seeded
+    // with that stake. No need for a per-game stake input + place
+    // button cluttering each card.
+    if (typeof KALSHI_ONLY_MODE !== "undefined" && KALSHI_ONLY_MODE) return "";
+
+    const opts = [];
+    const pushOpts = (markets, kind, label) => {
+        const outcomes = bestOutcomesAcrossSources(markets, kind);
+        for (const o of outcomes) {
+            const american = o.american != null ? formatAmericanOdds(o.american) : "—";
+            const handicapLbl = o.handicap != null
+                ? (kind === "spread" ? ` ${o.handicap > 0 ? "+" : ""}${o.handicap}` : ` ${o.handicap}`)
+                : "";
+            opts.push({
+                value: `${kind}|${o.name}|${o.american ?? ""}|${o.probability}`,
+                label: `${label}: ${o.name}${handicapLbl} (${american})`,
+                american: o.american,
+                source: o.source,
+            });
+        }
+    };
+    pushOpts(g.markets.moneyline, "moneyline", "Moneyline");
+    pushOpts(g.markets.spread,    "spread",    "Run line");
+    pushOpts(g.markets.total,     "total",     "Total");
+
+    if (!opts.length) return "";
+
+    const optionsHtml = opts.map((o) =>
+        `<option value="${escapeHTMLAttr(o.value)}"
+                 data-am="${escapeHTMLAttr(String(o.american ?? ""))}">${escapeHTML(o.label)}</option>`
+    ).join("");
+
+    const canPlace = !!kalshiMl;
+    const placeLabel = canPlace
+        ? "Place via Kalshi →"
+        : "Place via Kalshi (no market)";
+
+    return `
+      <div class="md-bet-calc" data-md-calc="1" data-game-key="${escapeHTMLAttr(g.key)}">
+        <div class="md-bet-row">
+          <label class="md-bet-side">
+            <span class="md-bet-lbl">Bet on</span>
+            <select data-md-side>${optionsHtml}</select>
+          </label>
+          <label class="md-bet-stake">
+            <span class="md-bet-lbl">Stake</span>
+            <span class="md-bet-stake-wrap">
+              <span class="md-bet-dollar">$</span>
+              <input type="number" min="0" step="1" placeholder="10"
+                     data-md-stake autocomplete="off">
+            </span>
+          </label>
+          <div class="md-bet-payout">
+            <span class="md-bet-lbl">To win</span>
+            <strong data-md-win>$0.00</strong>
+            <span class="md-bet-total" data-md-total>(pays $0.00)</span>
+          </div>
+          <button class="md-bet-place" data-md-place
+                  ${canPlace ? "" : "disabled"}>${placeLabel}</button>
+        </div>
+      </div>
+    `;
+}
+
+// American odds → fractional win-per-$1-stake.
+//   +148 stake $10 → win $14.80
+//   -165 stake $10 → win $6.06
+function americanWinPerDollar(american) {
+    if (american == null || american === "") return 0;
+    const n = typeof american === "string"
+        ? Number(american.replace(/[^\d+-]/g, ""))
+        : Number(american);
+    if (!Number.isFinite(n) || n === 0) return 0;
+    return n > 0 ? n / 100 : 100 / Math.abs(n);
+}
+
+// Wire up the inline bet calculator on every dashboard card. Uses
+// event DELEGATION on marketsView so the handlers stay attached
+// across the dashboard's 10-second auto-refresh.
+//
+// State preserved across re-renders:
+//   - Per-game stake amount, keyed in localStorage by game key.
+//     Selecting a side or typing a stake saves to localStorage; on
+//     re-render we read it back so the user's input doesn't vanish
+//     mid-thought.
+//
+// Place button → opens the Kalshi bet modal (window.Kalshi.openBetModal)
+// when there's a Kalshi market for this game, prefilled with side +
+// stake. Disabled with "no market" otherwise.
+function attachMdBetHandlers() {
+    if (!marketsView) return;
+    // One delegation, all calculators on the page.
+    marketsView.addEventListener("input", (e) => {
+        const stake = e.target.closest("[data-md-stake]");
+        if (stake) { onMdStakeOrSideChange(stake); return; }
+    });
+    marketsView.addEventListener("change", (e) => {
+        const side = e.target.closest("[data-md-side]");
+        if (side) { onMdStakeOrSideChange(side); return; }
+    });
+    marketsView.addEventListener("click", (e) => {
+        const place = e.target.closest("[data-md-place]");
+        if (place) {
+            e.preventDefault();
+            onMdPlaceClick(place);
+            return;
+        }
+        const pick = e.target.closest("[data-md-pick]");
+        if (pick) {
+            // Tapping an outcome button preloads it into the
+            // calculator below as the selected side.
+            e.preventDefault();
+            onMdOutcomePick(pick);
+            return;
+        }
+    });
+
+    // Re-hydrate stakes from localStorage on every render via a
+    // MutationObserver — cheaper than scanning the page on every poll.
+    const observer = new MutationObserver(() => hydrateMdStakes());
+    observer.observe(marketsView, { childList: true, subtree: true });
+    hydrateMdStakes();
+}
+
+function hydrateMdStakes() {
+    document.querySelectorAll("[data-md-calc]").forEach((calc) => {
+        const stake = calc.querySelector("[data-md-stake]");
+        if (!stake || stake.value) return;       // already has user input
+        const key = calc.getAttribute("data-game-key");
+        const cached = localStorage.getItem(`md_stake_${key}`);
+        if (cached) {
+            stake.value = cached;
+            recomputeMdPayout(calc);
+        }
+    });
+}
+
+function onMdStakeOrSideChange(el) {
+    const calc = el.closest("[data-md-calc]");
+    if (!calc) return;
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    const key = calc.getAttribute("data-game-key");
+    try { localStorage.setItem(`md_stake_${key}`, stakeEl.value || ""); } catch {}
+    recomputeMdPayout(calc);
+}
+
+function recomputeMdPayout(calc) {
+    const side = calc.querySelector("[data-md-side]");
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    const winEl = calc.querySelector("[data-md-win]");
+    const totalEl = calc.querySelector("[data-md-total]");
+    const stake = Math.max(0, Number(stakeEl.value) || 0);
+    const selectedOption = side?.selectedOptions?.[0];
+    const american = selectedOption?.getAttribute("data-am") || "";
+    const winPerDollar = americanWinPerDollar(american);
+    const win = stake * winPerDollar;
+    const total = stake + win;
+    if (winEl)   winEl.textContent = `$${win.toFixed(2)}`;
+    if (totalEl) totalEl.textContent = `(pays $${total.toFixed(2)})`;
+}
+
+async function onMdOutcomePick(btn) {
+    const card = btn.closest(".md-game-card");
+    if (!card) return;
+
+    // Kalshi-only mode: skip the legacy inline bet calculator and
+    // open the Kalshi bet modal directly with the clicked side +
+    // GLOBAL STAKE prefilled. The bet modal handles the take/post
+    // toggle and live orderbook fetch from there.
+    if (KALSHI_ONLY_MODE && window.Kalshi && window.Kalshi.openBetModal) {
+        const gameKey = card.getAttribute("data-game-key");
+        const game = (window._mdGames || {})[gameKey];
+        const kind = btn.getAttribute("data-kind") || "moneyline";
+        // Each dashboard outcome button knows its EXACT Kalshi
+        // ticker via data-ticker. Spread / total kinds have many
+        // Kalshi markets per game (one per team + per threshold),
+        // so the old 'first kalshi market in this kind' lookup
+        // grabbed the wrong market and the seed math computed
+        // against an unrelated orderbook — which is why the stake
+        // appeared to have no bearing on the bet. Match the exact
+        // market by ticker instead.
+        const wantTicker = btn.getAttribute("data-ticker") || "";
+        const kalshiMkts = (game?.markets?.[kind] || []).filter((x) => x.source === "kalshi");
+        const kalshiMl = kalshiMkts.find((m) => {
+            if (m.raw_market_id === wantTicker) return true;
+            // Some markets store the per-side ticker on outcome ids
+            // (KX...:yes / KX...:no) rather than raw_market_id;
+            // fall back to that lookup so we don't miss a match.
+            return (m.outcomes || []).some((o) => {
+                const idM = String(o.id || "").match(/^(.*):(yes|no)$/i);
+                return idM && idM[1] === wantTicker;
+            });
+        }) || kalshiMkts[0];
+        if (!kalshiMl) {
+            window.Kalshi.toast("No Kalshi market for that side", "err");
+            return;
+        }
+        // We always render the YES side of each ticker on the
+        // dashboard (see renderMdMiniMarket) so the outcome we
+        // want is the YES one.
+        const outcome = (kalshiMl.outcomes || []).find((o) => /:yes$/i.test(o.id || ""))
+                     || kalshiMl.outcomes?.[0];
+        if (!outcome) return;
+        // Seed the modal with the global stake. Pull the side's
+        // current YES price from the orderbook (cached by the
+        // hydrator) so the modal's Contracts field opens at
+        // floor(stake / price) instead of the fallback count=1.
+        const stake = window.Kalshi.getGlobalStake?.() ?? 0.50;
+        let priceCents = null;
+        const ticker = wantTicker || kalshiMl.raw_market_id || "";
+        if (ticker && window.Kalshi.getOrderbook) {
+            try {
+                const ob = await window.Kalshi.getOrderbook(ticker);
+                const yesProb = orderbookYesProb(ob);
+                if (yesProb != null) {
+                    priceCents = Math.max(1, Math.min(99, Math.round(yesProb * 100)));
+                }
+            } catch { /* fall through with null priceCents */ }
+        }
+        const seed = (priceCents != null)
+            ? { stake_dollars: stake, price_cents: priceCents }
+            : null;
+        window.Kalshi.openBetModal(kalshiMl, outcome, seed);
+        return;
     }
-    return outcomes.map((o) => {
-        const pct = o.probability_devig ?? o.probability;
+
+    const calc = card.querySelector("[data-md-calc]");
+    if (!calc) return;
+    const side = calc.querySelector("[data-md-side]");
+    if (!side) return;
+    // Find the matching option in the calculator's side dropdown.
+    const wantName = btn.getAttribute("data-name");
+    const wantKind = btn.getAttribute("data-kind");
+    const opts = Array.from(side.options);
+    const match = opts.find((o) => {
+        const [k, n] = o.value.split("|");
+        return k === wantKind && n === wantName;
+    });
+    if (match) {
+        side.value = match.value;
+        recomputeMdPayout(calc);
+    }
+    // Scroll the calculator into view + focus the stake field for
+    // immediate typing.
+    calc.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    setTimeout(() => stakeEl?.focus(), 120);
+}
+
+function onMdPlaceClick(btn) {
+    const calc = btn.closest("[data-md-calc]");
+    if (!calc) return;
+    if (!window.Kalshi || !window.Kalshi.isConnected()) {
+        if (window.Kalshi?.openConnectModal) window.Kalshi.openConnectModal();
+        return;
+    }
+    const side = calc.querySelector("[data-md-side]");
+    const stakeEl = calc.querySelector("[data-md-stake]");
+    const stake = Number(stakeEl.value) || 0;
+    const selected = side?.selectedOptions?.[0];
+    const [kind, name] = String(selected?.value || "").split("|");
+    // Find the Kalshi market for this game + kind so we can hand the
+    // Kalshi bet modal a concrete ticker. We re-fetch the card's game
+    // markets from the dashboard render-time data (cached on the
+    // window for simplicity). Phase 2 will refine this to pick the
+    // best YES/NO side per outcome name.
+    const card = btn.closest(".md-game-card");
+    const gameKey = card?.getAttribute("data-game-key");
+    const game = (window._mdGames || {})[gameKey];
+    const kalshiMl = (game?.markets?.[kind] || []).find((x) => x.source === "kalshi");
+    if (!kalshiMl) {
+        if (window.Kalshi?.toast) {
+            window.Kalshi.toast("No Kalshi market for this question (yet)", "err");
+        }
+        return;
+    }
+    // Find which outcome matches the selected side name.
+    const outcome = (kalshiMl.outcomes || []).find((o) =>
+        (o.name || "").toLowerCase() === (name || "").toLowerCase()
+    ) || kalshiMl.outcomes?.[0];
+    if (!outcome) return;
+    window.Kalshi.openBetModal(kalshiMl, outcome);
+}
+
+// Stash render-time game data on the window so the click handler can
+// look up the Kalshi market without re-fetching. Called from
+// renderMarketsDashboard.
+function stashMdGames(games) {
+    window._mdGames = {};
+    for (const g of games || []) {
+        window._mdGames[g.key] = g;
+    }
+}
+
+
+// (Deal finder removed — the global stake widget + per-game Markets
+// pane covers the same use case more directly: pick the game, pick
+// the market, set the stake, click Buy. The cents-range scanner was
+// useful before we had inline bet calculators on every market card.)
+
+attachMdBetHandlers();
+
+// Collapse an array of multi-source markets (e.g. 8 sources all quoting
+// "Astros vs Brewers moneyline") into the at-most-2 unique outcomes
+// with the BEST PRICE for the bettor across every source.
+//
+// "Best price" = lowest implied probability (== highest payout).
+// For spreads/totals, the main line is picked first (most-common
+// handicap across sources) so we're comparing apples-to-apples.
+// Without this, the dashboard showed every source's quote stacked
+// vertically — 19 rows of "Milwaukee Brewers" at +2400, +2528, +2648,
+// ... because Pinnacle was returning 51 prices for one market plus
+// every other source layered on top.
+function bestOutcomesAcrossSources(markets, kind) {
+    if (!markets || !markets.length) return [];
+    let pool = markets;
+    if (kind === "spread" || kind === "total") {
+        // Find the most-common handicap value across sources — that's
+        // the canonical "main line" (e.g., total 8.5 instead of 9.0).
+        // Filter to only markets quoting that line.
+        const counts = {};
+        for (const m of markets) {
+            const h = m.handicap;
+            if (h == null) continue;
+            counts[h] = (counts[h] || 0) + 1;
+        }
+        const mainH = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (mainH != null) {
+            pool = markets.filter((m) => m.handicap != null
+                && String(m.handicap) === String(mainH));
+        }
+    }
+    const byName = {};
+    for (const m of pool) {
+        for (const o of m.outcomes || []) {
+            const name = (o.name || "").trim();
+            if (!name) continue;
+            const probability = o.probability_devig ?? o.probability;
+            if (probability == null) continue;
+            const existing = byName[name];
+            if (!existing || probability < existing.probability) {
+                byName[name] = {
+                    name,
+                    probability,
+                    american: o.american,
+                    source: m.source,
+                    market_title: m.title,
+                    market_url: m.url,
+                    market_id: m.id,
+                    raw_market_id: m.raw_market_id,
+                    point: o.point,
+                    handicap: m.handicap,
+                    market_kind: kind,
+                };
+            }
+        }
+    }
+    return Object.values(byName);
+}
+
+// Compact one-line label for a Kalshi outcome in the slate dashboard.
+// The 3-column game card is narrow (~150px per market kind) so
+// rendering the raw Kalshi title ("Pirates wins by over 1.5 runs")
+// would truncate to "Pirates wins...". Boil each market shape down
+// to its sportsbook-style token:
+//   moneyline      → team tricode ("PIT", "NYY")
+//   spread/run line → "PIT -1.5"
+//   total           → "O 8.5" / "U 8.5"
+// Falls back to the original outcome name if no pattern matches.
+function compactKalshiLabel(outcome, market, side, kind) {
+    const title = market.title || outcome.name || "";
+    if (kind === "moneyline") {
+        // Outcome name is usually the team city or nickname; the
+        // ticker tail has the tricode if we need a fallback.
+        const tickerMatch = String(market.raw_market_id || "").match(/-([A-Z]{2,4})$/);
+        if (tickerMatch) return tickerMatch[1];
+        return outcome.name || side.toUpperCase();
+    }
+    if (kind === "spread") {
+        // "Spread: Texas Rangers (-1.5)" or "Texas wins by over 1.5 runs"
+        let m = title.match(/Spread:\s*([\w. ]+?)\s*\(([-+]?\d+(?:\.\d+)?)\)/i);
+        if (m) {
+            const tri = teamToTricode(m[1].trim()) || m[1].trim();
+            const num = parseFloat(m[2]);
+            const sign = num > 0 ? "+" : "";
+            const flipped = side === "no" ? -num : num;
+            const fSign = flipped > 0 ? "+" : "";
+            return side === "no"
+                ? `${tri} ${fSign}${flipped}`
+                : `${tri} ${sign}${num}`;
+        }
+        m = title.match(/^(.+?)\s+wins\s+by\s+over\s+(\d+(?:\.\d+)?)\s+runs?/i);
+        if (m) {
+            const tri = teamToTricode(m[1].trim()) || m[1].trim().split(/\s+/)[0];
+            const num = parseFloat(m[2]);
+            return side === "no" ? `${tri} +${num}` : `${tri} -${num}`;
+        }
+    }
+    if (kind === "total") {
+        // "Texas Rangers vs. KC Royals: O/U 8.5" or "Over 8.5 runs"
+        let m = title.match(/O\/U\s+(\d+(?:\.\d+)?)/i);
+        if (!m) m = title.match(/over\s+(\d+(?:\.\d+)?)\s+runs?/i);
+        if (m) {
+            const n = parseFloat(m[1]);
+            return side === "no" ? `U ${n}` : `O ${n}`;
+        }
+    }
+    // Catch-all: trim to 20 chars so the row fits the column.
+    const fallback = outcome.name || "";
+    return fallback.length > 22 ? fallback.slice(0, 20) + "…" : fallback;
+}
+
+// Map a Kalshi team-name string to its MLB tricode. Mirrors the
+// server-side KALSHI_DESC_TO_TRI table — kept short here since we
+// only use it for the compact dashboard label.
+const _CITY_TO_TRI = {
+    "Arizona": "ARI", "Atlanta": "ATL", "Baltimore": "BAL", "Boston": "BOS",
+    "Chicago C": "CHC", "Cubs": "CHC", "Chicago WS": "CWS", "White Sox": "CWS",
+    "Cincinnati": "CIN", "Cleveland": "CLE", "Colorado": "COL", "Detroit": "DET",
+    "Houston": "HOU", "Kansas City": "KC", "Los Angeles A": "LAA", "Angels": "LAA",
+    "Los Angeles D": "LAD", "Dodgers": "LAD", "Miami": "MIA", "Milwaukee": "MIL",
+    "Minnesota": "MIN", "New York M": "NYM", "Mets": "NYM", "New York Y": "NYY",
+    "Yankees": "NYY", "Pirates": "PIT", "Pittsburgh": "PIT", "Texas": "TEX",
+    "Rangers": "TEX", "Texas Rangers": "TEX", "Royals": "KC", "San Diego": "SD",
+    "San Francisco": "SF", "Giants": "SF", "St. Louis": "STL", "Cardinals": "STL",
+    "Seattle": "SEA", "Mariners": "SEA", "Tampa Bay": "TB", "Rays": "TB",
+    "Toronto": "TOR", "Blue Jays": "TOR", "Washington": "WSH", "Nationals": "WSH",
+    "Philadelphia": "PHI", "Phillies": "PHI", "A's": "ATH", "Athletics": "ATH",
+    "Twins": "MIN",
+};
+function teamToTricode(name) {
+    if (!name) return null;
+    const clean = name.replace(/\s+/g, " ").trim();
+    if (_CITY_TO_TRI[clean]) return _CITY_TO_TRI[clean];
+    for (const [k, v] of Object.entries(_CITY_TO_TRI)) {
+        if (clean.toLowerCase().includes(k.toLowerCase())) return v;
+    }
+    return null;
+}
+
+// Two-outcome mini-line inside a dashboard game card. Picks the best
+// price per outcome across every source for that question type, so
+// the card shows two clean rows instead of N source-stacked duplicates.
+function renderMdMiniMarket(markets, kind) {
+    const outcomes = bestOutcomesAcrossSources(markets, kind);
+
+    // Kalshi-only mode: Kalshi's /markets pipeline gives null prices,
+    // so bestOutcomesAcrossSources returns nothing. But the named
+    // outcomes are still on the market object — render them as buttons
+    // marked for hydration from /markets/{ticker}/orderbook, same
+    // pattern the per-game Markets tab uses.
+    if (KALSHI_ONLY_MODE && !outcomes.length) {
+        const kalshiMkts = (markets || []).filter((m) => m.source === "kalshi");
+        if (!kalshiMkts.length) {
+            return `<div class="md-game-empty">no kalshi market</div>`;
+        }
+        // Build up to TWO compact rows. For moneyline + run line +
+        // total, Kalshi typically lists each side as its own ticker
+        // (KXMLBSPREAD-...-PIT, KXMLBSPREAD-...-MIN). Prefer pulling
+        // the YES of two DIFFERENT tickers — that gives the user two
+        // distinct lines ("Pirates -1.5" / "Twins +1.5") instead of
+        // YES + NO of the same ticker (which both display as
+        // "Pirates wins by over 1.5 runs").
+        const rows = [];
+        const seenTickers = new Set();
+        for (const m of kalshiMkts) {
+            for (const o of (m.outcomes || [])) {
+                const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+                if (!idMatch) continue;
+                const ticker = idMatch[1];
+                const side   = idMatch[2].toLowerCase();
+                if (seenTickers.has(ticker)) continue;
+                if (side !== "yes") continue;       // prefer the YES side per ticker
+                seenTickers.add(ticker);
+                rows.push({ outcome: o, ticker, side, market: m });
+                if (rows.length === 2) break;
+            }
+            if (rows.length === 2) break;
+        }
+        // Fallback: if we only got ONE ticker (no inverse market
+        // exists), pad the second row with the NO side of that same
+        // ticker — labeled as NO so it's not a duplicate.
+        if (rows.length === 1) {
+            const m = rows[0].market;
+            const noOutcome = (m.outcomes || []).find((o) => /:no$/i.test(o.id || ""));
+            if (noOutcome) {
+                rows.push({ outcome: noOutcome, ticker: rows[0].ticker, side: "no", market: m });
+            }
+        }
+        return rows.map((r) => {
+            const label = compactKalshiLabel(r.outcome, r.market, r.side, kind);
+            return `
+              <button class="md-game-outcome"
+                      data-md-pick="1"
+                      data-kalshi-ob-cell
+                      data-ticker="${escapeHTMLAttr(r.ticker)}"
+                      data-name="${escapeHTMLAttr(r.outcome.name || "")}"
+                      data-kind="${escapeHTMLAttr(kind)}"
+                      title="${escapeHTMLAttr(r.market.title || r.outcome.name || "")}">
+                <span class="md-game-out-name">${escapeHTML(label)}</span>
+                <span class="md-game-out-odds">
+                  <span class="mab-cell-loading">…</span>
+                </span>
+              </button>
+            `;
+        }).join("");
+    }
+
+    if (!outcomes.length) return `<div class="md-game-empty">no quote</div>`;
+    // Two-outcome markets only — sort by probability desc so favored
+    // side is first (matches sportsbook convention).
+    outcomes.sort((a, b) => b.probability - a.probability);
+    return outcomes.slice(0, 2).map((o) => {
         const american = o.american;
-        const isFav = isAmericanFavorite(american) || (o.probability != null && o.probability >= 0.5);
+        const isFav = isAmericanFavorite(american) || o.probability >= 0.5;
+        // Extract the team tri-code from the outcome name so we can
+        // prepend the team logo. Outcome names look like "MIA",
+        // "Tigers -8.5", "Over 8.5 runs scored" — pull the first
+        // alpha word and let teamLogoCdnSlug normalize it. Falls back
+        // gracefully for non-team outcomes (Over/Under).
+        const firstWord = (o.name || "").trim().split(/\s+/)[0];
+        const logo = /^[A-Z]{2,4}$/.test(firstWord)
+            ? inlineTeamLogo(firstWord, { size: 16, class: "md-team-logo" })
+            : "";
+        // Each outcome is a button → opens bet calculator preloaded
+        // with this side (handler in attachMdBetHandlers below).
         return `
-          <div class="md-game-outcome ${isFav ? "is-fav" : ""}">
-            <span class="md-game-out-name">${escapeHTML(o.name || "")}</span>
+          <button class="md-game-outcome ${isFav ? "is-fav" : ""}"
+                  data-md-pick="1"
+                  data-name="${escapeHTMLAttr(o.name)}"
+                  data-american="${escapeHTMLAttr(String(american ?? ""))}"
+                  data-prob="${o.probability}"
+                  data-source="${escapeHTMLAttr(o.source || "")}"
+                  data-kind="${escapeHTMLAttr(kind)}"
+                  data-handicap="${escapeHTMLAttr(String(o.handicap ?? ""))}">
+            <span class="md-game-out-name">${logo}${escapeHTML(o.name)}</span>
             <span class="md-game-out-odds">
               ${american != null ? `<span class="md-game-out-am">${formatAmericanOdds(american)}</span>` : ""}
-              ${pct != null ? `<span class="md-game-out-pct">${fmtPct(pct)}</span>` : ""}
+              <span class="md-game-out-pct">${fmtPct(o.probability)}</span>
             </span>
-          </div>
+          </button>
         `;
     }).join("");
 }
@@ -1094,7 +2148,7 @@ async function refreshTeam(tricode) {
         //   - games/today: find this team's game today (if playing)
         const [standingsRes, marketsRes, gamesRes] = await Promise.all([
             fetch("/api/standings"),
-            fetch("/api/markets"),
+            fetch("/api/markets?source=kalshi"),
             fetch("/api/games/today"),
         ]);
         const standings = standingsRes.ok ? await standingsRes.json() : null;
@@ -1102,6 +2156,14 @@ async function refreshTeam(tricode) {
         const games     = gamesRes.ok ? await gamesRes.json() : null;
         if (tricode !== activeTeamTricode) return;
         teamView.innerHTML = renderTeamView(tricode, standings, markets, games);
+        // Wire live Kalshi prices into every Buy button on the page.
+        // Without this the team page's bet buttons sit forever at
+        // "win $—" because data-price-cents never gets set —
+        // /api/markets ships null probabilities on Kalshi binary
+        // markets and only the per-ticker orderbook fills them in.
+        if (typeof hydrateKalshiBookCells === "function") {
+            hydrateKalshiBookCells();
+        }
     } catch (e) {
         if (!teamView.querySelector(".team-doc")) {
             renderEmpty(teamView, `Couldn't load ${tricode}.`, `${e.message || e}`);
@@ -1110,6 +2172,10 @@ async function refreshTeam(tricode) {
 }
 
 function renderTeamView(tricode, standings, markets, games) {
+    // Kalshi-only mode: strip every non-Kalshi market from the team
+    // page too. Same filter used by the per-game Markets pane.
+    if (markets) filterToKalshi(markets);
+
     const teamRow = findTeamInStandings(standings, tricode);
     const teamName = TEAM_NAMES[tricode] || tricode;
 
@@ -1126,74 +2192,106 @@ function renderTeamView(tricode, standings, markets, games) {
     `;
 
     const all = markets?.all || [];
-    const teamMarkets = all.filter((m) =>
-        m.home_tricode === tricode || m.away_tricode === tricode
+    // Team page = FUTURES ONLY. Anything tied to a specific game
+    // (moneyline / total / spread / per-game team prop / per-game
+    // player prop) lives under that game in the per-game Markets
+    // pane — even before first pitch. This page is the
+    // season-context view: WS / LCS / Division / Win totals / and
+    // player season futures (HR leader, RBI leader, …).
+    //
+    // Identification rules:
+    //   - question_type === "future"  → unambiguous, always a season market.
+    //   - player_prop with EXACTLY ONE tricode set (the player's team,
+    //     attached by extractKalshiDescTeam in the Kalshi adapter) →
+    //     a player season future. Per-game player props have BOTH
+    //     home_tricode AND away_tricode populated by
+    //     parseKalshiPerGameTicker, so this check cleanly excludes them.
+    const teamFutures = all.filter((m) =>
+        m.question_type === "future"
+        && (m.home_tricode === tricode || m.away_tricode === tricode)
     );
-    const futures = teamMarkets.filter((m) => m.question_type === "future");
+    const playerSeasonFutures = (markets?.markets?.player_prop || []).filter((m) => {
+        const isTeamMatch = m.home_tricode === tricode || m.away_tricode === tricode;
+        if (!isTeamMatch) return false;
+        // Per-game props have BOTH tricodes set — those belong under
+        // the game, not here.
+        const perGame = !!(m.home_tricode && m.away_tricode);
+        return !perGame;
+    });
 
-    // Game lines (moneyline, spread, total) for THIS team's tonight
-    // game — surfaced above futures because they're the most actionable.
-    const gameLines = teamMarkets.filter((m) =>
-        m.question_type === "moneyline"
-        || m.question_type === "spread"
-        || m.question_type === "total"
-    );
-    const moneylines = gameLines.filter((m) => m.question_type === "moneyline");
-    const totals     = gameLines.filter((m) => m.question_type === "total");
-    const spreads    = gameLines.filter((m) => m.question_type === "spread");
-
-    // Today's scheduled game for this team, if any. Used to link the
-    // game lines to our model's WE and a CTA to "open the live tracker".
+    // Today's scheduled game card — the bridge from this season-context
+    // view to the game-day Markets pane. Click it for tonight's lines.
     const todayGame = (games?.games || []).find((g) =>
         g.home === tricode || g.away === tricode
     );
-
     const todayGameBlock = todayGame ? renderTeamTodayGame(todayGame, tricode) : "";
 
-    const wsMarkets   = futures.filter((m) => /world series/i.test(m.title || ""));
-    const lcsMarkets  = futures.filter((m) => /championship series/i.test(m.title || ""));
-    const divMarkets  = futures.filter((m) => /(al|nl) (east|west|central)|division/i.test(m.title || ""));
-    const winsMarkets = futures.filter((m) => /(more|fewer|at least|over) .* games|win total|regular season/i.test(m.title || ""));
-    const otherFut    = futures.filter((m) =>
-        !wsMarkets.includes(m) && !lcsMarkets.includes(m)
-        && !divMarkets.includes(m) && !winsMarkets.includes(m)
-    );
-
-    const allProps = (markets?.markets?.player_prop) || [];
-    const teamNameLc = teamName.toLowerCase();
-    const teamPlayerProps = allProps.filter((m) => {
-        if (m.home_tricode === tricode || m.away_tricode === tricode) return true;
-        const t = (m.title || "").toLowerCase();
-        return t.includes(teamNameLc);
-    });
+    // Categorize team season futures by Kalshi series. Each Kalshi
+    // series carries its own ticker prefix, which is much more
+    // reliable than title regex (their titles vary: 'Pro Baseball
+    // Championship' vs 'World Series' vs 'American League Champion').
+    // The raw_market_id is the ticker; we match on its KX...- prefix.
+    const tickerStartsWith = (m, prefix) => (m.raw_market_id || "").toUpperCase().startsWith(prefix);
+    const championship = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLB-"));
+    const alPennant    = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBAL-"));
+    const nlPennant    = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBNL-"));
+    const division     = teamFutures.filter((m) =>
+        /^KXMLB(AL|NL)(EAST|CENT|WEST)-/i.test(m.raw_market_id || ""));
+    const playoffs     = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBPLAYOFFS-"));
+    const bestRecord   = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBBESTRECORD-"));
+    const worstRecord  = teamFutures.filter((m) =>
+        tickerStartsWith(m, "KXMLBWORSTRECORD-"));
+    // Anything else gets a catch-all section — surfaces new Kalshi
+    // series the moment they show up without code changes.
+    const categorized = new Set([
+        ...championship, ...alPennant, ...nlPennant, ...division,
+        ...playoffs, ...bestRecord, ...worstRecord,
+    ]);
+    const otherFut = teamFutures.filter((m) => !categorized.has(m));
 
     const noMarkets =
-        gameLines.length === 0 && futures.length === 0 && teamPlayerProps.length === 0;
-
-    const oddsApiOn = markets?.sources?.includes("odds_api");
+        teamFutures.length === 0 && playerSeasonFutures.length === 0;
 
     return `
       <div class="team-doc">
         ${header}
         ${todayGameBlock}
         ${noMarkets
-            ? `<div class="empty">No public markets currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
+            ? `<div class="empty">No Kalshi season futures currently quoted on ${escapeHTMLAttr(teamName)}.</div>`
             : `
-              ${renderTeamFutureSection("Game-day moneyline",  moneylines, tricode)}
-              ${renderTeamFutureSection("Total runs O/U",       totals,     tricode)}
-              ${renderTeamFutureSection("Run-line spread",      spreads,    tricode)}
-              ${renderTeamPropSection(teamPlayerProps, teamName)}
-              ${renderTeamFutureSection("World Series 2026",         wsMarkets,   tricode)}
-              ${renderTeamFutureSection("League Championship Series", lcsMarkets, tricode)}
-              ${renderTeamFutureSection("Division title",             divMarkets, tricode)}
-              ${renderTeamFutureSection("Regular-season wins",        winsMarkets, tricode)}
-              ${renderTeamFutureSection("Other team futures",         otherFut,    tricode)}
+              ${renderTeamFutureSection("World Series · Pro Baseball Champion",  championship,  tricode)}
+              ${renderTeamFutureSection("AL Pennant · American League Champion", alPennant,     tricode)}
+              ${renderTeamFutureSection("NL Pennant · National League Champion", nlPennant,     tricode)}
+              ${renderTeamFutureSection("Division title",                        division,      tricode)}
+              ${renderTeamFutureSection("Playoff qualifier",                     playoffs,      tricode)}
+              ${renderTeamFutureSection("Best regular-season record",            bestRecord,    tricode)}
+              ${renderTeamFutureSection("Worst regular-season record",           worstRecord,   tricode)}
+              ${renderTeamFutureSection("Other team futures",                    otherFut,      tricode)}
+              ${renderTeamPlayerFuturesSection(playerSeasonFutures, teamName)}
             `}
-        ${!oddsApiOn ? renderOddsApiHint() : ""}
         <footer class="team-footnote">
-          Lines refresh every 30s. Pulled from Polymarket, Kalshi, Manifold${oddsApiOn ? ", and The Odds API (FanDuel / DraftKings / BetMGM / Caesars)" : ""}.
+          Season futures only — game-day lines (moneyline, total, spread, per-game props) live under the game itself.
         </footer>
       </div>
+    `;
+}
+
+// Player SEASON futures (HR leader / RBI leader / Pitcher of the
+// Month / …) tagged to this team's roster via Kalshi subtitle parsing.
+// Uses the same stat-type sub-tabs the per-game pane uses since
+// the grouping (Home Runs / Hits / Strikeouts / …) carries over.
+function renderTeamPlayerFuturesSection(props, teamName) {
+    if (!props.length) return "";
+    return `
+      <section class="team-section" data-prop-tabs-scope>
+        <h3 class="team-section-title">Player season futures · ${escapeHTMLAttr(teamName)} roster</h3>
+        ${renderPlayerPropsByStat(props)}
+      </section>
     `;
 }
 
@@ -1257,12 +2355,17 @@ function renderOddsApiHint() {
 
 function renderTeamFutureSection(title, rows, tricode) {
     if (!rows || !rows.length) return "";
+    // Use the same full market renderer the per-game pane uses —
+    // each row gets YES/NO outcomes with American odds + implied %,
+    // plus the Kalshi orderbook hydrator fills in live prices and
+    // the global stake widget drives the per-button win amount.
+    // renderMarketsSection handles single-market sections cleanly
+    // (skips the condensed-card grouping since the titles don't
+    // ladder together).
     return `
       <section class="team-section">
         <h3 class="team-section-title">${escapeHTMLAttr(title)}</h3>
-        <div class="team-section-rows">
-          ${rows.map((m) => renderTeamMarketRow(m, tricode)).join("")}
-        </div>
+        ${renderMarketsSection("", rows)}
       </section>
     `;
 }
@@ -1340,6 +2443,422 @@ function showAbout() {
     aboutView.innerHTML = renderAbout();
 }
 
+// ── TRACK RECORD VIEW ───────────────────────────────────────────────
+//
+// Public-ish page showing the bot's settled-bet performance: total
+// fires, hit rate, ROI, broken down by category. Currently reads
+// from the user's localStorage fire log; the structure is shaped so
+// it can fan out to a real backend later (Supabase / D1) for a true
+// multi-user audited record.
+
+const LS_REAL_FIRES     = "diamond_context_bot_fires";
+const LS_PRACTICE_FIRES_TR = "diamond_context_bot_practice_fires";
+
+function showTrackRecord() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    trackRecordView.hidden = false;
+    refreshTrackRecord();
+}
+
+async function refreshTrackRecord() {
+    if (trackRecordView.hidden) return;
+    trackRecordView.innerHTML = renderTrackRecordShell();
+    // Prefer the public Supabase aggregate (multi-user audit) when
+    // we can reach it; fall back to localStorage only when offline.
+    let publicFires = null;
+    try {
+        if (window.Auth && window.Auth.supabase) {
+            const sb = window.Auth.supabase();
+            const { data, error } = await sb
+                .from("bot_fires")
+                .select("kind, stat, threshold, side, bet_team, ticker, contracts, price_cents, our_p, market_p, edge_pp, placed_at, practice, settled, won, profit_cents, player")
+                .order("placed_at", { ascending: false })
+                .limit(5000);
+            if (!error && Array.isArray(data)) publicFires = data;
+        }
+    } catch {}
+
+    if (publicFires && publicFires.length > 0) {
+        // Use the public aggregate. Already settled rows carry won/
+        // profit_cents directly.
+        const all = publicFires.map((r) => ({
+            ...r,
+            _graded: r.settled ? { won: !!r.won, profit_cents: r.profit_cents || 0 } : null,
+        }));
+        // Grade any still-open fires against the boxscore.
+        const graded = await gradeFires(all);
+        trackRecordView.innerHTML = renderTrackRecord(graded, graded, /*public*/ true);
+        return;
+    }
+
+    // Fallback: local-only view.
+    let practice = [];
+    let real     = [];
+    try { practice = JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES_TR) || "[]"); } catch {}
+    try { real     = JSON.parse(localStorage.getItem(LS_REAL_FIRES) || "[]"); } catch {}
+    const all = [...practice, ...real];
+    const settled = await gradeFires(all);
+    trackRecordView.innerHTML = renderTrackRecord(all, settled, /*public*/ false);
+}
+
+function renderTrackRecordShell() {
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>TRACK RECORD</h1>
+        <p class="page-sub">Bot performance from your local log. Public multi-user audit coming after auth ships.</p>
+      </header>
+      <div class="page-loading">Grading fires against settled box scores…</div>
+    `;
+}
+
+async function gradeFires(fires) {
+    const out = fires.map((f) => ({ ...f, _graded: null }));
+    const gamePks = [...new Set(out.filter((f) => f.game_pk && !f.settled).map((f) => f.game_pk))];
+    if (!gamePks.length) {
+        for (const f of out) if (f.settled) f._graded = f.settled;
+        return out;
+    }
+    const boxMap = new Map();
+    const results = await Promise.allSettled(gamePks.map(async (pk) => {
+        try {
+            const res = await fetch(`/api/game/${pk}/boxscore`);
+            if (!res.ok) return null;
+            const d = await res.json();
+            return { pk, d };
+        } catch { return null; }
+    }));
+    for (const r of results) {
+        if (r.status === "fulfilled" && r.value?.d) boxMap.set(r.value.pk, r.value.d);
+    }
+    for (const f of out) {
+        if (f.settled) { f._graded = f.settled; continue; }
+        const box = boxMap.get(f.game_pk);
+        if (!box || box.status !== "Final") continue;
+        const won = gradeFireAgainstBoxscore(f, box);
+        if (won == null) continue;
+        const contracts = f.contracts || 1;
+        const price    = f.price_cents || 0;
+        const profit   = won ? (contracts * (100 - price)) : -(contracts * price);
+        f._graded = { won, profit_cents: profit };
+    }
+    return out;
+}
+function gradeFireAgainstBoxscore(f, box) {
+    if (f.kind === "moneyline") {
+        const home = box.line_score?.totals?.home?.runs ?? 0;
+        const away = box.line_score?.totals?.away?.runs ?? 0;
+        const homeAbbr = String(box.teams?.home?.abbr || "").toUpperCase();
+        const awayAbbr = String(box.teams?.away?.abbr || "").toUpperCase();
+        const betTeam  = String(f.bet_team || "").toUpperCase();
+        if (betTeam === homeAbbr) return home > away;
+        if (betTeam === awayAbbr) return away > home;
+        return null;
+    }
+    if (f.kind === "player_prop") {
+        const stat = f.stat;
+        const want = (lines) => (lines || []).find((p) => normName(p.name) === normName(f.player || ""));
+        const inAll = (side) => want(box[side]?.[side === "pitching" ? null : "batting"]);  // unused fallback
+        let stat_value = null;
+        if (stat === "strikeouts") {
+            for (const side of ["home", "away"]) {
+                const ln = (box.pitching?.[side] || []).find((p) => normName(p.name) === normName(f.player || ""));
+                if (ln) { stat_value = ln.K ?? 0; break; }
+            }
+        } else {
+            for (const side of ["home", "away"]) {
+                const ln = (box.batting?.[side] || []).find((p) => normName(p.name) === normName(f.player || ""));
+                if (!ln) continue;
+                if (stat === "hits") stat_value = ln.H ?? 0;
+                else if (stat === "home_runs") stat_value = ln.HR ?? 0;
+                else if (stat === "total_bases") {
+                    stat_value = (ln.H || 0) + (ln._2B || 0) + 2*(ln._3B || 0) + 3*(ln.HR || 0);
+                }
+                if (stat_value != null) break;
+            }
+        }
+        if (stat_value == null) return null;
+        const yesWon = stat_value >= (f.threshold || 0);
+        return (f.side === "yes") ? yesWon : !yesWon;
+    }
+    return null;
+}
+function normName(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function renderTrackRecord(fires, graded, isPublic) {
+    const settled = graded.filter((f) => f._graded);
+    const wins    = settled.filter((f) => f._graded.won);
+    const losses  = settled.filter((f) => !f._graded.won);
+    const open    = graded.filter((f) => !f._graded);
+    const totalStake = settled.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
+    const totalProfit = settled.reduce((s, f) => s + (f._graded.profit_cents || 0), 0);
+    const roi       = totalStake > 0 ? (totalProfit / totalStake) : 0;
+    const hitRate   = settled.length > 0 ? (wins.length / settled.length) : 0;
+
+    // 95% confidence interval on win rate (Wilson score interval — handles small n cleanly)
+    const n = settled.length;
+    const p = hitRate;
+    const z = 1.96;
+    let ciLow = 0, ciHigh = 0;
+    if (n > 0) {
+        const denom = 1 + z*z/n;
+        const center = (p + z*z/(2*n)) / denom;
+        const margin = z * Math.sqrt(p*(1-p)/n + z*z/(4*n*n)) / denom;
+        ciLow  = Math.max(0, center - margin);
+        ciHigh = Math.min(1, center + margin);
+    }
+
+    // Bucket by category
+    const byKind = new Map();
+    for (const f of settled) {
+        const key = f.kind === "moneyline" ? "moneyline"
+                  : `${f.stat}_${f.threshold}+_${f.side}`;
+        if (!byKind.has(key)) byKind.set(key, { wins: 0, losses: 0, stake: 0, profit: 0 });
+        const rec = byKind.get(key);
+        const stake = (f.contracts || 1) * (f.price_cents || 0);
+        rec.stake  += stake;
+        rec.profit += (f._graded.profit_cents || 0);
+        if (f._graded.won) rec.wins++; else rec.losses++;
+    }
+    const catRows = Array.from(byKind.entries())
+        .sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses))
+        .slice(0, 20)
+        .map(([key, r]) => {
+            const total = r.wins + r.losses;
+            const wr    = total > 0 ? r.wins / total : 0;
+            const rRoi  = r.stake > 0 ? r.profit / r.stake : 0;
+            const pCls  = r.profit >= 0 ? "tr-pos" : "tr-neg";
+            return `
+              <tr>
+                <td>${escapeHTML(key)}</td>
+                <td class="tr-num">${total}</td>
+                <td class="tr-num">${r.wins}-${r.losses}</td>
+                <td class="tr-num">${(wr*100).toFixed(0)}%</td>
+                <td class="tr-num ${pCls}">${(rRoi*100).toFixed(0)}%</td>
+                <td class="tr-num ${pCls}">${r.profit >= 0 ? "+" : ""}\$${(r.profit/100).toFixed(2)}</td>
+              </tr>
+            `;
+        }).join("");
+
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>TRACK RECORD</h1>
+        <p class="page-sub">${isPublic ? "Live multi-user record from every signed-in bot operator. " : "Local view (sign in to contribute to the public audit). "}${fires.length} fires placed · ${settled.length} settled · ${open.length} open or unresolvable</p>
+      </header>
+
+      <section class="tr-hero">
+        <div class="tr-stat">
+          <div class="tr-stat-label">Hit rate</div>
+          <div class="tr-stat-val">${(hitRate*100).toFixed(1)}%</div>
+          <div class="tr-stat-sub">${wins.length}–${losses.length} settled · 95% CI: ${(ciLow*100).toFixed(0)}–${(ciHigh*100).toFixed(0)}%</div>
+        </div>
+        <div class="tr-stat">
+          <div class="tr-stat-label">ROI</div>
+          <div class="tr-stat-val ${roi >= 0 ? "tr-pos" : "tr-neg"}">${roi >= 0 ? "+" : ""}${(roi*100).toFixed(1)}%</div>
+          <div class="tr-stat-sub">on \$${(totalStake/100).toFixed(2)} total staked</div>
+        </div>
+        <div class="tr-stat">
+          <div class="tr-stat-label">Net P/L</div>
+          <div class="tr-stat-val ${totalProfit >= 0 ? "tr-pos" : "tr-neg"}">${totalProfit >= 0 ? "+" : ""}\$${(totalProfit/100).toFixed(2)}</div>
+          <div class="tr-stat-sub">${settled.length} settled · ${open.length} open</div>
+        </div>
+        <div class="tr-stat">
+          <div class="tr-stat-label">Avg edge</div>
+          <div class="tr-stat-val">${settled.length > 0 ? (settled.reduce((s, f) => s + (f.edge_pp || 0), 0) / settled.length).toFixed(1) : "—"}pp</div>
+          <div class="tr-stat-sub">model vs market at fire</div>
+        </div>
+      </section>
+
+      ${settled.length === 0 ? `
+        <section class="tr-empty">
+          <p>No settled fires yet. Turn the bot on in <a href="#" class="tr-link" data-open-bot>practice mode</a> and check back after a slate.</p>
+        </section>
+      ` : `
+        <section class="tr-section">
+          <h2>By bet category</h2>
+          <table class="tr-table">
+            <thead><tr>
+              <th>Category</th><th class="tr-num">n</th><th class="tr-num">W-L</th>
+              <th class="tr-num">Win %</th><th class="tr-num">ROI</th><th class="tr-num">Net</th>
+            </tr></thead>
+            <tbody>${catRows}</tbody>
+          </table>
+        </section>
+      `}
+
+      <footer class="tr-foot">
+        <p><strong>Methodology</strong>: Every bot fire is logged with its model/market edge, then graded against the official MLB boxscore once the game ends. Wilson score interval used for the 95% CI on hit rate.</p>
+        <p>Current data is local to this browser. A multi-user audited record requires user accounts — on the roadmap.</p>
+        <p><a class="tr-link" href="#how-it-works">How the bot picks bets →</a></p>
+      </footer>
+    `;
+}
+
+// ── HOW IT WORKS VIEW ───────────────────────────────────────────────
+//
+// Methodology page showing the empirical derivations powering the
+// bot. Pulls _bot_coefficients.json (served via /api/coefficients)
+// and renders each empirical table with plain-English explanations.
+
+function showHowItWorks() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    howItWorksView.hidden = false;
+    refreshHowItWorks();
+}
+
+async function refreshHowItWorks() {
+    howItWorksView.innerHTML = renderHowItWorksShell();
+    let coefs = null;
+    try {
+        const res = await fetch("/api/coefficients");
+        if (res.ok) coefs = await res.json();
+    } catch {}
+    howItWorksView.innerHTML = renderHowItWorks(coefs);
+}
+
+function renderHowItWorksShell() {
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>HOW THE BOT PICKS BETS</h1>
+        <p class="page-sub">Every coefficient below is derived from data, not guessed.</p>
+      </header>
+      <div class="page-loading">Loading empirical coefficients…</div>
+    `;
+}
+
+function renderHowItWorks(coefs) {
+    if (!coefs) {
+        return `
+          <a class="back-link" href="#">← BOARD</a>
+          <header class="page-head"><h1>HOW IT WORKS</h1></header>
+          <p>Couldn't load coefficients. Refresh in a moment.</p>
+        `;
+    }
+    const seasons = coefs.seasons || "n/a";
+    const source  = coefs.source  || "Retrosheet PBP";
+
+    const hq = coefs.hitter_quality_by_season_avg || {};
+    const hqRows = Object.entries(hq).map(([bucket, d]) => `
+        <tr>
+          <td>${bucket}</td>
+          <td class="tr-num">${(d.game_batter_pairs || 0).toLocaleString()}</td>
+          <td class="tr-num">${((d.p_1_plus_hit || 0) * 100).toFixed(1)}%</td>
+          <td class="tr-num">${((d.p_2_plus_hit || 0) * 100).toFixed(1)}%</td>
+          <td class="tr-num">${((d.p_1_plus_hr  || 0) * 100).toFixed(2)}%</td>
+          <td class="tr-num">${((d.p_2_plus_tb  || 0) * 100).toFixed(1)}%</td>
+        </tr>
+      `).join("");
+
+    const kp = coefs.kprop_by_pitcher_season_k9 || {};
+    const kpRows = Object.entries(kp).map(([bucket, d]) => `
+        <tr>
+          <td>${bucket}</td>
+          <td class="tr-num">${(d.starts || 0).toLocaleString()}</td>
+          <td class="tr-num">${(d.avg_k_per_start || 0).toFixed(1)}</td>
+          <td class="tr-num">${((d.p_5_plus || 0) * 100).toFixed(0)}%</td>
+          <td class="tr-num">${((d.p_7_plus || 0) * 100).toFixed(0)}%</td>
+          <td class="tr-num">${((d.p_9_plus || 0) * 100).toFixed(0)}%</td>
+        </tr>
+      `).join("");
+
+    const wx = coefs.weather?.by_bucket || {};
+    const wxRef = coefs.weather?.reference || {};
+    const wxRows = Object.entries(wx)
+        .sort((a, b) => b[1].pa - a[1].pa)
+        .slice(0, 12)
+        .map(([key, d]) => {
+            const [temp, wind] = key.split("|");
+            const cls = (d.hr_multiplier < 0.85) ? "tr-neg" : (d.hr_multiplier > 1.05) ? "tr-pos" : "";
+            return `
+              <tr>
+                <td>${temp}°F · ${wind} mph</td>
+                <td class="tr-num">${d.pa.toLocaleString()}</td>
+                <td class="tr-num ${cls}">${d.hr_multiplier.toFixed(2)}×</td>
+                <td class="tr-num">${d.hit_multiplier.toFixed(2)}×</td>
+              </tr>
+            `;
+        }).join("");
+
+    const pull = coefs.pitcher_pull_point?.by_bf || {};
+    const pullRows = [15, 18, 20, 22, 24, 26, 28, 30, 32].map((bf) => {
+        const rec = pull[String(bf)];
+        if (!rec) return "";
+        return `
+          <tr>
+            <td>${bf} batters faced</td>
+            <td class="tr-num">${((rec.pull_rate || 0) * 100).toFixed(0)}%</td>
+            <td class="tr-num">${(rec.n_still_pitching || 0).toLocaleString()}</td>
+          </tr>
+        `;
+    }).join("");
+
+    return `
+      <a class="back-link" href="#">← BOARD</a>
+      <header class="page-head">
+        <h1>HOW THE BOT PICKS BETS</h1>
+        <p class="page-sub">Every threshold below was derived from data — ${source}, seasons ${seasons}. No guesses.</p>
+      </header>
+
+      <section class="hiw-section">
+        <h2>1. Hitter quality — what your AVG says about your next game</h2>
+        <p>For each batter, we computed their actual per-game hit / HR / TB rates against their season AVG. The bot refuses NO bets where the market underprices a quality hitter's baseline rate.</p>
+        <table class="tr-table">
+          <thead><tr><th>Season AVG</th><th class="tr-num">n game-batter</th>
+            <th class="tr-num">P(1+ H)</th><th class="tr-num">P(2+ H)</th>
+            <th class="tr-num">P(1+ HR)</th><th class="tr-num">P(2+ TB)</th></tr></thead>
+          <tbody>${hqRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: a .280 hitter reaches 1+ hit in 67% of games. Betting NO at 33¢ or higher when the market doesn't price this is a losing trade.</p>
+      </section>
+
+      <section class="hiw-section">
+        <h2>2. Pitcher strikeouts — what season K/9 means for tonight</h2>
+        <p>For each starter, we computed their actual per-start K distribution against their season K/9. The bot fires K-prop YES only when the empirical distribution supports it.</p>
+        <table class="tr-table">
+          <thead><tr><th>Season K/9</th><th class="tr-num">n starts</th>
+            <th class="tr-num">avg K/start</th>
+            <th class="tr-num">P(5+)</th><th class="tr-num">P(7+)</th><th class="tr-num">P(9+)</th></tr></thead>
+          <tbody>${kpRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: a 9.0–10.0 K/9 starter hits 5+ K in 67% of starts but 9+ K only in 4%. Bot YES/NO bars adjust to the bucket.</p>
+      </section>
+
+      <section class="hiw-section">
+        <h2>3. Weather — empirical multipliers vs neutral</h2>
+        <p>For each (temperature × wind) bucket, we computed the league hit and HR rate per PA. Multipliers below are relative to the neutral reference: ${wxRef.temp || "60-70°F"}, ${wxRef.wind || "0-5mph"} wind.</p>
+        <table class="tr-table">
+          <thead><tr><th>Conditions</th><th class="tr-num">n PAs</th>
+            <th class="tr-num">HR mult.</th><th class="tr-num">Hit mult.</th></tr></thead>
+          <tbody>${wxRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: cold weather suppresses HRs by 15–35%. Hot weather adds 5–10%. The bot adjusts batter prop probabilities accordingly.</p>
+      </section>
+
+      <section class="hiw-section">
+        <h2>4. Pitcher pull point — when starters actually come out</h2>
+        <p>Across 32K starts, the probability the starter is removed by batter N.</p>
+        <table class="tr-table">
+          <thead><tr><th>State</th><th class="tr-num">Pull rate</th><th class="tr-num">n still pitching</th></tr></thead>
+          <tbody>${pullRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: by BF 28 (≈100 pitches), 49% of starters are gone. The bot uses this to refuse K-prop YES when the math is dominated by remaining innings the pitcher won't pitch.</p>
+      </section>
+
+      <footer class="tr-foot">
+        <p>All coefficients regenerate from <code>data/processed/rates.db</code> via <code>scripts/derive_coefficients.py</code>. Open-source, reproducible.</p>
+        <p><a class="tr-link" href="#track-record">See the bot's track record →</a></p>
+      </footer>
+    `;
+}
+
 // ── PLAYER PROFILE VIEW ─────────────────────────────────────────────
 //
 // Reached by clicking any player's name in the matchup card, Gamecast,
@@ -1397,7 +2916,7 @@ async function refreshPlayer(mlbam) {
 async function hydratePlayerProps(gamePk, playerName, mlbam) {
     if (!playerName) return;
     try {
-        const res = await fetch(`/api/markets`);
+        const res = await fetch(`/api/markets?source=kalshi`);
         if (!res.ok) return;
         const data = await res.json();
         const slot = document.getElementById("pt-market-chips-slot");
@@ -1405,7 +2924,7 @@ async function hydratePlayerProps(gamePk, playerName, mlbam) {
 
         const allProps = (data?.markets?.player_prop || []);
         const matches = filterMarketsByPlayerName(allProps, playerName);
-        slot.innerHTML = renderPlayerPropChips(matches, playerName);
+        safeSetHTML(slot, renderPlayerPropChips(matches, playerName));
     } catch { /* silent — no chips section if anything goes wrong */ }
 }
 
@@ -1748,6 +3267,7 @@ function renderPitcherModule(p, currentYear) {
 
     return `
       <section class="player-module">
+        ${renderPitchingHeadline(p.season_stats, currentYear)}
         <div class="pm-pitcher-note">Hitter performance AGAINST this pitcher — lower is better.</div>
         ${renderSlashStrip({
             label: `${currentYear} Season (Against)`,
@@ -1770,6 +3290,52 @@ function renderPitcherModule(p, currentYear) {
         ${renderRateProfile(seasonSlash, careerSlash, currentYear)}
         ${renderOutcomeBreakdown(p.career, "B")}
       </section>
+    `;
+}
+
+// Conventional pitcher headline — ESPN / MLB.com / Baseball Reference
+// all lead with ERA, W-L, IP, WHIP, K, BB. Five-tile strip matches the
+// hitter-AVG strip below for visual rhythm. User direction (2026-06-07):
+// 'Make the stats here for a pitcher more conventional. I like that
+// you have the unconventional numbers, but theyre not the way we
+// should define a pitcher at first. Look on other major websites.'
+function renderPitchingHeadline(s, currentYear) {
+    if (!s) return "";
+    const era  = s.era ?? "—";
+    const ip   = s.ip ?? "—";
+    const whip = s.whip ?? "—";
+    const k    = s.strikeouts ?? "—";
+    const bb   = s.walks ?? "—";
+    const wl   = `${s.wins ?? "—"}-${s.losses ?? "—"}`;
+    const k9   = s.k_per_9 ?? "—";
+    const bb9  = s.bb_per_9 ?? "—";
+    return `
+      <div class="slash-strip">
+        <div class="ss-head">
+          <span class="ss-label">${currentYear} Season</span>
+          <span class="ss-extra">${s.starts || 0} GS · ${s.games || 0} G${s.saves ? ` · ${s.saves} SV` : ""}</span>
+        </div>
+        <div class="ss-grid">
+          <div class="ss-tile"><div class="ss-val">${era}</div><div class="ss-key">ERA</div></div>
+          <div class="ss-tile"><div class="ss-val">${wl}</div><div class="ss-key">W-L</div></div>
+          <div class="ss-tile"><div class="ss-val">${ip}</div><div class="ss-key">IP</div></div>
+          <div class="ss-tile"><div class="ss-val">${whip}</div><div class="ss-key">WHIP</div></div>
+          <div class="ss-tile ss-tile-counter"><div class="ss-val">${k}</div><div class="ss-key">K</div></div>
+        </div>
+        <div class="ss-counts">
+          <span><strong>${k9}</strong> K/9</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${bb9}</strong> BB/9</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${bb}</strong> BB</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${s.hits ?? "—"}</strong> H</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${s.home_runs ?? "—"}</strong> HR</span>
+          <span class="ss-dot">·</span>
+          <span><strong>${s.earned_runs ?? "—"}</strong> ER</span>
+        </div>
+      </div>
     `;
 }
 
@@ -2097,11 +3663,11 @@ function renderHotCard(g, lev, rank) {
         </header>
         <div class="hot-matchup">
           <div class="hot-team">
-            <span class="hot-team-name">${g.away}</span>
+            <span class="hot-team-name">${inlineTeamLogo(g.away, { size: 18, class: "team-logo" })}${g.away}</span>
             <span class="hot-team-score">${g.away_score}</span>
           </div>
           <div class="hot-team">
-            <span class="hot-team-name">${g.home}</span>
+            <span class="hot-team-name">${inlineTeamLogo(g.home, { size: 18, class: "team-logo" })}${g.home}</span>
             <span class="hot-team-score">${g.home_score}</span>
           </div>
         </div>
@@ -2156,6 +3722,62 @@ function hotReason(g) {
     if (basesDesc) return `${basesDesc}, ${inn}`;
     return `${diff === 0 ? "Tied" : `${diff}-run game`} in the ${inn}`;
 }
+
+// ── EDGES SUB-VIEW (rendered inside the Markets dashboard) ──────
+// renderEdgeRow + shortStatLabel are shared with refreshMarketsEdges
+// above. The standalone showEdges / refreshEdges / renderEdges
+// functions were removed when EDGES became a sub-tab of Markets
+// (cleaner nav: LIVE / HOT / MARKETS / STANDINGS / LEADERS).
+
+function renderEdgeRow(e) {
+    const statLabel = shortStatLabel(e.stat);
+    const sideLabel = e.side === "no" ? "UNDER" : "OVER";
+    const sideCls   = e.side === "no" ? "edge-side-under" : "edge-side-over";
+    const ourPct    = (e.our_p * 100).toFixed(1);
+    const mktPct    = (e.market_p * 100).toFixed(1);
+    // Edge tier coloring — strong / moderate / marginal.
+    const tier = e.edge_pp >= 10 ? "strong"
+              : e.edge_pp >= 5  ? "moderate"
+              : "marginal";
+    return `
+      <li class="edge-row edge-row-${tier}">
+        <a class="edge-link" href="#game/${e.game_pk}/markets">
+          <span class="edge-rank">${e.rank}</span>
+          <span class="edge-player-block">
+            <span class="edge-player">${escapeHTML(e.player)}</span>
+            <span class="edge-matchup">${escapeHTML(e.matchup)}</span>
+          </span>
+          <span class="edge-prop">
+            <span class="edge-threshold">${e.threshold}+</span>
+            <span class="edge-stat">${statLabel}</span>
+            <span class="edge-side ${sideCls}">${sideLabel}</span>
+          </span>
+          <span class="edge-probs">
+            <span class="edge-prob-cell">
+              <span class="edge-prob-label">Our</span>
+              <span class="edge-prob-val">${ourPct}%</span>
+            </span>
+            <span class="edge-prob-cell">
+              <span class="edge-prob-label">Mkt</span>
+              <span class="edge-prob-val edge-prob-dim">${mktPct}%</span>
+            </span>
+          </span>
+          <span class="edge-magnitude edge-mag-${tier}">+${e.edge_pp.toFixed(1)}pp</span>
+        </a>
+      </li>
+    `;
+}
+
+function shortStatLabel(stat) {
+    switch (stat) {
+        case "home_runs":   return "HR";
+        case "total_bases": return "TB";
+        case "hits":        return "H";
+        case "strikeouts":  return "K";
+        default:            return String(stat || "").toUpperCase();
+    }
+}
+
 
 function renderAbout() {
     return `
@@ -2350,6 +3972,7 @@ async function refreshMVP() {
             return;
         }
         mvpView.innerHTML = renderMVP(data, batterWpa, pitcherWpa);
+        bindLeadersToggle();   // re-wire shared toggle (Standard / Statcast / MVP Race)
     } catch (e) {
         renderEmpty(mvpView, "Could not load MVP race.", `${e.message || e}`);
     }
@@ -2358,8 +3981,9 @@ async function refreshMVP() {
 function renderMVP(data, batterWpa, pitcherWpa) {
     return `
       <header class="mvp-head">
-        <h2>MVP RACE</h2>
-        <span class="mvp-meta">${data.season} season</span>
+        <h2>LEADERS</h2>
+        <span class="mvp-meta">${data.season} MVP race</span>
+        ${renderLeadersModeToggle()}
       </header>
       ${renderWpaBand(batterWpa, pitcherWpa, data.season)}
       <div class="mvp-section-head">League leaders by traditional stats</div>
@@ -2444,7 +4068,9 @@ function renderRaceCard(race) {
 }
 
 function renderCandidate(c) {
-    const team = c.team ? `<span class="cand-team">${c.team}</span>` : "";
+    const team = c.team
+        ? `<span class="cand-team">${inlineTeamLogo(c.team, { size: 14, class: "team-logo team-logo-sm" })}${c.team}</span>`
+        : "";
     const statCells = c.stats.map((s, i) => `
       <div class="cand-stat ${i === 0 ? "primary" : ""}">
         <span class="cand-stat-value">${s.value}</span>
@@ -2487,7 +4113,10 @@ async function refreshGame(id) {
         // new fetch was in flight. Let hydrateMatchup overwrite when
         // fresh data lands. Briefly showing the previous PA's names is
         // less disruptive than showing nothing.
-        gameView.innerHTML = renderGame(g);
+        //
+        // Use the global safeSetHTML helper so every game-view swap
+        // goes through the same scroll-preservation logic.
+        safeSetHTML(gameView, renderGame(g));
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -2500,6 +4129,26 @@ async function refreshGame(id) {
         }
         if (gameViewMode === "boxscore") {
             hydrateBoxscore(id, g.status);
+        } else if (gameViewMode === "live") {
+            // Always hydrate the rail boxscore on Live View — it
+            // feeds both the rail bets meter AND the AT BAT /
+            // PITCHING stat lines. Edge-cached, so cheap on every
+            // 5s tick. Only kick the bets-specific Kalshi orderbook
+            // path when there are actual bets on this game.
+            hydrateRailBoxscore(id).then(() => {
+                if (String(id) !== String(activeGameId)) return;
+                if (gameViewMode !== "live") return;
+                // Trigger a soft repaint so the new stat lines show.
+                safeSetHTML(gameView, renderGame(g));
+            });
+            if (hasGameBets(id)) {
+                hydrateRailLiveData(id).then(() => {
+                    if (String(id) !== String(activeGameId)) return;
+                    if (gameViewMode !== "live") return;
+                    repaintRailBets(g);
+                });
+                try { window.AutoBot?.runPracticeCashoutCheck?.(); } catch {}
+            }
         }
         if (gameViewMode === "markets") {
             hydrateMarkets(id);
@@ -2574,6 +4223,11 @@ function renderGame(g) {
         <button class="${mode === 'gamecast' ? 'active' : ''}" data-mode="gamecast">Gamecast</button>
         <button class="${mode === 'boxscore' ? 'active' : ''}" data-mode="boxscore">Box Score</button>
         <button class="${mode === 'markets'  ? 'active' : ''}" data-mode="markets">Markets</button>
+        <button class="game-watch-btn"
+                data-watch
+                data-game-pk="${g.game_pk}"
+                title="Open MLB.tv in a popup window. Use the player's PiP button to keep the video floating over DIAMOND:CONTEXT."
+                aria-label="Watch on MLB.tv">▶ Watch</button>
       </div>
       ${mode === 'gamecast'
         ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
@@ -2586,6 +4240,542 @@ function renderGame(g) {
              ${cardPane(g)}
            </div>`}
     `;
+}
+
+// "Your bets on this game" — pulls bot + practice fires from
+// localStorage, filters by game_pk, and renders a compact summary
+// strip above the game view. Hidden when no bets exist on this
+// game. User direction (2026-06-04): 'when youre on a game, show
+// all of the bets that are placed on that game.'
+const LS_GAME_BETS_FIRES          = "diamond_context_bot_fires";
+const LS_GAME_BETS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
+const LS_GAME_BETS_SETTINGS       = "diamond_context_bot_settings";
+
+// Per-ticker live mark cache for the rail bets card. Keyed by Kalshi
+// ticker; { t, mark } where mark is cents the position is worth NOW
+// (YES bid for YES bets, NO bid for NO bets). Refreshed alongside
+// refreshGame so the rail rows show live mark-to-market vs entry.
+const _railLiveMarks = new Map();
+const RAIL_MARK_TTL_MS = 8000;
+// Per-game boxscore cache for the rail bets meter — mirrors the
+// drawer's fetchBoxscoreForGames approach instead of piggybacking
+// on the Box Score tab's single-slot cachedBoxscoreData (which was
+// fragile: name shape mismatches, pane-mount gating, only-one-game
+// limit). Fetched directly from the boxscore endpoint per game pk.
+const _railBoxscores = new Map();
+const RAIL_BOXSCORE_TTL_MS = 5000;
+async function hydrateRailBoxscore(gamePk) {
+    if (!gamePk) return null;
+    const now = Date.now();
+    const cached = _railBoxscores.get(String(gamePk));
+    if (cached && (now - cached.t) < RAIL_BOXSCORE_TTL_MS) return cached.data;
+    try {
+        const res = await fetch(`/api/game/${gamePk}/boxscore`);
+        if (!res.ok) return cached?.data || null;
+        const data = await res.json();
+        _railBoxscores.set(String(gamePk), { t: now, data });
+        return data;
+    } catch {
+        return cached?.data || null;
+    }
+}
+
+// Targeted re-render of just the rail bets card — runs after
+// async hydrate (boxscore + Kalshi orderbooks) so the live mark
+// and the live K count appear without waiting for the next 5s
+// game-state tick.
+function repaintRailBets(g) {
+    if (!g) return;
+    const card = document.querySelector("#game-view .rail-bets-card");
+    if (!card) return;
+    const fresh = renderGameBetsCardRail(g);
+    if (!fresh) {
+        card.remove();
+        return;
+    }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = fresh.trim();
+    const next = tmp.firstElementChild;
+    if (next) card.replaceWith(next);
+}
+
+async function hydrateRailLiveData(gamePk) {
+    if (!gamePk) return false;
+    let practiceMode = false;
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    const key = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
+    let fires = [];
+    try { fires = JSON.parse(localStorage.getItem(key) || "[]"); } catch {}
+    // Any open bet on this game — orderbook lookup requires a ticker,
+    // boxscore lookup does not.
+    const onGame = fires.filter((f) => String(f.game_pk) === String(gamePk) && !f.settled);
+    if (!onGame.length) return false;
+    const tickerFires = onGame.filter((f) => f.ticker);
+    const now = Date.now();
+    const tickers = [...new Set(tickerFires.map((f) => ({ t: f.ticker, side: f.side || "yes" })).map(JSON.stringify))]
+        .map((s) => JSON.parse(s));
+    let any = false;
+    // Always hydrate the boxscore — it's what the progress meter
+    // reads. Orderbooks only run for fires with tickers.
+    await Promise.all([
+        hydrateRailBoxscore(gamePk).then((d) => { if (d) any = true; }),
+        ...tickers.map(async ({ t, side }) => {
+            const cached = _railLiveMarks.get(t);
+            if (cached && (now - cached.t) < RAIL_MARK_TTL_MS) return;
+            try {
+                const ob = await window.Kalshi?.getOrderbook?.(t);
+                if (!ob) return;
+                const mark = side === "no"
+                    ? (window.Kalshi.orderbookNoBidCents
+                        ? window.Kalshi.orderbookNoBidCents(ob)
+                        : __obNoBidCents(ob))
+                    : (window.Kalshi.orderbookYesBidCents
+                        ? window.Kalshi.orderbookYesBidCents(ob)
+                        : __obYesBidCents(ob));
+                if (mark != null) {
+                    _railLiveMarks.set(t, { t: now, mark });
+                    any = true;
+                }
+            } catch {}
+        }),
+    ]);
+    return any;
+}
+
+// Fallback orderbook lookups in case the Kalshi module hasn't exposed
+// them on the global. Mirrors the autobot helpers — best YES bid is
+// the highest YES price someone wants to pay; NO bid = 100 - YES ask.
+function __obYesBidCents(ob) {
+    const book = ob?.yes || [];
+    if (!book.length) return null;
+    const c = Number(book[book.length - 1]?.[0]);
+    if (!Number.isFinite(c) || c < 1 || c > 99) return null;
+    return c;
+}
+function __obYesAskCents(ob) {
+    const book = ob?.no || [];
+    if (!book.length) return null;
+    const noBid = Number(book[book.length - 1]?.[0]);
+    if (!Number.isFinite(noBid) || noBid < 1 || noBid > 99) return null;
+    return 100 - noBid;
+}
+function __obNoBidCents(ob) {
+    const yesAsk = __obYesAskCents(ob);
+    if (yesAsk == null) return null;
+    return 100 - yesAsk;
+}
+
+// Quick check used by refreshGame to decide whether to also pull the
+// boxscore on Live View — the rail bets card needs it for progress bars.
+function hasGameBets(gamePk) {
+    if (!gamePk) return false;
+    try {
+        let practiceMode = false;
+        try {
+            const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+            practiceMode = s.practice_mode === true;
+        } catch {}
+        const key = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
+        const arr = JSON.parse(localStorage.getItem(key) || "[]");
+        return arr.some((f) => String(f.game_pk) === String(gamePk));
+    } catch { return false; }
+}
+
+function renderGameBetsSection(g) {
+    const gamePk = g && g.game_pk;
+    if (!gamePk) return "";
+    let real = [], practice = [], practiceMode = false;
+    try { real     = JSON.parse(localStorage.getItem(LS_GAME_BETS_FIRES) || "[]"); } catch {}
+    try { practice = JSON.parse(localStorage.getItem(LS_GAME_BETS_PRACTICE_FIRES) || "[]"); } catch {}
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    // Show the bucket the user is currently watching: practice
+    // fires when practice_mode is on, real fires otherwise.
+    const source = practiceMode ? practice : real;
+    const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
+    if (!onGame.length) return "";
+
+    // Per-PA filter. Only show:
+    //   - Bets on the CURRENT batter (he's at the plate now)
+    //   - Bets on the CURRENT pitcher (his K-props are live)
+    //   - Moneylines (always relevant)
+    // The rest are hidden behind a "Show all N" button.
+    // User direction (2026-06-05): 'I want to see bets that are
+    // relevant to each at-bat, not necessarily all of them at once.
+    // Its just too big and bulky here.'
+    const nameMatches = (a, b) => {
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        return norm(a) === norm(b);
+    };
+    const batterName  = g.batter?.name  || null;
+    const pitcherName = g.pitcher?.name || null;
+    const isRelevant  = (f) => {
+        if (f.kind === "moneyline") return true;
+        if (!f.player) return false;
+        if (batterName  && nameMatches(f.player, batterName))  return true;
+        if (pitcherName && nameMatches(f.player, pitcherName)) return true;
+        return false;
+    };
+    // Sessionstorage so the user can keep "show all" open across
+    // pitch refreshes.
+    let showAll = false;
+    try { showAll = sessionStorage.getItem(`gbets_show_all_${gamePk}`) === "1"; } catch {}
+    const relevant   = onGame.filter(isRelevant);
+    const hidden     = onGame.length - relevant.length;
+    const displayed  = showAll ? onGame : relevant;
+    // Use Kalshi's native 'N+ stat' market notation. The YES/NO
+    // chip carries the bet direction (in the strip, the (YES)/(NO)
+    // suffix on each label since we don't render chips here).
+    // User direction (2026-06-04): 'use "7+" rather than over 7.'
+    const statPluralName = (stat, threshold) => {
+        const plural = threshold !== 1;
+        switch (stat) {
+            case "home_runs":   return plural ? "home runs"   : "home run";
+            case "hits":        return plural ? "hits"        : "hit";
+            case "total_bases": return plural ? "total bases" : "total base";
+            case "strikeouts":  return plural ? "strikeouts"  : "strikeout";
+            default:            return String(stat || "").replace(/_/g, " ");
+        }
+    };
+    const sideLabel = (f) => {
+        if (f.kind === "moneyline") return `${f.bet_team || ""} ML YES`;
+        const stat = statPluralName(f.stat, f.threshold || 0);
+        const side = (f.side || "yes") === "no" ? "NO" : "YES";
+        return `${f.player || ""} ${f.threshold || ""}+ ${stat} (${side})`;
+    };
+    const totalCost = onGame.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
+    const settled  = onGame.filter((f) => f.settled);
+    const won      = settled.filter((f) => f.settled.won).length;
+    const lost     = settled.filter((f) => !f.settled.won).length;
+    const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
+    const realizedCls = realized >= 0 ? "game-bets-pos" : "game-bets-neg";
+    const realizedTxt = (won + lost) > 0
+        ? ` · ${won}–${lost} <strong class="${realizedCls}">${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</strong>`
+        : "";
+    const rows = displayed.map((f) => {
+        const cost = (f.contracts || 1) * (f.price_cents || 0);
+        const settled = f.settled;
+        const badge = settled
+            ? `<span class="game-bets-badge ${settled.won ? "game-bets-badge-won" : "game-bets-badge-lost"}">${settled.won ? "WON" : "LOST"}</span>`
+            : `<span class="game-bets-badge game-bets-badge-open">OPEN</span>`;
+        const pnl = settled
+            ? `<span class="${settled.won ? "game-bets-pos" : "game-bets-neg"}">${settled.won ? "+" : ""}$${(settled.profit_cents/100).toFixed(2)}</span>`
+            : `<span class="game-bets-meta">cost $${(cost/100).toFixed(2)}</span>`;
+        return `
+          <li>
+            ${badge}
+            <span class="game-bets-label">${escapeHtml(sideLabel(f))}</span>
+            ${pnl}
+          </li>
+        `;
+    }).join("");
+    // Title depends on what's showing.
+    let title;
+    if (showAll) {
+        title = `All bets on this game`;
+    } else if (relevant.length > 0) {
+        const atBatLabel = batterName && pitcherName
+            ? `${shortName(batterName)} vs ${shortName(pitcherName)}`
+            : "current PA";
+        title = `Relevant to ${atBatLabel}`;
+    } else {
+        title = `No bets on the current PA`;
+    }
+    // Toggle button: "Show 12 more" / "Hide" depending on state.
+    const toggleHtml = onGame.length > relevant.length
+        ? `<button class="game-bets-toggle" data-gbets-toggle="${gamePk}">
+             ${showAll ? `Show only PA` : `Show all ${onGame.length}`}
+           </button>`
+        : "";
+
+    return `
+      <section class="game-bets-strip game-bets-compact" data-practice="${practiceMode ? 'true' : 'false'}">
+        <header class="game-bets-head">
+          <span class="game-bets-tag">${practiceMode ? "PRACTICE" : "LIVE"}</span>
+          <span class="game-bets-title">${escapeHtml(title)}</span>
+          <span class="game-bets-summary">${onGame.length} on game · $${(totalCost/100).toFixed(2)}${realizedTxt}</span>
+          ${toggleHtml}
+        </header>
+        ${displayed.length > 0
+          ? `<ul class="game-bets-list">${rows}</ul>`
+          : `<p class="game-bets-empty">${hidden} bet${hidden === 1 ? "" : "s"} on other players in this game — tap "Show all" to see them.</p>`}
+      </section>
+    `;
+}
+
+// Rail variant of the bets section — sits in the LIVE VIEW left rail
+// next to AT BAT / PITCHING / 3RD SO FAR, with progress bars per bet.
+// User direction (2026-06-05): 'Lets put this somewhere else all
+// together. Its weird there. I want to be able to see their progress
+// on the bets as well.' Moved out of the game-view header into the
+// rail and given DraftKings-style progress per row (uses the same
+// renderBetProgress() helper the drawer uses).
+function renderGameBetsCardRail(g) {
+    const gamePk = g && g.game_pk;
+    if (!gamePk) return "";
+    let real = [], practice = [], practiceMode = false;
+    try { real     = JSON.parse(localStorage.getItem(LS_GAME_BETS_FIRES) || "[]"); } catch {}
+    try { practice = JSON.parse(localStorage.getItem(LS_GAME_BETS_PRACTICE_FIRES) || "[]"); } catch {}
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    const source = practiceMode ? practice : real;
+    const onGame = source.filter((f) => String(f.game_pk) === String(gamePk));
+    if (!onGame.length) return "";
+
+    const nameMatches = (a, b) => {
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        return norm(a) === norm(b);
+    };
+    const batterName  = g.batter?.name  || null;
+    const pitcherName = g.pitcher?.name || null;
+    const isRelevant  = (f) => {
+        if (f.kind === "moneyline") return true;
+        if (!f.player) return false;
+        if (batterName  && nameMatches(f.player, batterName))  return true;
+        if (pitcherName && nameMatches(f.player, pitcherName)) return true;
+        return false;
+    };
+    let showAll = false;
+    try { showAll = sessionStorage.getItem(`gbets_show_all_${gamePk}`) === "1"; } catch {}
+    const relevant   = onGame.filter(isRelevant);
+    const hidden     = onGame.length - relevant.length;
+    const displayed  = showAll ? onGame : relevant;
+
+    // Boxscore — source of truth for live per-player stats. Use the
+    // rail's own cache (populated by hydrateRailBoxscore) rather than
+    // the Box Score tab's single-slot cache, which had multiple
+    // failure modes (pane-mount gating, single-game limit).
+    const boxscore = _railBoxscores.get(String(gamePk))?.data || null;
+
+    const statPluralName = (stat, threshold) => {
+        const plural = threshold !== 1;
+        switch (stat) {
+            case "home_runs":   return plural ? "home runs"   : "home run";
+            case "hits":        return plural ? "hits"        : "hit";
+            case "total_bases": return plural ? "total bases" : "total base";
+            case "strikeouts":  return plural ? "strikeouts"  : "strikeout";
+            default:            return String(stat || "").replace(/_/g, " ");
+        }
+    };
+    const compactLabel = (f) => {
+        if (f.kind === "moneyline") return `${f.bet_team || ""} ML`;
+        const stat = statPluralName(f.stat, f.threshold || 0);
+        return `${shortName(f.player || "")} ${f.threshold || ""}+ ${stat}`;
+    };
+
+    const totalCost = onGame.reduce((s, f) => s + (f.contracts || 1) * (f.price_cents || 0), 0);
+    const settled  = onGame.filter((f) => f.settled);
+    const won      = settled.filter((f) => f.settled.won).length;
+    const lost     = settled.filter((f) => !f.settled.won).length;
+    const realized = settled.reduce((s, f) => s + (f.settled.profit_cents || 0), 0);
+
+    // Per-bet progress meter — uses the SAME renderBetProgress helper
+    // that the drawer's 'All bets' pane uses. User direction
+    // (2026-06-05): 'Look at how you do it in "all bets".' The drawer
+    // path is the source of truth — same boxscore-lookup function,
+    // same bar shape, same status text. Accessed via window.AutoBot
+    // because autobot.js wraps its scope in an IIFE.
+    const railProgress = (f) => {
+        if (f.settled) return "";
+        const r = window.AutoBot?.renderBetProgress;
+        if (typeof r === "function") return r(f, boxscore);
+        return "";
+    };
+
+    const rows = displayed.map((f) => {
+        const contracts = f.contracts || 1;
+        const entryCents = f.price_cents || 0;
+        const cost = contracts * entryCents;
+        const sideCls = (f.side || "yes") === "no" ? "rail-bet-side-no" : "rail-bet-side-yes";
+        const sideTag = (f.side || "yes") === "no" ? "NO" : "YES";
+
+        let stateHtml;
+        if (f.settled) {
+            const wonCls = f.settled.won ? "rail-bet-won" : "rail-bet-lost";
+            stateHtml = `<span class="rail-bet-state ${wonCls}">${f.settled.won ? "WON " : "LOST "}${f.settled.won ? "+" : ""}$${(f.settled.profit_cents/100).toFixed(2)}</span>`;
+        } else {
+            // Live mark-to-market straight from the Kalshi orderbook
+            // (yes bid for YES bets, no bid for NO bets — what the
+            // position is worth if you sold it right now). When the
+            // first orderbook tick hasn't landed yet we fall back to
+            // the entry cost so the row never goes blank.
+            const cached = f.ticker ? _railLiveMarks.get(f.ticker) : null;
+            const markCents = cached && cached.mark != null ? cached.mark : null;
+            if (markCents != null) {
+                const liveVal = contracts * markCents;
+                const pnl = liveVal - cost;
+                const cls = pnl >= 0 ? "rail-bet-pos" : "rail-bet-neg";
+                const sign = pnl >= 0 ? "+" : "";
+                stateHtml = `
+                  <span class="rail-bet-state rail-bet-live">
+                    <span class="rail-bet-mark ${cls}">${sign}$${(pnl/100).toFixed(2)}</span>
+                    <span class="rail-bet-entry">$${(cost/100).toFixed(2)} → $${(liveVal/100).toFixed(2)}</span>
+                  </span>
+                `;
+            } else {
+                stateHtml = `<span class="rail-bet-state rail-bet-open">$${(cost/100).toFixed(2)}</span>`;
+            }
+        }
+        // Per-row Sell action. Practice mode marks the fire as
+        // settled at the live bid; real mode places a Kalshi sell
+        // order. Only shown when there's an open fire with a live
+        // bid we can sell into.
+        const cached = f.ticker ? _railLiveMarks.get(f.ticker) : null;
+        const liveBid = cached && cached.mark != null ? cached.mark : null;
+        const sellHtml = (!f.settled && f.ticker && liveBid != null)
+            ? `<button class="rail-bet-sell"
+                       data-rail-sell="${escapeHtml(f.ticker)}"
+                       data-rail-bid="${liveBid}"
+                       title="Sell this position at the live bid">Sell @ $${((contracts * liveBid)/100).toFixed(2)}</button>`
+            : "";
+        return `
+          <li class="rail-bet-row">
+            <div class="rail-bet-head">
+              <span class="rail-bet-side ${sideCls}">${sideTag}</span>
+              <span class="rail-bet-label">${escapeHtml(compactLabel(f))}</span>
+              ${stateHtml}
+            </div>
+            ${railProgress(f)}
+            ${sellHtml}
+          </li>
+        `;
+    }).join("");
+
+    let title;
+    if (showAll) {
+        title = `All on this game`;
+    } else if (relevant.length > 0) {
+        title = batterName && pitcherName
+            ? `Current PA · ${shortName(batterName)} vs ${shortName(pitcherName)}`
+            : `Current PA`;
+    } else {
+        title = `Nothing on the current PA`;
+    }
+    const toggleHtml = onGame.length > relevant.length
+        ? `<button class="rail-bets-toggle" data-gbets-toggle="${gamePk}">
+             ${showAll ? "Show only PA" : `+${hidden} more`}
+           </button>`
+        : "";
+    const realizedCls = realized >= 0 ? "rail-bet-pos" : "rail-bet-neg";
+    const realizedTxt = (won + lost) > 0
+        ? `<span class="${realizedCls}">${won}–${lost} · ${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</span>`
+        : `<span class="rail-bets-cost">$${(totalCost/100).toFixed(2)} at risk</span>`;
+    const modeTag = practiceMode ? "PRACTICE" : "LIVE";
+
+    return `
+      <section class="rail-bets-card" data-practice="${practiceMode ? "true" : "false"}">
+        <header class="rail-bets-head">
+          <span class="rail-bets-tag">${modeTag}</span>
+          <span class="rail-bets-title">${escapeHtml(title)}</span>
+        </header>
+        <div class="rail-bets-meta">
+          <span class="rail-bets-count">${onGame.length} on game</span>
+          ${realizedTxt}
+          ${toggleHtml}
+        </div>
+        ${displayed.length > 0
+          ? `<ul class="rail-bets-list">${rows}</ul>`
+          : `<p class="rail-bets-empty">${hidden} on other players — tap "+${hidden} more" to view.</p>`}
+      </section>
+    `;
+}
+
+// Click handler for the toggle button. Lives at document level
+// since the game view re-renders frequently.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-gbets-toggle]");
+    if (!btn) return;
+    e.preventDefault();
+    const pk = btn.getAttribute("data-gbets-toggle");
+    try {
+        const k = `gbets_show_all_${pk}`;
+        const cur = sessionStorage.getItem(k) === "1";
+        sessionStorage.setItem(k, cur ? "0" : "1");
+    } catch {}
+    if (activeGameId) refreshGame(activeGameId);
+});
+
+// Per-row Sell button — user direction (2026-06-05): 'this would be
+// a good time to cashout and cut our losses.' For practice fires
+// we mark the fire as settled at the live bid (the cash we'd have
+// gotten if we'd actually sold). For real fires we place a Kalshi
+// limit sell at the live bid.
+document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-rail-sell]");
+    if (!btn) return;
+    e.preventDefault();
+    const ticker = btn.getAttribute("data-rail-sell");
+    const bid    = parseInt(btn.getAttribute("data-rail-bid"), 10);
+    if (!ticker || !Number.isFinite(bid)) return;
+    let practiceMode = false;
+    try {
+        const s = JSON.parse(localStorage.getItem(LS_GAME_BETS_SETTINGS) || "{}");
+        practiceMode = s.practice_mode === true;
+    } catch {}
+    const lsKey = practiceMode ? LS_GAME_BETS_PRACTICE_FIRES : LS_GAME_BETS_FIRES;
+    let fires = [];
+    try { fires = JSON.parse(localStorage.getItem(lsKey) || "[]"); } catch {}
+    const fire = fires.find((f) => f.ticker === ticker && !f.settled);
+    if (!fire) return;
+    const contracts = fire.contracts || 1;
+    const cost      = contracts * (fire.price_cents || 0);
+    const proceeds  = contracts * bid;
+    const profit    = proceeds - cost;
+    const ok = confirm(
+        `Sell ${contracts}× ${ticker} at ${bid}¢?\n\n` +
+        `Entry:    $${(cost/100).toFixed(2)}\n` +
+        `Sell at:  $${(proceeds/100).toFixed(2)}\n` +
+        `Realized: ${profit >= 0 ? "+" : ""}$${(profit/100).toFixed(2)}`
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    btn.textContent = "Selling…";
+    try {
+        if (practiceMode) {
+            // Practice cashout — settle the fire in localStorage at
+            // the live bid. Same shape end-of-game settlement uses,
+            // plus a cashed_out marker so the History view can flag
+            // these as manual exits.
+            const idx = fires.findIndex((f) => f === fire || (f.ticker === ticker && !f.settled));
+            if (idx >= 0) {
+                fires[idx] = {
+                    ...fires[idx],
+                    settled: {
+                        won: profit > 0,
+                        profit_cents: profit,
+                        settled_at: new Date().toISOString(),
+                        cashed_out: true,
+                        sell_price_cents: bid,
+                    },
+                };
+                try { localStorage.setItem(lsKey, JSON.stringify(fires)); } catch {}
+            }
+        } else {
+            // Real cashout — place a Kalshi sell order at the live bid.
+            if (!window.Kalshi?.placeOrder) throw new Error("Kalshi not connected");
+            await window.Kalshi.placeOrder({
+                ticker, side: fire.side || "yes", count: contracts,
+                price: bid, action: "sell",
+            });
+        }
+        if (activeGameId) refreshGame(activeGameId);
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = `Sell @ $${(proceeds/100).toFixed(2)}`;
+        alert(`Sell failed: ${err.message || err}`);
+    }
+});
+function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"]/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+    }[c]));
 }
 
 function gamecastLoadingShell() {
@@ -2609,6 +4799,33 @@ document.addEventListener("click", (e) => {
     if (mode === gameViewMode) return;
     gameViewMode = mode;
     if (activeGameId) refreshGame(activeGameId);
+});
+
+// Watch button — opens MLB.tv for this specific game in a SIZED POPUP
+// window so it lands as a small floating player the user can position
+// next to DIAMOND:CONTEXT (or pop into the OS picture-in-picture from
+// the player's own controls). User direction (2026-06-07): 'Can we
+// not have the video on our screen?' MLB.tv blocks iframe embedding
+// via X-Frame-Options, so this is the closest thing — a real video
+// window we don't have to host, that sits alongside our betting UI.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-watch]");
+    if (!btn) return;
+    e.preventDefault();
+    const pk = btn.getAttribute("data-game-pk");
+    if (!pk) return;
+    const url = `https://www.mlb.com/tv/g${pk}`;
+    // 720p-ish window, anchored to the top-right so it doesn't cover
+    // the bot drawer (which docks to the right). User can drag /
+    // resize after open.
+    const w = 720, h = 460;
+    const left = Math.max(0, (window.screen.availWidth || 1280) - w - 40);
+    const top  = 80;
+    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes`;
+    const win = window.open(url, "mlbtv-stream", features);
+    if (!win) {
+        alert("Popup blocked. Allow popups for DIAMOND:CONTEXT and try again — the MLB.tv player needs to open as a separate window.");
+    }
 });
 
 // ── GAMECAST ────────────────────────────────────────────────────────
@@ -2639,36 +4856,92 @@ async function refreshGamecast(gameId) {
         }));
         if (gameId !== activeGameId) return;
 
-        const html = renderGamecast(recent, predictionMap);
+        const html = renderGamecast(recent, predictionMap, data.teams);
         cachedGamecastHTML = html;
         const pane = document.getElementById("gamecast-pane");
-        if (pane) pane.innerHTML = html;
+        if (pane) safeSetHTML(pane, html);
     } catch (e) {
         const pane = document.getElementById("gamecast-pane");
         if (pane && !cachedGamecastHTML) {
-            pane.innerHTML = `<div class="empty">Couldn't load play-by-play: ${e.message || e}</div>`;
+            safeSetHTML(pane, `<div class="empty">Couldn't load play-by-play: ${e.message || e}</div>`);
         }
         // If we already had a cached gamecast, keep showing it — silent fail.
     }
 }
 
-function renderGamecast(plays, predictionMap) {
+function renderGamecast(plays, predictionMap, teams) {
     if (!plays.length) {
         return `<div class="empty">No plays yet — first pitch is on its way.</div>`;
     }
     return `
       <div class="gamecast-list">
-        ${plays.map((p) => renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`])).join("")}
+        ${plays.map((p) => p.type === "baserunning"
+            ? renderBaserunningRow(p, teams)
+            : renderPABlock(p, predictionMap[`${p.batter.id}-${p.pitcher.id}`], teams)
+        ).join("")}
       </div>
     `;
 }
 
-function renderPABlock(play, prediction) {
+// Thin one-line event strip between PA blocks. Stolen bases,
+// wild pitches, passed balls, balks, pickoffs — anything that
+// moved a runner without a plate appearance. Mirrors the PA
+// header chips (inning, score, WE swing) so the gamecast flows
+// as one continuous story instead of skipping over runner moves.
+function renderBaserunningRow(ev, teams) {
+    const inn = `${ev.half === "top" ? "▲" : "▼"} ${ordinalSuffix(ev.inning)}`;
+    const score = ev.score_after
+        ? `${ev.score_after.away}-${ev.score_after.home}`
+        : "";
+    const weDelta = ev.we_delta_home;
+    let weChip = "";
+    if (weDelta != null && Math.abs(weDelta) >= 0.0005 && teams) {
+        const winnerAbbr = weDelta >= 0
+            ? (teams.home?.abbr || "HOME")
+            : (teams.away?.abbr || "AWAY");
+        const sign = weDelta >= 0 ? "+" : "+";
+        weChip = `<span class="br-we-delta">${winnerAbbr} ${sign}${Math.abs(weDelta * 100).toFixed(1)}pp WE</span>`;
+    }
+    const runnerName = ev.runner_name
+        ? `<a class="br-runner player-link" href="#player/${ev.runner_id}">${escapeHtml(shortName(ev.runner_name))}</a>`
+        : "";
+    return `
+      <div class="br-row" data-event-type="${escapeHtml(ev.event_type)}">
+        <span class="br-inning">${inn}</span>
+        <span class="br-event">${escapeHtml(ev.event_label)}</span>
+        ${runnerName}
+        <span class="br-desc">${escapeHtml(ev.description)}</span>
+        ${score ? `<span class="br-score">${score}</span>` : ""}
+        ${weChip}
+      </div>
+    `;
+}
+
+function renderPABlock(play, prediction, teams) {
     const inn = `${play.half === "top" ? "▲" : "▼"} ${ordinalSuffix(play.inning)}`;
     const score = play.score_after
         ? `${play.score_after.away}-${play.score_after.home}`
         : "";
     const outcomeBadge = renderPAOutcomeBadge(play, prediction);
+
+    // WE swing chip — labeled with the team that GAINED win probability
+    // on this PA. Sign of we_delta_home tells us which team won the PA:
+    // positive → home gained; negative → away gained. Either way the
+    // chip displays as "{winning team} +X.Xpp WE" in green so the
+    // user immediately knows who came out ahead on the swing. Hidden
+    // below 0.05pp (rounding noise).
+    const weDelta = play.we_delta_home;
+    let weDeltaChip = "";
+    if (weDelta != null && Math.abs(weDelta) >= 0.0005 && teams) {
+        const winnerAbbr = weDelta >= 0
+            ? (teams.home?.abbr || "HOME")
+            : (teams.away?.abbr || "AWAY");
+        const isBatterWin = (play.half === "bottom") === (weDelta >= 0);
+        weDeltaChip = `<span class="pa-we-delta ${isBatterWin ? "pa-we-pos" : "pa-we-neg"}"
+              title="${winnerAbbr} gained ${Math.abs(weDelta * 100).toFixed(1)}pp of win probability on this PA">
+            ${winnerAbbr} +${Math.abs(weDelta * 100).toFixed(1)}pp WE
+        </span>`;
+    }
 
     const predictedBlock = prediction?.available
         ? renderPredictedDistribution(prediction.predicted, play.outcome)
@@ -2692,6 +4965,7 @@ function renderPABlock(play, prediction) {
             <span class="dim">(${play.pitcher.hand}HP)</span>
           </span>
           ${score ? `<span class="pa-score">${score}</span>` : ""}
+          ${weDeltaChip}
           ${outcomeBadge}
         </header>
         <div class="pa-body">
@@ -2735,8 +5009,19 @@ function renderPitchRow(pitch, idx) {
         pitch.result_code === "B" ? "ball" :
         (pitch.result_code === "C" || pitch.result_code === "S") ? "strike" :
         (pitch.result_code === "F" || pitch.result_code === "T") ? "foul" :
-        (pitch.result_code === "X" || pitch.result_code === "E") ? "in-play" :
+        (pitch.result_code === "X" || pitch.result_code === "D" || pitch.result_code === "E") ? "in-play" :
         "";
+    // Statcast hit-data line for balls in play: 'EV 102 · 412 ft · 28°'.
+    // Only shown when the pitch was put in play AND Statcast reported
+    // it (ground balls in the dirt often lack distance).
+    const hit = pitch.hit;
+    const hitParts = [];
+    if (hit?.exit_velo != null) hitParts.push(`EV <strong>${hit.exit_velo}</strong>`);
+    if (hit?.distance != null && hit.distance > 0) hitParts.push(`<strong>${hit.distance}</strong> ft`);
+    if (hit?.launch_angle != null) hitParts.push(`${hit.launch_angle}°`);
+    const hitLine = hitParts.length
+        ? `<div class="pa-pitch-hit">${hitParts.join(" · ")}</div>`
+        : "";
     return `
       <div class="pa-pitch-row ${cls}">
         <span class="pa-pitch-num">${idx + 1}</span>
@@ -2745,6 +5030,7 @@ function renderPitchRow(pitch, idx) {
         <span class="pa-pitch-result">${pitch.result}</span>
         <span class="pa-pitch-count">${count}</span>
       </div>
+      ${hitLine}
     `;
 }
 
@@ -2903,6 +5189,7 @@ function fieldPane(g) {
     // exposes the helpers as window globals (loaded before app.js).
     const park       = (typeof resolvePark === "function") ? resolvePark(g) : null;
     const wallPath   = park && parkWallPath(park,        { closeAtHome: true });
+    const wallStroke = park && parkWallPath(park,        { closeAtHome: false });
     const trackPath  = park && parkWarningTrackPath(park, 12);
     const foul       = park && parkFoulPoles(park);
     const flavorChips = park && parkFlavorChips ? parkFlavorChips(park) : [];
@@ -2911,6 +5198,159 @@ function fieldPane(g) {
     // points so the silhouette is unambiguous (Coors's 424 RC, Fenway's
     // 302 RL, Yankees's 314 RL all read at a glance).
     const distMarks = park ? POINT_LABELS_FOR_PARK(park) : [];
+
+    // Stadium layers — drawn BEHIND the field surface to give the
+    // top-down view a "you're at the ballpark" feel rather than a flat
+    // diagram.
+    //
+    //   Lower bowl  : the bleachers immediately behind the outfield wall
+    //                 and along the foul lines (lighter, closer to field)
+    //   Upper deck  : second tier of seating offset further out (darker)
+    //   Concourse   : outer-edge silhouette / stadium perimeter (darkest)
+    //
+    // Each is a path offset outward from the wall, plus a "behind home
+    // plate" cap connecting the foul poles via the SVG bottom so the
+    // bowl wraps all the way around the field rather than stopping at
+    // the foul poles. closeAtHome=false gives us the open arc we need.
+    const lowerBowl = park && parkOffsetWallPath(park, 28, { closeAtHome: false });
+    const upperDeck = park && parkOffsetWallPath(park, 56, { closeAtHome: false });
+    const concourse = park && parkOffsetWallPath(park, 92, { closeAtHome: false });
+
+    // The "behind home plate" segment closes each bowl by sweeping
+    // along the bottom of the SVG from one foul pole's offset point
+    // back to the other's. Computed once and reused at each tier.
+    const closeBowl = (offsetFt) => {
+        if (!park || !foul) return "";
+        const L = foul.left;
+        const R = foul.right;
+        // Walk along the foul line direction from each pole past the
+        // pole by `offsetFt` so the seating wraps the pole correctly.
+        const len = (dx, dy) => Math.hypot(dx, dy);
+        const lDx = L.x - 250, lDy = L.y - 460;
+        const rDx = R.x - 250, rDy = R.y - 460;
+        const lLen = len(lDx, lDy) || 1;
+        const rLen = len(rDx, rDy) || 1;
+        const lOut = { x: L.x + (lDx / lLen) * offsetFt, y: L.y + (lDy / lLen) * offsetFt };
+        const rOut = { x: R.x + (rDx / rLen) * offsetFt, y: R.y + (rDy / rLen) * offsetFt };
+        // Cubic Bezier sweep through the bottom of the SVG behind home plate
+        return ` L ${rOut.x.toFixed(1)},${rOut.y.toFixed(1)} `
+             + `C ${rOut.x.toFixed(1)},520 ${(250 + 0).toFixed(1)},540 250,540 `
+             + `C ${(250 - 0).toFixed(1)},540 ${lOut.x.toFixed(1)},520 ${lOut.x.toFixed(1)},${lOut.y.toFixed(1)} `
+             + `Z`;
+    };
+
+    // Foul territory dirt: the warm-tan band sitting between the foul
+    // lines and the lower bowl. Drawn as one path that hugs the inside
+    // of the foul lines back to home plate. Looks like real dirt foul
+    // territory in a top-down stadium view.
+    const foulDirt = (() => {
+        if (!park || !foul) return "";
+        const L = foul.left, R = foul.right;
+        // Offset perpendicular to each foul line by 24 units so the
+        // tan band has visible thickness next to the chalk line.
+        const off = 22;
+        const lPerp = { x: L.x - off * 0.707, y: L.y + off * 0.707 };
+        const rPerp = { x: R.x + off * 0.707, y: R.y + off * 0.707 };
+        return `M 250,460 L ${L.x.toFixed(1)},${L.y.toFixed(1)} `
+             + `L ${lPerp.x.toFixed(1)},${lPerp.y.toFixed(1)} `
+             + `Q 120,505 250,508 Q 380,505 ${rPerp.x.toFixed(1)},${rPerp.y.toFixed(1)} `
+             + `L ${R.x.toFixed(1)},${R.y.toFixed(1)} Z`;
+    })();
+
+    // Dugout cutouts along the 1B and 3B baselines just outside the
+    // foul lines. ~45 units long, rotated to be parallel to each
+    // baseline. Anchored at the midpoint of each baseline (45 ft from
+    // home, 45 ft from the bag).
+    //
+    // Geometry: the 1B foul line goes from (250,460) to RF pole. The
+    // dugout sits ~14 units to the right of (perpendicular to) that
+    // line, centered halfway between home and 1B.
+    const dugouts = (() => {
+        // 1B base is at (390, 320). Home at (250, 460). Midpoint = (320, 390).
+        // 3B base is at (110, 320). Midpoint = (180, 390).
+        // Both rotated 45° about their midpoints so the rectangle sits
+        // along the baseline.
+        const w = 56, h = 10;
+        return `
+          <g class="dugout dugout-home" transform="translate(327 414) rotate(-45)">
+            <rect x="${-w/2}" y="${-h/2}" width="${w}" height="${h}" rx="2"/>
+          </g>
+          <g class="dugout dugout-away" transform="translate(173 414) rotate(45)">
+            <rect x="${-w/2}" y="${-h/2}" width="${w}" height="${h}" rx="2"/>
+          </g>
+        `;
+    })();
+
+    // Bullpens — small pitchers' mounds tucked beyond the foul line at
+    // the far end of each baseline (modeling the standard MLB layout
+    // where bullpens flank the OF side of foul territory).
+    const bullpens = (() => {
+        if (!park || !foul) return "";
+        // Halfway between each foul-pole and home, shifted outward.
+        const L = foul.left, R = foul.right;
+        const lMid = { x: (250 + L.x) / 2 - 18, y: (460 + L.y) / 2 + 18 };
+        const rMid = { x: (250 + R.x) / 2 + 18, y: (460 + R.y) / 2 + 18 };
+        return `
+          <g class="bullpen bullpen-l" transform="translate(${lMid.x.toFixed(1)} ${lMid.y.toFixed(1)}) rotate(45)">
+            <rect x="-22" y="-7" width="44" height="14" rx="3"/>
+          </g>
+          <g class="bullpen bullpen-r" transform="translate(${rMid.x.toFixed(1)} ${rMid.y.toFixed(1)}) rotate(-45)">
+            <rect x="-22" y="-7" width="44" height="14" rx="3"/>
+          </g>
+        `;
+    })();
+
+    // Outfield scoreboard at deepest CF. Sits just outside the wall in
+    // the patch where every park has its main scoreboard (between the
+    // batter's-eye and the outfield seating). Shows away/home score and
+    // inning when live.
+    const homeTri = g.teams?.home?.abbr || "HOM";
+    const awayTri = g.teams?.away?.abbr || "AWY";
+    const homeR   = g.score?.home ?? "—";
+    const awayR   = g.score?.away ?? "—";
+    const innStr  = g.inning && g.half
+        ? `${g.half === "top" ? "▲" : "▼"} ${ordinalSuffix(g.inning)}`
+        : g.status === "Final" ? "FINAL" : "";
+    // Position the scoreboard 8 units outside the CF wall, capped at
+    // y ≥ 12 so it stays visible even at the deepest parks (Coors).
+    const cMark = park ? POINT_LABELS_FOR_PARK(park).find((p) => p.anchor === "middle") : null;
+    const sbY = cMark ? Math.max(12, cMark.y - 36) : 26;
+    const scoreboard = `
+      <g class="cf-scoreboard" transform="translate(250 ${sbY})">
+        <rect class="sb-bg" x="-68" y="-14" width="136" height="28" rx="3"/>
+        <line class="sb-divider" x1="-30" y1="-12" x2="-30" y2="12"/>
+        <line class="sb-divider" x1="30"  y1="-12" x2="30"  y2="12"/>
+        <text class="sb-team" x="-49" y="-3" text-anchor="middle">${escapeHTML(awayTri)}</text>
+        <text class="sb-runs" x="-49" y="10" text-anchor="middle">${awayR}</text>
+        <text class="sb-inning" x="0" y="-2" text-anchor="middle">${escapeHTML(innStr || "—")}</text>
+        <text class="sb-status" x="0" y="10" text-anchor="middle">${escapeHTML((g.status || "").toUpperCase())}</text>
+        <text class="sb-team" x="49" y="-3" text-anchor="middle">${escapeHTML(homeTri)}</text>
+        <text class="sb-runs" x="49" y="10" text-anchor="middle">${homeR}</text>
+      </g>
+    `;
+
+    // Stadium light towers in the four corners (rough positions chosen
+    // to suggest standard MLB park lighting: behind 3B, behind LF, behind
+    // CF, behind RF). Each is a small bracket with a glowing head; the
+    // glow brightens on live games as a subtle "lights are on" cue.
+    const lightTowers = `
+      <g class="light-tower lt-1" transform="translate(40 60)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+      <g class="light-tower lt-2" transform="translate(460 60)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+      <g class="light-tower lt-3" transform="translate(20 280)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+      <g class="light-tower lt-4" transform="translate(480 280)">
+        <rect class="lt-bracket" x="-2" y="0" width="4" height="22"/>
+        <ellipse class="lt-head" cx="0" cy="-2" rx="9" ry="5"/>
+      </g>
+    `;
 
     // Overlay labels on the SVG itself so the field is informative
     // without needing the matchup rows below. Pitcher last name near
@@ -2939,8 +5379,34 @@ function fieldPane(g) {
            </g>`
         : "";
 
+    // Default-fan fallback when we don't have park geometry (rare):
+    // a generic outfield shape used by all three offset bowls and
+    // closed at home so the seating rings still wrap around.
+    const fallbackWall = "M 60,270 Q 250,40 440,270";
+
+    // "This inning" play-by-play only exists for Live games — when
+    // empty we drop the whole left rail so the field-canvas centers
+    // by itself rather than leaving a blank narrow column.
+    const inningStrip = renderThisInning(g);
+    // AT BAT + PITCHING cards live in the LEFT rail above the
+    // play-by-play so they're always above-the-fold (the field SVG
+    // grew enough that stacking them below was pushing the matchup
+    // out of view at 1080p).
+    const railBox = _railBoxscores.get(String(g.game_pk))?.data || null;
+    const batterStat  = matchupStatLineForBatter(g.batter, railBox);
+    const pitcherStat = matchupStatLineForPitcher(g.pitcher, railBox);
+    const matchupCompact = (g.batter || g.pitcher)
+        ? `<div class="matchup-pair matchup-pair-rail">
+             ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id, batterStat) : ""}
+             ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id, pitcherStat) : ""}
+           </div>`
+        : "";
+    const betsRail = renderGameBetsCardRail(g);
+    const railContent = matchupCompact + betsRail + inningStrip;
     return `
-      <div class="field-pane" style="--we-intensity:${intensity}">
+      <div class="field-pane ${railContent ? "has-narrative" : ""}" style="--we-intensity:${intensity}">
+        ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
+        <div class="field-canvas">
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
           <defs>
             <radialGradient id="grass-radial" cx="0.5" cy="0.92" r="0.85">
@@ -2948,23 +5414,71 @@ function fieldPane(g) {
               <stop offset="60%"  stop-color="#3F6B2A"/>
               <stop offset="100%" stop-color="#355A23"/>
             </radialGradient>
+            <!-- Stadium "concrete bowl" backdrop. Radial gradient from
+                 a hint of grass at home plate out to dark blue-grey
+                 stadium concrete at the corners, so the SVG no longer
+                 sits on the page background with nothing around the
+                 field. The bowl effect reads as a true ballpark. -->
+            <radialGradient id="stadium-bowl" cx="0.5" cy="0.92" r="1.05">
+              <stop offset="0%"   stop-color="#1F2A3D"/>
+              <stop offset="55%"  stop-color="#162033"/>
+              <stop offset="100%" stop-color="#0B1220"/>
+            </radialGradient>
+            <!-- Grass mowing stripes — alternating slightly-darker
+                 concentric arcs centered on home plate. Clipped to the
+                 fair-territory wall path so they only render inside the
+                 grass, never bleeding into foul/seating territory. -->
+            <clipPath id="fair-clip">
+              <path d="${wallPath || "M 250,460 L 440,270 Q 250,40 60,270 Z"}"/>
+            </clipPath>
+            <!-- Light-tower "lit bulb" glow filter -->
+            <filter id="light-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2.4"/>
+            </filter>
           </defs>
 
-          <!-- Fair territory grass — accurate park silhouette when we
-               know the venue, generic fan otherwise. Each park's posted
-               LL/L/LC/C/RC/R/RL reference distances are connected with
-               a Catmull-Rom curve so the outline matches Coors's deep
-               gaps, Yankees's short porch, Fenway's Green Monster, etc. -->
+          <!-- L1: stadium bowl gradient (replaces transparent SVG bg) -->
+          <rect class="stadium-bowl" x="0" y="0" width="500" height="500"/>
+
+          <!-- L2: outer concourse — darkest seating ring (top deck +
+               far perimeter). evenodd punches the wall shape out of a
+               full-SVG rect so the ring is just the area between the
+               wall and the SVG bounds, then this layer fills it. -->
+          ${concourse ? `<path class="stadium-concourse"
+                d="${concourse}${closeBowl(92)}"/>` : ""}
+          <!-- L3: upper deck — middle seating ring -->
+          ${upperDeck ? `<path class="stadium-upper"
+                d="${upperDeck}${closeBowl(56)}"/>` : ""}
+          <!-- L4: lower bowl — bleachers immediately behind the wall -->
+          ${lowerBowl ? `<path class="stadium-lower"
+                d="${lowerBowl}${closeBowl(28)}"/>` : ""}
+
+          <!-- L5: foul-territory dirt — tan band between the foul
+               lines and the lower bowl, including the area behind
+               home plate where the catcher's box sits. -->
+          ${foulDirt ? `<path class="foul-dirt" d="${foulDirt}"/>` : ""}
+
+          <!-- L6: fair-territory grass (each park's exact silhouette) -->
           <path class="outfield-grass"
                 d="${wallPath || "M 250,460 L 440,270 Q 250,40 60,270 Z"}"/>
 
-          <!-- Warning track (dirt ring inset 12 ft inside the wall) -->
+          <!-- L7: grass mowing pattern — five concentric darker arcs
+               centered on home plate, clipped to fair territory so
+               they look like real outfield mowing stripes. -->
+          <g class="grass-stripes" clip-path="url(#fair-clip)">
+            <circle cx="250" cy="460" r="80"  />
+            <circle cx="250" cy="460" r="140" />
+            <circle cx="250" cy="460" r="200" />
+            <circle cx="250" cy="460" r="260" />
+            <circle cx="250" cy="460" r="320" />
+          </g>
+
+          <!-- L8: warning track (dirt ring inset 12 ft inside the wall) -->
           ${trackPath
               ? `<path class="warning-track-park" d="${trackPath}"/>`
               : `<path class="warning-track" d="M 440,270 L 425,283 Q 250,80 75,283 L 60,270 Q 250,40 440,270 Z"/>`}
 
-          <!-- Foul lines (chalk) anchored at home, terminating at the
-               park's posted foul-pole distances. -->
+          <!-- L9: foul lines (chalk) -->
           <line class="foul-line" x1="250" y1="460"
                 x2="${foul ? foul.left.x.toFixed(1)  : 60}"
                 y2="${foul ? foul.left.y.toFixed(1)  : 270}"/>
@@ -2972,7 +5486,13 @@ function fieldPane(g) {
                 x2="${foul ? foul.right.x.toFixed(1) : 440}"
                 y2="${foul ? foul.right.y.toFixed(1) : 270}"/>
 
-          <!-- Foul poles at the actual posted LL / RL distances -->
+          <!-- L10: dugouts along the 1B and 3B baselines -->
+          ${dugouts}
+
+          <!-- L11: bullpens beyond the foul-line midpoints -->
+          ${bullpens}
+
+          <!-- L12: foul poles -->
           <rect class="foul-pole"
                 x="${foul ? (foul.left.x  - 2.5).toFixed(1)  : 58}"
                 y="${foul ? (foul.left.y  - 7).toFixed(1)    : 263}"
@@ -2982,31 +5502,38 @@ function fieldPane(g) {
                 y="${foul ? (foul.right.y - 7).toFixed(1)    : 263}"
                 width="5" height="14"/>
 
-          <!-- Distance markers — small numerals at the posted points
-               so each silhouette is unambiguously the park it is. -->
+          <!-- L13: distance markers along the wall -->
           ${distMarks.map((m) =>
               `<text class="field-dist" x="${m.x.toFixed(1)}" y="${m.y.toFixed(1)}" text-anchor="${m.anchor}">${m.d}</text>`
           ).join("")}
 
-          <!-- Park name strip across the very top of the field -->
-          ${parkLabel ? `<text class="field-park-name" x="250" y="22" text-anchor="middle">${escapeHTML(parkLabel)}</text>` : ""}
-
+          <!-- L14: park-specific landmarks (Monster, ivy, porch, cove) -->
           ${landmarkOverlay(park)}
 
-          <!-- Basepaths (dirt diamond outline) -->
+          <!-- L15: outfield scoreboard at deep CF — broadcasts the
+               score and inning the way real park scoreboards do. -->
+          ${scoreboard}
+
+          <!-- L16: stadium light towers at the four corners -->
+          ${lightTowers}
+
+          <!-- L17: park name strip at the very top -->
+          ${parkLabel ? `<text class="field-park-name" x="250" y="${sbY - 22}" text-anchor="middle">${escapeHTML(parkLabel)}</text>` : ""}
+
+          <!-- L18: basepaths (infield dirt diamond) -->
           <path class="basepath" d="M 250,455 L 388,318 L 250,180 L 112,318 Z"/>
 
-          <!-- Pitcher's mound + rubber -->
+          <!-- L19: pitcher's mound + rubber -->
           <circle class="mound" cx="250" cy="355" r="22"/>
           <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
 
-          <!-- Pitcher overlay (broadcast-style: surname near the mound) -->
+          <!-- L20: pitcher overlay near the mound -->
           ${pitcherSurname
               ? `<text class="field-pitcher-name" x="250" y="395" text-anchor="middle">${escapeHTML(pitcherSurname)}</text>
                  <text class="field-pitcher-hand" x="250" y="408" text-anchor="middle">${g.pitcher?.throws ? `${g.pitcher.throws}HP` : ""}</text>`
               : ""}
 
-          <!-- Bases -->
+          <!-- L21: bases -->
           <polygon class="base home"
                    points="244,458 256,458 256,464 250,470 244,464"/>
           <g transform="translate(390 320) rotate(45)">
@@ -3022,16 +5549,17 @@ function fieldPane(g) {
                   x="-7" y="-7" width="14" height="14"/>
           </g>
 
-          <!-- Batter overlay near home plate -->
+          <!-- L22: batter overlay at home plate -->
           ${batterSurname
               ? `<text class="field-batter-name" x="250" y="492" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
               : ""}
 
-          <!-- Runner names (legible against grass via text stroke) -->
+          <!-- L23: runner names on occupied bases -->
           ${runnerLabel("first",  412, 326, "start")}
           ${runnerLabel("second", 250, 166, "middle")}
           ${runnerLabel("third",  88,  326, "end")}
 
+          <!-- L24: count + outs broadcast chip -->
           ${countChip}
         </svg>
         ${flavorChips && flavorChips.length
@@ -3043,58 +5571,154 @@ function fieldPane(g) {
             : ""}
         ${stateBanner}
         ${situationStrip(g)}
-        ${g.batter ? matchupRow("at bat", g.batter.name, `${g.batter.bats}HB`, g.batter.id) : ""}
-        ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id) : ""}
-        ${renderThisInning(g)}
+        </div>
       </div>
     `;
 }
 
+
+// Strip the batter's full name (and an optional trailing period) from
+// the head of an MLB play description. The "this-inning" strip already
+// has the batter name in its own column — repeating it inside the
+// description column makes the row wrap into 4 lines on narrow rails.
+// Safe no-op if the description doesn't start with the name.
+function trimLeadingBatterName(desc, fullName) {
+    if (!desc || !fullName) return (desc || "").trim();
+    let d = desc.trim();
+    // Try the full name first, then the last-token surname as a fallback
+    // (MLB sometimes writes "Bobby Witt Jr. doubles" — full name match —
+    // but other times "Witt doubles" — surname only).
+    const candidates = [fullName.trim()];
+    const surname = fullName.trim().split(/\s+/).slice(-1)[0];
+    if (surname && surname !== fullName.trim()) candidates.push(surname);
+    for (const c of candidates) {
+        if (d.toLowerCase().startsWith(c.toLowerCase() + " ")) {
+            d = d.slice(c.length + 1);
+            break;
+        }
+    }
+    d = d.replace(/\.+$/, "").trim();
+    // Capitalize the first letter — once the leading name is stripped
+    // we're left with 'doubles (14) on...' which reads better as
+    // 'Doubles (14) on...'.
+    if (d) d = d[0].toUpperCase() + d.slice(1);
+    return d;
+}
+
 // "This inning" play-by-play strip — every completed PA in the
-// current half-inning, oldest first. Shows the user how the frame
-// has unfolded so far without making them flip to Gamecast for
-// the same info.
+// current half-inning. CURRENT batter (in progress) shown at the
+// top, then completed PAs newest-first below. Per user direction:
+// 'put the batter who's hitting now at the top.'
 function renderThisInning(g) {
-    if (g.status !== "Live" || !g.this_inning || g.this_inning.length === 0) {
+    // Render the section whenever we're Live AND have any of: an
+    // in-progress at-bat (current batter), pitches thrown this PA,
+    // or completed PAs this half-inning. Previously bailed out at
+    // top of inning before any PA completed, which made the rail
+    // suddenly empty.
+    const haveCurrent  = !!g.batter;
+    const havePitches  = Array.isArray(g.current_pitches) && g.current_pitches.length > 0;
+    const havePast     = Array.isArray(g.this_inning) && g.this_inning.length > 0;
+    if (g.status !== "Live" || (!haveCurrent && !havePitches && !havePast)) {
         return "";
     }
+    if (!Array.isArray(g.this_inning)) g.this_inning = [];
     const arrow = g.half === "top" ? "▲" : "▼";
     const innLabel = `${arrow} ${ordinalSuffix(g.inning)} so far`;
-    const rows = g.this_inning.map((p) => {
-        // Compact result chip per PA. Color = the outcome category we
-        // already use elsewhere (green for hits, red for outs/K, blue
-        // for walks, etc.).
+    // Reverse so newest completed PA shows first (right under the
+    // 'NOW BATTING' row).
+    const reversed = g.this_inning.slice().reverse();
+    // Per-PA expand state — clicking a past PA reveals the pitch
+    // sequence inline. Keyed on pa_index, kept in sessionStorage so
+    // the expansion survives the 5s refresh tick.
+    let expandedPAs = new Set();
+    try {
+        const raw = sessionStorage.getItem(`ti_expanded_${g.game_pk}`);
+        if (raw) expandedPAs = new Set(JSON.parse(raw));
+    } catch {}
+    const rows = reversed.map((p) => {
         const outcomeCls = paOutcomeClass(p.eventType);
         const outcomeLabel = shortEventLabel(p.event || p.eventType || "—");
         const avatar = inlineAvatar(p.batter_id, { size: 30, class: "ti-photo", alt: p.batter });
         const batterLink = p.batter_id
             ? `<a class="player-link" href="#player/${p.batter_id}">${shortName(p.batter)}</a>`
             : shortName(p.batter || "—");
+        const tightDesc = trimLeadingBatterName(p.description || "", p.batter || "");
+        const hasPitches = Array.isArray(p.pitches) && p.pitches.length > 0;
+        const isOpen = p.pa_index != null && expandedPAs.has(p.pa_index);
+        const chevron = hasPitches
+            ? `<span class="ti-row-chev">${isOpen ? "▾" : "▸"}</span>`
+            : `<span class="ti-row-chev ti-row-chev-blank"></span>`;
+        const rowAttrs = hasPitches && p.pa_index != null
+            ? `data-ti-pa="${p.pa_index}" data-ti-gpk="${g.game_pk}" role="button" tabindex="0"`
+            : "";
+        const rowCls = hasPitches ? "ti-row ti-row-clickable" : "ti-row";
+        const pitchesHtml = isOpen && hasPitches
+            ? `<div class="ti-row-pitches">
+                 ${p.pitches.map((pp, i) => renderPitchRow(pp, i)).join("")}
+               </div>`
+            : "";
         return `
-          <div class="ti-row">
+          <div class="${rowCls}" ${rowAttrs}>
+            ${chevron}
             <span class="ti-outcome ${outcomeCls}">${outcomeLabel}</span>
             ${avatar}
             <span class="ti-batter">${batterLink}</span>
-            <span class="ti-desc">${escapeHTML(p.description || "")}</span>
+            <span class="ti-desc">${escapeHTML(tightDesc)}</span>
           </div>
+          ${pitchesHtml}
         `;
     }).join("");
     const currentRow = g.batter
         ? `<div class="ti-row ti-now">
+              <span class="ti-row-chev ti-row-chev-blank"></span>
               <span class="ti-outcome ti-now-chip">NOW</span>
               ${inlineAvatar(g.batter.id, { size: 30, class: "ti-photo", alt: g.batter.name })}
               <span class="ti-batter">${shortName(g.batter.name)}</span>
               <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
            </div>`
         : "";
+    // Live pitch sequence for the in-progress PA, with the original
+    // 'Pitches (N)' header restored. User direction (2026-06-05):
+    // 'while a hitter is hitting, I want to see the pitches there
+    // live and they can condense after the at-bat is over' — the
+    // live block stays visible right under NOW; once the PA flips
+    // to a past row those same pitches collapse behind the chevron
+    // and only show on click.
+    const currentPitchesHtml = (g.current_pitches && g.current_pitches.length)
+        ? `<div class="ti-pitches">
+             <div class="ti-pitches-head">Pitches (${g.current_pitches.length})</div>
+             ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).join("")}
+           </div>`
+        : "";
     return `
       <div class="this-inning">
         <div class="ti-head">${innLabel}</div>
-        ${rows}
         ${currentRow}
+        ${currentPitchesHtml}
+        ${rows}
       </div>
     `;
 }
+
+// Click delegate for the per-PA expand. Lives at document level
+// since the rail re-renders every 5s. Toggles sessionStorage and
+// triggers a re-render via refreshGame.
+document.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-ti-pa]");
+    if (!row) return;
+    if (e.target.closest("a, button")) return;
+    e.preventDefault();
+    const pa  = row.getAttribute("data-ti-pa");
+    const gpk = row.getAttribute("data-ti-gpk");
+    if (!pa || !gpk) return;
+    const key = `ti_expanded_${gpk}`;
+    let set = new Set();
+    try { set = new Set(JSON.parse(sessionStorage.getItem(key) || "[]")); } catch {}
+    if (set.has(Number(pa))) set.delete(Number(pa));
+    else set.add(Number(pa));
+    try { sessionStorage.setItem(key, JSON.stringify(Array.from(set))); } catch {}
+    if (activeGameId) refreshGame(activeGameId);
+});
 
 // Map a Statcast event type to a short outcome chip label.
 function shortEventLabel(eventType) {
@@ -3160,10 +5784,9 @@ function situationStrip(g) {
     return `<div class="situation"><span class="state-label">${(g.detail || g.status).toUpperCase()}</span></div>`;
 }
 
-function matchupRow(label, name, hand, mlbam) {
+function matchupRow(label, name, hand, mlbam, statLine) {
     // Wrap the name in a player link when we have an MLBAM id — clicking
-    // the batter / pitcher takes you to their profile page (same target
-    // as the player links inside the recent-PA list).
+    // the batter / pitcher takes you to their profile page.
     const nameHtml = mlbam
         ? `<a class="player-link" href="#player/${mlbam}"><strong>${name}</strong></a>`
         : `<strong>${name}</strong>`;
@@ -3177,10 +5800,67 @@ function matchupRow(label, name, hand, mlbam) {
       <div class="player-row">
         <span class="label">${label}</span>
         ${headshot}
-        ${nameHtml}
+        <div class="player-row-body">
+          ${nameHtml}
+          ${statLine ? `<div class="player-row-stats">${statLine}</div>` : ""}
+        </div>
         <span class="hand">${hand}</span>
       </div>
     `;
+}
+
+// Pull today's compact stat line for the current batter or pitcher
+// from the live boxscore. User direction (2026-06-06): 'put their
+// short lines here, only the most important stats. Pitchers IP, K,
+// H. Batters is different.' Industry standard for hitter live cards
+// is AB-H plus the marquee event (HR/2B/3B/BB/K/RBI). Pitchers get
+// IP / K / H / ER.
+function matchupStatLineForBatter(player, boxscore) {
+    if (!player?.id || !boxscore?.batting) return "";
+    const want = String(player.id);
+    let line = null;
+    for (const side of ["home", "away"]) {
+        const ln = (boxscore.batting[side] || []).find((b) => String(b.mlbam) === want);
+        if (ln) { line = ln; break; }
+    }
+    if (!line) return "";
+    const ab  = Number(line.AB) || 0;
+    const h   = Number(line.H)  || 0;
+    const hr  = Number(line.HR) || 0;
+    const dbl = Number(line._2B) || 0;
+    const tpl = Number(line._3B) || 0;
+    const bb  = Number(line.BB) || 0;
+    const k   = Number(line.K)  || 0;
+    const rbi = Number(line.RBI) || 0;
+    const parts = [`${h}-${ab}`];
+    if (hr)  parts.push(`${hr} HR`);
+    else if (tpl) parts.push(`${tpl} 3B`);
+    else if (dbl) parts.push(`${dbl} 2B`);
+    if (rbi) parts.push(`${rbi} RBI`);
+    if (bb)  parts.push(`${bb} BB`);
+    if (k)   parts.push(`${k} K`);
+    return parts.join(" · ");
+}
+function matchupStatLineForPitcher(player, boxscore) {
+    if (!player?.id || !boxscore?.pitching) return "";
+    const want = String(player.id);
+    let line = null;
+    for (const side of ["home", "away"]) {
+        const ln = (boxscore.pitching[side] || []).find((p) => String(p.mlbam) === want);
+        if (ln) { line = ln; break; }
+    }
+    if (!line) return "";
+    const ip  = String(line.IP || "0.0");
+    const k   = Number(line.K)  || 0;
+    const h   = Number(line.H)  || 0;
+    const er  = Number(line.ER) || 0;
+    const bb  = Number(line.BB) || 0;
+    const pc  = Number(line.pitches) || 0;
+    const parts = [`${ip} IP`, `${k} K`, `${h} H`];
+    if (er) parts.push(`${er} ER`);
+    if (bb && bb >= 2) parts.push(`${bb} BB`);
+    if (pc) parts.push(`${pc} P`);
+    return parts.join(" · ");
 }
 
 function cardPane(g) {
@@ -3240,8 +5920,16 @@ function cardPane(g) {
 
           ${(g.status !== "Final" && g.team_adjustment) ? renderTeamStrength(g) : ""}
 
-          <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
-          <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
+          <!-- Pair the projected-WE and end-of-game forecast slots
+               into a side-by-side row at wide widths. Both are short
+               info cards in their own right; stacking them was the
+               biggest single source of vertical scroll on the right
+               panel. CSS .card-side-grid does the 2-col grid only
+               at viewports wide enough for them to read cleanly. -->
+          <div class="card-side-grid">
+            <div id="projected-we-slot">${g.status === "Live" ? cachedProjectedSlot : ""}</div>
+            <div id="forecast-we-slot">${g.status === "Live" ? cachedForecastSlot : ""}</div>
+          </div>
           <div id="market-consensus-slot">${cachedMarketConsensusSlot}</div>
 
           <div class="evidence">
@@ -3304,15 +5992,22 @@ async function hydrateBoxscore(gameId, status) {
         const res = await fetch(`/api/game/${gameId}/boxscore`);
         if (!res.ok) return;
         const data = await res.json();
-        if (gameId !== String(activeGameId)) return;
-        const pane = document.getElementById("boxscore-pane");
-        if (!pane) return;
-        const html = renderBoxscore(data);
-        pane.innerHTML = html;
-        cachedBoxscoreHTML = html;
+        if (String(gameId) !== String(activeGameId)) return;
+        // Cache FIRST, render into the pane second. Previously this
+        // function bailed early when the pane wasn't on screen — but
+        // the rail bets card on Live View also needs this data for
+        // the live K/H counts, and skipping the cache meant the meter
+        // sat on '...' forever. Pane render only happens when the
+        // user is actually on the Box Score tab.
+        cachedBoxscoreData = data;
         cachedBoxscorePk = gameId;
         cachedBoxscoreStatus = data.status;
-        cachedBoxscoreData = data;
+        const pane = document.getElementById("boxscore-pane");
+        if (pane) {
+            const html = renderBoxscore(data);
+            safeSetHTML(pane, html);
+            cachedBoxscoreHTML = html;
+        }
     } catch {
         // silent — pane stays with cached content (or loading shell)
     }
@@ -3357,7 +6052,7 @@ document.addEventListener("click", (e) => {
         const pane = document.getElementById("boxscore-pane");
         if (pane) {
             const html = renderBoxscore(cachedBoxscoreData);
-            pane.innerHTML = html;
+            safeSetHTML(pane, html);
             cachedBoxscoreHTML = html;
         }
     }
@@ -3531,27 +6226,43 @@ function renderPitchingTable(side, d) {
 
 async function hydrateMarkets(gameId) {
     try {
-        const res = await fetch(`/api/game/${gameId}/markets`);
+        // Markets + our model projection fan out together. The model
+        // endpoint is independent (live MLB feed + matchup engine) so
+        // a slow Kalshi response doesn't gate it, and a missing model
+        // payload doesn't gate the Kalshi quotes. Whichever lands first
+        // shows up in the next renderPropPane pass; the chip click also
+        // re-reads the cache so it auto-fills as the model arrives.
+        const [res, _modelLoaded] = await Promise.all([
+            fetchWithRetry(`/api/game/${gameId}/markets`),
+            loadModelProps(gameId),
+        ]);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
+        filterToKalshi(data);
         // Also update the cached consensus pill — even when viewers
         // are on the Markets tab, the Live View card behind it should
         // reflect the same numbers when they tab back.
         cachedMarketConsensusSlot = renderMarketConsensusPill(data);
         cachedMarketConsensusPk = gameId;
         const pillSlot = document.getElementById("market-consensus-slot");
-        if (pillSlot) pillSlot.innerHTML = cachedMarketConsensusSlot;
+        if (pillSlot) safeSetHTML(pillSlot, cachedMarketConsensusSlot);
         const pane = document.getElementById("markets-pane");
         if (!pane) return;
         const html = renderMarkets(data);
-        pane.innerHTML = html;
+        safeSetHTML(pane, html);
         cachedMarketsHTML = html;
         cachedMarketsPk = gameId;
+        // Kalshi's /markets endpoint returns null bids/asks on most
+        // MLB markets but /markets/{ticker}/orderbook has real
+        // liquidity. Hydrate the Kalshi cards in the "Every book we
+        // pull from" panel from the orderbook so the user sees live
+        // prices instead of "no quote yet".
+        hydrateKalshiBookCells();
     } catch (e) {
         const pane = document.getElementById("markets-pane");
         if (pane && !cachedMarketsHTML) {
-            pane.innerHTML = `<div class="empty">Couldn't load markets: ${e.message || e}</div>`;
+            safeSetHTML(pane, `<div class="empty">Couldn't load markets: ${e.message || e}</div>`);
         }
         // Otherwise keep showing what we have — a single failed poll
         // shouldn't blank the pane.
@@ -3564,14 +6275,15 @@ async function hydrateMarkets(gameId) {
 // shared response with the Markets tab when both are open.
 async function hydrateMarketConsensusPill(gameId) {
     try {
-        const res = await fetch(`/api/game/${gameId}/markets`);
+        const res = await fetchWithRetry(`/api/game/${gameId}/markets`);
         if (!res.ok) return;
         const data = await res.json();
         if (String(gameId) !== String(activeGameId)) return;
+        filterToKalshi(data);
         cachedMarketConsensusSlot = renderMarketConsensusPill(data);
         cachedMarketConsensusPk = gameId;
         const slot = document.getElementById("market-consensus-slot");
-        if (slot) slot.innerHTML = cachedMarketConsensusSlot;
+        if (slot) safeSetHTML(slot, cachedMarketConsensusSlot);
     } catch { /* keep cached pill; silent fail */ }
 }
 
@@ -3795,6 +6507,11 @@ function stopMarketsPoll() {
 let marketsSubTab = "game_lines";  // game_lines | player_props | team_props
 let marketsShowAlts = { spread: false, total: false };
 let marketsPlayerFilter = "";
+// Sub-sub-tabs inside player_props / team_props (stat type: home_runs,
+// strikeouts, etc.). Persist across the 8s dashboard poll so the
+// user's pick survives re-render.
+let marketsPlayerStatTab = "home_runs";
+let marketsTeamStatTab   = "run_line";
 // Per-game header: click 'Market consensus' to expand a panel listing
 // every book / market source we pulled from.
 let marketsAllBooksOpen = false;
@@ -3841,6 +6558,14 @@ function renderMarkets(d) {
     return `
       <div class="markets">
         ${renderMarketsHeader(d, ourWe, consHome, consAway, edge, savant, d.savant_we_source)}
+        <!-- Kalshi account strip: connect CTA when signed out, balance
+             + sign-out when signed in. Re-rendered on connect / disconnect
+             via Kalshi.renderAllAccountStrips(). -->
+        <div data-kalshi-strip class="markets-kalshi-strip">${
+            (typeof window !== "undefined" && window.Kalshi)
+                ? window.Kalshi.renderAccountStrip()
+                : ""
+        }</div>
         <nav class="markets-tabs" role="tablist">
           <button class="markets-tab ${tab === "game_lines" ? "active" : ""}" data-mtab="game_lines" role="tab">
             Game lines <span class="markets-tab-count">${nGl}</span>
@@ -3901,6 +6626,101 @@ function renderGameLinesTab(d) {
 
 // Player Props tab: searchable list. Filter chip narrows by player
 // name token (case-insensitive). Sub-grouped by pitcher / batter prop.
+// Stat-type detection for player props. Reads the market title for
+// the well-known stat keywords. Returns one of the keys in
+// PLAYER_STAT_TABS below — group markets by this and render each
+// group under its own sub-tab so the user isn't scrolling through
+// HR / strikeout / hits / TB all mixed together.
+//
+// Two universes of markets land here:
+//   - PER-GAME props (KXMLBHR/KS/HIT/TB/HRR ...) — titled
+//     "Player Name: N+ stat?". Categorized by stat keyword in title.
+//   - SEASON FUTURES (KXMLBAL/NLMVP, KXMLBAL/NLCY, KXLEADERMLB* ...) —
+//     titled "Will Player win the AL MVP?" etc. The title doesn't
+//     contain the stat keyword reliably ("Will Aaron Judge be the
+//     2026 AL MVP?" has no 'HR' / 'hit' substring), so we use the
+//     market's Kalshi series ticker — much more reliable signal.
+function getPlayerStatType(market) {
+    const ticker = (market.raw_market_id || "").toUpperCase();
+    // Season futures — match by Kalshi series ticker first.
+    if (/^KXMLB(AL|NL)MVP-/.test(ticker))     return "award_mvp";
+    if (/^KXMLB(AL|NL)CY-/.test(ticker))      return "award_cy_young";
+    if (/^KXMLB(AL|NL)ROTY-/.test(ticker))    return "award_rookie";
+    if (/^KXMLB(AL|NL)MOTY-/.test(ticker))    return "award_manager";
+    if (/^KXMLB(AL|NL)RELOTY-/.test(ticker))  return "award_reliever";
+    if (/^KXMLB(AL|NL)CPOTY-/.test(ticker))   return "award_comeback";
+    if (/^KXMLB(AL|NL)HAARON-/.test(ticker))  return "award_haaron";
+    if (/^KXMLBEOTY-/.test(ticker))           return "award_exec";
+    if (/^KXLEADERMLBHR-/.test(ticker))       return "leader_hr";
+    if (/^KXLEADERMLBRBI-/.test(ticker))      return "leader_rbi";
+    if (/^KXLEADERMLBAVG-/.test(ticker))      return "leader_avg";
+    if (/^KXLEADERMLBHITS-/.test(ticker))     return "leader_hits";
+    if (/^KXLEADERMLBRUNS-/.test(ticker))     return "leader_runs";
+    if (/^KXLEADERMLBDOUBLES-/.test(ticker))  return "leader_doubles";
+    if (/^KXLEADERMLBTRIPLES-/.test(ticker))  return "leader_triples";
+    if (/^KXLEADERMLBSTEALS-/.test(ticker))   return "leader_steals";
+    if (/^KXLEADERMLBOPS-/.test(ticker))      return "leader_ops";
+    if (/^KXLEADERMLBWAR-/.test(ticker))      return "leader_war";
+    if (/^KXLEADERMLBKS-/.test(ticker))       return "leader_pitcher_k";
+    if (/^KXLEADERMLBWINS-/.test(ticker))     return "leader_pitcher_wins";
+    if (/^KXLEADERMLBERA-/.test(ticker))      return "leader_era";
+    if (/^KXMLBPITCHEROTM-/.test(ticker))     return "pitcher_otm";
+
+    // Per-game props — title-keyword classification (legacy path,
+    // used by the per-game Markets pane).
+    const t = (market.title || "").toLowerCase();
+    if (/strikeouts?\b|\bk['']?s?\b|so total/.test(t))     return "strikeouts";
+    if (/home runs?\b|\bhrs?\b/.test(t))                   return "home_runs";
+    if (/total bases?\b|tb total/.test(t))                 return "total_bases";
+    if (/hits[\s,]+runs[\s,]+(rbis?|runs batted)/.test(t)) return "combo_hrrbi";
+    if (/hits?\b/.test(t))                                 return "hits";
+    if (/walks?\b/.test(t))                                return "walks";
+    if (/earned runs?\b|\beras?\b/.test(t))                return "earned_runs";
+    if (/record a win|record the win|to record a win/.test(t)) return "pitcher_win";
+    return "other_player";
+}
+
+// Display config for each player-stat sub-tab. Order = order shown
+// in the nav row. Renderer drops any tab whose bucket is empty for
+// the current market list, so empty categories never appear.
+const PLAYER_STAT_TABS = [
+    // ── Per-game props ──
+    { key: "home_runs",            label: "Home Runs" },
+    { key: "hits",                 label: "Hits" },
+    { key: "strikeouts",           label: "Strikeouts" },
+    { key: "total_bases",          label: "Total Bases" },
+    { key: "combo_hrrbi",          label: "H+R+RBI" },
+    { key: "walks",                label: "Walks" },
+    { key: "earned_runs",          label: "Earned Runs" },
+    { key: "pitcher_win",          label: "Pitcher Win" },
+    // ── Season-future awards ──
+    { key: "award_mvp",            label: "MVP" },
+    { key: "award_cy_young",       label: "Cy Young" },
+    { key: "award_rookie",         label: "Rookie of Year" },
+    { key: "award_manager",        label: "Manager of Year" },
+    { key: "award_reliever",       label: "Reliever of Year" },
+    { key: "award_comeback",       label: "Comeback Player" },
+    { key: "award_haaron",         label: "Hank Aaron" },
+    { key: "award_exec",           label: "Executive of Year" },
+    // ── Season-future leaders ──
+    { key: "leader_hr",            label: "HR Leader" },
+    { key: "leader_rbi",           label: "RBI Leader" },
+    { key: "leader_avg",           label: "AVG Leader" },
+    { key: "leader_hits",          label: "Hits Leader" },
+    { key: "leader_runs",          label: "Runs Leader" },
+    { key: "leader_doubles",       label: "Doubles Leader" },
+    { key: "leader_triples",       label: "Triples Leader" },
+    { key: "leader_steals",        label: "Steals Leader" },
+    { key: "leader_ops",           label: "OPS Leader" },
+    { key: "leader_war",           label: "WAR Leader" },
+    { key: "leader_pitcher_k",     label: "K Leader" },
+    { key: "leader_pitcher_wins",  label: "Wins Leader" },
+    { key: "leader_era",           label: "Lowest ERA" },
+    { key: "pitcher_otm",          label: "Pitcher of Month" },
+    // ── Catch-all ──
+    { key: "other_player",         label: "Other" },
+];
+
 function renderPlayerPropsTab(d) {
     const all = d.markets.player_prop || [];
     if (!all.length) {
@@ -3908,7 +6728,7 @@ function renderPlayerPropsTab(d) {
           <div class="markets-tab-body">
             <div class="markets-empty">
               <div class="markets-empty-title">No player props quoted on this game yet.</div>
-              <div class="markets-empty-sub">Bovada usually has 50+ prop markets per game; check back closer to first pitch.</div>
+              <div class="markets-empty-sub">Per-game props (HR / K / Hits / TB) appear when Kalshi opens them, usually a few hours before first pitch.</div>
             </div>
           </div>
         `;
@@ -3917,12 +6737,13 @@ function renderPlayerPropsTab(d) {
     const matched = filt
         ? all.filter((m) => (m.title || "").toLowerCase().includes(filt))
         : all;
-
-    // Sub-bucket: titles mentioning "strikeout", "win", "record"
-    // tend to be pitcher props; everything else is batter.
-    const pitcher = matched.filter((m) => /strikeout|record a win|hits allowed|walks|earned run|pitcher/i.test(m.title || ""));
-    const batter  = matched.filter((m) => !pitcher.includes(m));
-
+    if (!matched.length) {
+        return `
+          <div class="markets-tab-body">
+            <div class="empty">No player props match "${escapeHTML(marketsPlayerFilter)}".</div>
+          </div>
+        `;
+    }
     return `
       <div class="markets-tab-body" data-mtab-body="player_props">
         <div class="markets-filter">
@@ -3932,17 +6753,75 @@ function renderPlayerPropsTab(d) {
                  data-mtab-filter="1" />
           ${filt ? `<button class="markets-filter-clear" data-mtab-clear-filter="1">clear</button>` : ""}
         </div>
-        ${matched.length === 0
-          ? `<div class="empty">No props match "${escapeHTML(marketsPlayerFilter)}".</div>`
-          : `
-            ${renderMarketsSection(`Pitcher props (${pitcher.length})`, pitcher)}
-            ${renderMarketsSection(`Batter props (${batter.length})`,   batter)}
-          `}
+        ${renderPlayerPropsByStat(matched)}
       </div>
     `;
 }
 
-// Team Props tab: game props + 1st-inning + run markets.
+// Reusable: groups a flat Kalshi player-prop list into stat-type
+// sub-tabs (Home Runs / Hits / Strikeouts / …) with condensed
+// threshold cards inside each pane. Used by the per-game Markets
+// pane AND the team page. The document-level click handler over
+// [data-stat-tab] / [data-stat-pane] works in both contexts because
+// it scopes via the nearest .markets-tab-body OR
+// [data-prop-tabs-scope] ancestor.
+function renderPlayerPropsByStat(markets) {
+    const byStat = new Map();
+    for (const m of markets) {
+        const k = getPlayerStatType(m);
+        if (!byStat.has(k)) byStat.set(k, []);
+        byStat.get(k).push(m);
+    }
+    const tabs = PLAYER_STAT_TABS.filter((t) => (byStat.get(t.key) || []).length);
+    if (!tabs.length) return `<div class="empty">No player props.</div>`;
+    const activeKey = tabs.some((t) => t.key === marketsPlayerStatTab)
+        ? marketsPlayerStatTab : tabs[0].key;
+    return `
+      <nav class="prop-stat-tabs" role="tablist">
+        ${tabs.map((t) => {
+          const count = (byStat.get(t.key) || []).length;
+          return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
+                          data-stat-tab="${t.key}" role="tab">
+              ${t.label} <span class="prop-stat-tab-count">${count}</span>
+            </button>`;
+        }).join("")}
+      </nav>
+      ${tabs.map((t) => `
+        <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
+             data-stat-pane="${t.key}">
+          ${renderMarketsSection("", byStat.get(t.key) || [])}
+        </div>
+      `).join("")}
+    `;
+}
+
+// Stat-type detection for team props. Same pattern as the player
+// version — keys map to TEAM_PROP_TABS for the sub-tab UI.
+//
+// Kalshi phrasings actually observed in /api/game/{id}/markets:
+//   - "Will Texas score over 5.5 runs?"             → team_total
+//   - "Texas Rangers vs. Kansas City Royals: O/U 7.5" → game_total
+//   - "Spread: Texas Rangers (-1.5)"                → run_line
+//   - "Will there be a run scored in the first inning?: …" → first_inning
+function getTeamPropType(market) {
+    const t = (market.title || "").toLowerCase();
+    if (/1st inning|first inning|\b1h\b|\b1i\b|run in.*1st|run scored in the first/.test(t)) return "first_inning";
+    if (/first 5/.test(t))                                            return "first_5";
+    if (/wins by over|wins by at least|win margin|winning margin|^spread:|\bspread:.*\(-/.test(t)) return "run_line";
+    if (/team total|team runs|will [\w. ]+ score (?:over|under|at least)/.test(t)) return "team_total";
+    if (/total runs?|: o\/u\b/.test(t))                               return "game_total";
+    return "other_team";
+}
+
+const TEAM_PROP_TABS = [
+    { key: "run_line",      label: "Run Line" },
+    { key: "game_total",    label: "Game Total" },
+    { key: "team_total",    label: "Team Total" },
+    { key: "first_5",       label: "First 5 Innings" },
+    { key: "first_inning",  label: "1st-Inning" },
+    { key: "other_team",    label: "Other" },
+];
+
 function renderTeamPropsTab(d) {
     const all = d.markets.team_prop || [];
     if (!all.length) {
@@ -3950,22 +6829,48 @@ function renderTeamPropsTab(d) {
           <div class="markets-tab-body">
             <div class="markets-empty">
               <div class="markets-empty-title">No team props quoted on this game yet.</div>
-              <div class="markets-empty-sub">First-inning, run-scoring, and winning-margin markets show up here.</div>
+              <div class="markets-empty-sub">Run line / Total / Team Total / First 5 / 1st-inning markets show up here when Kalshi opens them.</div>
             </div>
           </div>
         `;
     }
-    // Sub-bucket by clue word in title.
-    const firstInning = all.filter((m) => /1st inning|first inning|1H|1I/i.test(m.title || ""));
-    const winMargin   = all.filter((m) => /winning margin|to win by/i.test(m.title || ""));
-    const runScoring  = all.filter((m) => !firstInning.includes(m) && !winMargin.includes(m));
-
     return `
       <div class="markets-tab-body" data-mtab-body="team_props">
-        ${renderMarketsSection(`Game props (${runScoring.length})`,   runScoring)}
-        ${renderMarketsSection(`1st-inning markets (${firstInning.length})`, firstInning)}
-        ${renderMarketsSection(`Winning margin (${winMargin.length})`, winMargin)}
+        ${renderTeamPropsByKind(all)}
       </div>
+    `;
+}
+
+// Reusable team-prop sub-tabs (Run Line / Game Total / Team Total
+// / First 5 / 1st-Inning / Other). Shared by the per-game pane and
+// the team page.
+function renderTeamPropsByKind(markets) {
+    const byKind = new Map();
+    for (const m of markets) {
+        const k = getTeamPropType(m);
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k).push(m);
+    }
+    const tabs = TEAM_PROP_TABS.filter((t) => (byKind.get(t.key) || []).length);
+    if (!tabs.length) return `<div class="empty">No team props.</div>`;
+    const activeKey = tabs.some((t) => t.key === marketsTeamStatTab)
+        ? marketsTeamStatTab : tabs[0].key;
+    return `
+      <nav class="prop-stat-tabs" role="tablist">
+        ${tabs.map((t) => {
+          const count = (byKind.get(t.key) || []).length;
+          return `<button class="prop-stat-tab ${t.key === activeKey ? "active" : ""}"
+                          data-team-stat-tab="${t.key}" role="tab">
+              ${t.label} <span class="prop-stat-tab-count">${count}</span>
+            </button>`;
+        }).join("")}
+      </nav>
+      ${tabs.map((t) => `
+        <div class="prop-stat-pane ${t.key === activeKey ? "active" : ""}"
+             data-team-stat-pane="${t.key}">
+          ${renderMarketsSection("", byKind.get(t.key) || [])}
+        </div>
+      `).join("")}
     `;
 }
 
@@ -4201,7 +7106,33 @@ function renderMabRow(label, market) {
         return `<div class="mab-row mab-row-empty"><span class="mab-row-label">${label}</span><span class="mab-row-empty-msg">not quoted</span></div>`;
     }
     const outcomes = (market.outcomes || []).slice().sort((a, b) => (b.probability || 0) - (a.probability || 0));
-    if (!outcomes.some((o) => o.probability != null || o.american != null)) {
+    const noPrices = !outcomes.some((o) => o.probability != null || o.american != null);
+
+    // Kalshi special case: their /markets endpoint returns null yes/no
+    // bids+asks on MLB markets, but /markets/{ticker}/orderbook has
+    // live prices. Render placeholder cells with the full per-side
+    // ticker stamped on data-attrs so hydrateKalshiBookCells() (run
+    // after innerHTML set) can fill in the real bid/ask asynchronously.
+    if (noPrices && market.source === "kalshi" && outcomes.length) {
+        const cells = outcomes.slice(0, 3).map((o) => {
+            const idMatch = String(o.id || "").match(/^(.*):(yes|no)$/i);
+            const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+            return `
+              <span class="mab-cell" data-kalshi-ob-cell data-ticker="${escapeHTMLAttr(ticker)}">
+                <span class="mab-cell-name">${escapeHTML(o.name || "")}</span>
+                <span class="mab-cell-odds"><span class="mab-cell-loading">…</span></span>
+              </span>
+            `;
+        }).join("");
+        return `
+          <div class="mab-row">
+            <span class="mab-row-label">${label}</span>
+            <div class="mab-row-cells">${cells}</div>
+          </div>
+        `;
+    }
+
+    if (noPrices) {
         return `<div class="mab-row mab-row-empty"><span class="mab-row-label">${label}</span><span class="mab-row-empty-msg">no quote yet</span></div>`;
     }
     const cells = outcomes.slice(0, 3).map((o) => {
@@ -4224,20 +7155,116 @@ function renderMabRow(label, market) {
     `;
 }
 
+// Hydrate any "no quote yet" Kalshi cells in the DOM by fetching the
+// live orderbook for each ticker (in parallel, de-duped). Computes the
+// best YES ask = 100 - highest NO bid, converts to American odds, and
+// fills in the cell. Called after innerHTML set in hydrateMarkets.
+async function hydrateKalshiBookCells() {
+    if (!window.Kalshi || !window.Kalshi.getOrderbook) return;
+    const cells = document.querySelectorAll("[data-kalshi-ob-cell]:not([data-hydrated])");
+    if (!cells.length) return;
+    // De-dupe tickers so we don't hit /orderbook twice for the same one.
+    const byTicker = new Map();
+    cells.forEach((cell) => {
+        const t = cell.getAttribute("data-ticker");
+        if (!t) return;
+        if (!byTicker.has(t)) byTicker.set(t, []);
+        byTicker.get(t).push(cell);
+    });
+    await Promise.all(Array.from(byTicker.entries()).map(async ([ticker, cellList]) => {
+        try {
+            const ob = await window.Kalshi.getOrderbook(ticker);
+            const oddsHtml = orderbookToOddsHtml(ob);
+            cellList.forEach((cell) => {
+                // .mab-cell-odds = "Every book we pull from" panel
+                // .md-game-out-odds = markets dashboard outcome buttons
+                const oddsEl = cell.querySelector(".mab-cell-odds, .md-game-out-odds");
+                if (oddsEl) oddsEl.innerHTML = oddsHtml;
+                cell.setAttribute("data-hydrated", "1");
+            });
+            // Pipe the live YES implied probability into any visible
+            // .model-row sharing this ticker so the EDGE pill refreshes.
+            // Also refresh the inline bet-calculator's "to win" payout
+            // on every Buy button bound to this ticker.
+            const yesProb = orderbookYesProb(ob);
+            if (yesProb != null) {
+                if (typeof updateModelEdgeForTicker === "function") {
+                    updateModelEdgeForTicker(ticker, yesProb);
+                }
+                if (window.Kalshi?.updateBetButtonsForTicker) {
+                    window.Kalshi.updateBetButtonsForTicker(ticker, yesProb);
+                }
+            }
+        } catch {
+            cellList.forEach((cell) => {
+                const oddsEl = cell.querySelector(".mab-cell-odds, .md-game-out-odds");
+                if (oddsEl) oddsEl.innerHTML = `<span class="mab-cell-empty">—</span>`;
+                cell.setAttribute("data-hydrated", "1");
+            });
+        }
+    }));
+}
+
+// Reduce a normalized orderbook to the live YES implied probability
+// (0..1), as a fraction not a percent. Returns null when neither side
+// has resting orders. Mirrors orderbookToOddsHtml's askCents math.
+function orderbookYesProb(ob) {
+    if (!ob) return null;
+    const noBook = ob.no || [];
+    if (!noBook.length) return null;
+    const bestNoBid = noBook[noBook.length - 1];
+    const noBidCents = Number(bestNoBid[0]);
+    if (!Number.isFinite(noBidCents) || noBidCents < 1 || noBidCents > 99) return null;
+    return (100 - noBidCents) / 100;
+}
+
+// Reduce a normalized orderbook ({ yes:[[cents,qty]], no:[[cents,qty]] })
+// to a single best-YES-ask quote rendered as American odds + implied %.
+// Returns "<span>no offers</span>" when neither side has resting orders.
+// Output uses BOTH class-name conventions (mab-cell-am/pct +
+// md-game-out-am/pct) so the same HTML styles in either the "Every
+// book we pull from" panel OR the markets-dashboard outcome buttons.
+function orderbookToOddsHtml(ob) {
+    if (!ob) return `<span class="mab-cell-empty">no offers</span>`;
+    const noBook = ob.no || [];
+    if (!noBook.length) return `<span class="mab-cell-empty">no offers</span>`;
+    const bestNoBid = noBook[noBook.length - 1];
+    const noBidCents = Number(bestNoBid[0]);
+    if (!Number.isFinite(noBidCents) || noBidCents < 1 || noBidCents > 99) {
+        return `<span class="mab-cell-empty">no offers</span>`;
+    }
+    const askCents = 100 - noBidCents;
+    const american = centsToAmerican(askCents);
+    return `
+      ${american ? `<span class="mab-cell-am md-game-out-am">${american}</span>` : ""}
+      <span class="mab-cell-pct md-game-out-pct">${askCents}%</span>
+    `;
+}
+
+// 1-99¢ → American odds string. 50¢ → "+100" (even money), 75¢ → "-300",
+// 25¢ → "+300". Used to align Kalshi quotes with the sportsbook
+// American-odds format the rest of the panel shows.
+function centsToAmerican(cents) {
+    const n = Number(cents);
+    if (!Number.isFinite(n) || n <= 0 || n >= 100) return null;
+    const p = n / 100;
+    if (p >= 0.5) {
+        const v = Math.round(p * 100 / (1 - p));
+        return `-${v}`;
+    }
+    const v = Math.round(100 * (1 - p) / p);
+    return `+${v}`;
+}
+
 function renderMarketsSection(title, rows) {
     if (!rows || !rows.length) return "";
-    // Partition priced (any outcome has probability) vs unpriced. If
-    // priced exists, render only those — Kalshi-no-quote rows are
-    // noise once Bovada lines are flowing. If NO priced exists, render
-    // up to ONE unpriced row so the user sees that we tried (and from
-    // which source) rather than a blank section.
     const priced = rows.filter((m) =>
         (m.outcomes || []).some((o) => o.probability != null)
     );
     const unpriced = rows.filter((m) =>
         !(m.outcomes || []).some((o) => o.probability != null)
     );
-    let list = priced.length ? priced : unpriced.slice(0, 1);
+    let list = priced.length ? priced.concat(unpriced) : unpriced;
     list = list.slice().sort((a, b) => {
         const am = a?.is_main_line ? 1 : 0;
         const bm = b?.is_main_line ? 1 : 0;
@@ -4246,7 +7273,17 @@ function renderMarketsSection(title, rows) {
         const bh = b?.handicap != null ? Math.abs(b.handicap) : Infinity;
         return ah - bh;
     });
-    const rendered = list.map(renderMarketRow).filter((s) => s.length > 0);
+
+    // Group same-question markets that differ only by threshold into
+    // condensed cards with a threshold selector. "Kumar Rocker 2+, 3+,
+    // 4+, ... 8+ strikeouts" becomes ONE card with 7 chips. User taps
+    // a chip → odds + Buy buttons swap to that threshold's market.
+    // Markets that don't group (no threshold pattern) render normally.
+    const groups = groupMarketsByQuestion(list);
+    const rendered = Array.from(groups.values()).map((markets) => {
+        if (markets.length === 1) return renderMarketRow(markets[0]);
+        return renderCondensedPropCard(markets);
+    }).filter((s) => s.length > 0);
     if (!rendered.length) return "";
     return `
       <section class="markets-section">
@@ -4256,6 +7293,393 @@ function renderMarketsSection(title, rows) {
         </div>
       </section>
     `;
+}
+
+// ── Threshold-grouped prop condensation ─────────────────────────
+//
+// Many Kalshi markets are the same question at different thresholds:
+//   "Kumar Rocker: 2+ strikeouts?" / "3+ strikeouts?" / "4+ strikeouts?"
+//   "Detroit wins by over 1.5 runs?" / "2.5 runs?" / "3.5 runs?"
+//   "Game Total over 7?" / "over 8?" / "over 9?"
+// Rendering one card per threshold floods the page with near-identical
+// rows. Group them by question identity and render one card with a
+// threshold selector chip row.
+
+function getPropGroupKey(market) {
+    const title = (market.title || "").trim();
+    const src = market.source || "?";
+    // Player prop: "Player Name: N+ stat?"
+    let m = title.match(/^(.+?):\s*\d+(?:\.\d+)?\+?\s+(.+?)\??$/);
+    if (m) return `${src}|player|${m[1].toLowerCase()}|${m[2].toLowerCase()}`;
+    // Team spread: "Team wins by over N runs?"
+    m = title.match(/^(.+?)\s+wins\s+by\s+over\s+\d+(?:\.\d+)?\s+(.+?)\??$/i);
+    if (m) return `${src}|spread|${m[1].toLowerCase()}|${m[2].toLowerCase()}`;
+    // Game total (same title for every threshold; threshold lives in
+    // ticker tail): "Detroit vs Chicago WS Total Runs?"
+    if (/total runs?/i.test(title)) {
+        return `${src}|total|${title.toLowerCase().replace(/\?$/, "")}`;
+    }
+    // First-5 / RFI / other team_prop: leave ungrouped for now.
+    return null;
+}
+
+function getPropGroupLabel(market) {
+    const title = (market.title || "").trim();
+    let m = title.match(/^(.+?):\s*\d+(?:\.\d+)?\+?\s+(.+?)\??$/);
+    if (m) return `${m[1]} · ${m[2]}`;
+    m = title.match(/^(.+?)\s+wins\s+by\s+over\s+\d+(?:\.\d+)?\s+(.+?)\??$/i);
+    if (m) return `${m[1]} wins · ${m[2]}`;
+    if (/total runs?/i.test(title)) return title.replace(/\?$/, "");
+    return title;
+}
+
+function getPropThreshold(market) {
+    const title = market.title || "";
+    // "N+" in title (player props)
+    let m = title.match(/(\d+(?:\.\d+)?)\+/);
+    if (m) return parseFloat(m[1]);
+    // "over N" (spreads / totals)
+    m = title.match(/over\s+(\d+(?:\.\d+)?)/i);
+    if (m) return parseFloat(m[1]);
+    // Numeric ticker suffix (totals: KXMLBTOTAL-...-9)
+    const ticker = market.raw_market_id || "";
+    m = ticker.match(/-(\d+(?:\.\d+)?)$/);
+    if (m) return parseFloat(m[1]);
+    return 0;
+}
+
+function formatPropThreshold(t) {
+    if (Number.isInteger(t)) return `${t}+`;
+    return `${t}`;
+}
+
+function groupMarketsByQuestion(markets) {
+    const groups = new Map();
+    let ungroupedIdx = 0;
+    for (const m of markets) {
+        const key = getPropGroupKey(m) || `_ungroupable_${ungroupedIdx++}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(m);
+    }
+    return groups;
+}
+
+// Counter for unique card ids; we stash market arrays on window
+// keyed by card id so the click handler can re-render the active
+// pane without re-fetching anything.
+let _propCardSeq = 0;
+// User-picked threshold per condensed prop card, keyed by the stable
+// (source|kind|player|stat) group key — survives the 8s markets-pane
+// re-render so the chip the user clicked doesn't snap back to the
+// default every poll. Cleared only on hard reload (in-memory only,
+// no localStorage — picks are session state, not preferences).
+function renderCondensedPropCard(markets) {
+    markets = markets.slice().sort((a, b) => getPropThreshold(a) - getPropThreshold(b));
+    const cardId = `pc${++_propCardSeq}`;
+    const groupKey = getPropGroupKey(markets[0]) || "";
+    if (typeof window !== "undefined") {
+        window._propCards = window._propCards || {};
+        window._propCards[cardId] = markets;
+        window._propPicks = window._propPicks || {};
+    }
+    // Default to the LEAST threshold (smallest "N+"). On HR markets every
+    // 2+ line is a dead +9900 / 1% moonshot — useless as the steady-state
+    // view. The 1+ line is the one whose odds sit nearest +100 (real bets
+    // happen on it). User asked: "always set the steady state at the least
+    // number of something (the odds closest to +100)".
+    let defaultIdx = 0;
+    // If the user already picked a threshold on this player+stat this
+    // session, restore that pick across the auto-refresh. The pick
+    // saver is the chip click handler; it stores under the same key.
+    const savedThr = (typeof window !== "undefined" && groupKey)
+        ? window._propPicks[groupKey] : null;
+    if (savedThr != null) {
+        const matchIdx = markets.findIndex((m) => getPropThreshold(m) === savedThr);
+        if (matchIdx >= 0) defaultIdx = matchIdx;
+    }
+    const label = getPropGroupLabel(markets[0]);
+    const src = markets[0].source || "?";
+
+    const chips = markets.map((m, i) => `
+      <button class="prop-chip ${i === defaultIdx ? "active" : ""}"
+              data-prop-pick="${cardId}:${i}"
+              title="${escapeHTMLAttr(m.title || "")}">
+        ${formatPropThreshold(getPropThreshold(m))}
+      </button>
+    `).join("");
+
+    return `
+      <article class="market-row condensed-prop" data-source="${src}"
+               data-prop-card-id="${cardId}"
+               data-prop-group-key="${escapeHTMLAttr(groupKey)}">
+        <header class="market-row-head">
+          <span class="market-source market-source-${src}">${src}</span>
+          <span class="market-title">${escapeHTML(label)}</span>
+          <span class="prop-count-chip">${markets.length} thresholds</span>
+        </header>
+        <div class="prop-chip-row">${chips}</div>
+        <div class="prop-active-pane" data-prop-pane>
+          ${renderPropPane(markets[defaultIdx])}
+        </div>
+      </article>
+    `;
+}
+
+function renderPropPane(market) {
+    const outcomes = (market.outcomes || []).slice().sort((a, b) =>
+        (b.probability || 0) - (a.probability || 0));
+    const isKalshi = market.source === "kalshi";
+    return `
+      <div class="market-outcomes">
+        ${outcomes.map((o) => renderMarketOutcome(o, market)).join("")}
+      </div>
+      ${renderModelRow(market, outcomes)}
+      ${(isKalshi && typeof window !== "undefined" && window.Kalshi)
+          ? window.Kalshi.renderBetButtons(market) : ""}
+    `;
+}
+
+// (Per-card stake persistence was removed. The stake input is now a
+// single global widget pinned to document.body via kalshi.js's
+// ensureGlobalStakeWidget(). Markets-pane re-renders can no longer
+// touch it because it's not inside the pane.)
+
+// ── Model-props sidecar (lives next to the live Kalshi quote) ──────
+//
+// We fetch /api/game/{id}/model-props once per game open (60s edge
+// cache) and look up each visible Kalshi player prop in it. Render
+// a single-line strip under the YES/NO row showing what our matchup
+// engine projects for the same prop, plus an "EDGE" pill comparing
+// the two. Stays invisible when we don't have a projection — better
+// to hide than show "—".
+
+const _modelPropsByGame = (typeof window !== "undefined")
+    ? (window._modelPropsByGame = window._modelPropsByGame || {})
+    : {};
+const _modelPropsInflight = {};
+
+async function loadModelProps(gameId) {
+    if (!gameId) return null;
+    const cached = _modelPropsByGame[gameId];
+    if (cached && (Date.now() - cached._fetched_at) < 60_000) return cached;
+    if (_modelPropsInflight[gameId]) return _modelPropsInflight[gameId];
+    _modelPropsInflight[gameId] = (async () => {
+        try {
+            const res = await fetch(`/api/game/${gameId}/model-props`, { cache: "no-store" });
+            if (!res.ok) return null;
+            const data = await res.json();
+            if (!data || data.available === false) {
+                _modelPropsByGame[gameId] = { _fetched_at: Date.now(), available: false };
+                return _modelPropsByGame[gameId];
+            }
+            data._fetched_at = Date.now();
+            _modelPropsByGame[gameId] = data;
+            return data;
+        } catch {
+            return null;
+        } finally {
+            delete _modelPropsInflight[gameId];
+        }
+    })();
+    return _modelPropsInflight[gameId];
+}
+
+// Returns { yes_prob, no_prob, model_american, label } for a Kalshi
+// player_prop market, or null if we can't match it against a model
+// projection. The lookup walks the market title, plucks the player
+// name + threshold + stat keyword, then indexes into the cached
+// /api/game/{id}/model-props payload.
+function lookupModelProb(market) {
+    if (!market || market.source !== "kalshi") return null;
+    const m = _modelPropsByGame[activeGameId];
+    if (!m || m.available === false) return null;
+    const parsed = parseKalshiPropTitle(market.title || "");
+    if (!parsed) return null;
+    const mlbam = m.name_to_mlbam?.[normPlayerName(parsed.player)];
+    if (!mlbam) return null;
+    const ladder = m.model_props?.[mlbam]?.[parsed.stat];
+    if (!ladder) return null;
+    const yes = ladder[parsed.threshold];
+    if (yes == null) return null;
+    return {
+        yes_prob: yes,
+        no_prob:  Math.max(0, Math.min(1, 1 - yes)),
+        stat:     parsed.stat,
+        threshold: parsed.threshold,
+        player:   parsed.player,
+    };
+}
+
+function parseKalshiPropTitle(title) {
+    const t = String(title || "").trim();
+    // "Vinnie Pasquantino: 2+ hits?" / "Bobby Witt Jr.: 1+ home runs?"
+    let m = t.match(/^(.+?):\s*(\d+)\+\s+(.+?)\??$/);
+    if (!m) return null;
+    const player    = m[1].trim();
+    const threshold = parseInt(m[2], 10);
+    const statText  = m[3].toLowerCase().trim();
+    let stat = null;
+    if (/strikeouts?\b/.test(statText))                 stat = "strikeouts";
+    else if (/home runs?\b|\bhrs?\b/.test(statText))    stat = "home_runs";
+    else if (/total bases?\b/.test(statText))           stat = "total_bases";
+    else if (/hits?\b/.test(statText))                  stat = "hits";
+    if (!stat) return null;
+    return { player, threshold, stat };
+}
+
+function normPlayerName(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+// Convert a probability to American odds. Mirror of formatAmericanOdds
+// but accepts a probability (0..1) instead of a pre-formatted string.
+function probToAmerican(p) {
+    if (!Number.isFinite(p) || p <= 0 || p >= 1) return null;
+    if (p >= 0.5) return Math.round(-100 * p / (1 - p));
+    return Math.round(100 * (1 - p) / p);
+}
+
+function renderModelRow(market, outcomes) {
+    const model = lookupModelProb(market);
+    if (!model) return "";
+    // The model row carries data-model-yes + data-ticker so the
+    // orderbook hydrator can refresh the EDGE display once the live
+    // Kalshi quote lands — most Kalshi player props ship null
+    // probabilities in the /markets payload and only get populated
+    // by /orderbook hydration a few ms later. See updateModelEdges().
+    const yesOutcome = outcomes.find((o) => /yes/i.test(o.name || "")) || outcomes[0];
+    const idMatch = String(yesOutcome?.id || "").match(/^(.*):(yes|no)$/i);
+    const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+    const marketYesProb = yesOutcome?.probability_devig != null
+        ? yesOutcome.probability_devig
+        : yesOutcome?.probability;
+    const am = probToAmerican(model.yes_prob);
+    const amStr = am != null ? (am > 0 ? `+${am}` : `${am}`) : "—";
+    const pctStr = `${(model.yes_prob * 100).toFixed(model.yes_prob < 0.1 ? 1 : 0)}%`;
+    return `
+      <div class="model-row"
+           data-model-row="1"
+           data-ticker="${escapeHTMLAttr(ticker)}"
+           data-model-yes="${model.yes_prob}"
+           title="Our matchup engine's projection for this prop, vs Kalshi's implied probability.">
+        <span class="model-row-tag">MODEL</span>
+        <span class="model-row-american">${amStr}</span>
+        <span class="model-row-pct">${pctStr}</span>
+        <span class="model-row-edge" data-model-edge-slot>${
+            marketYesProb != null ? renderEdgeFragment(model.yes_prob, marketYesProb) : ""
+        }</span>
+      </div>
+    `;
+}
+
+// Format an EDGE fragment given the model and market probabilities.
+// Returns the inner HTML for .model-row-edge; the parent renders the
+// outer wrapper either at first render (when market quote is known
+// inline) or after the orderbook hydrator refills it.
+function renderEdgeFragment(modelYes, marketYes) {
+    if (modelYes == null || marketYes == null) return "";
+    const edgePts = Math.round((modelYes - marketYes) * 1000) / 10;
+    const arrow = edgePts >=  2 ? "↗" : edgePts <= -2 ? "↘" : "→";
+    const cls   = edgePts >=  2 ? "edge-yes"
+                : edgePts <= -2 ? "edge-no"
+                : "edge-flat";
+    const sign  = edgePts > 0 ? "+" : "";
+    return `EDGE <strong class="${cls}">${sign}${edgePts.toFixed(1)} pts</strong> <span class="model-edge-arrow ${cls}">${arrow}</span>`;
+}
+
+// Called by the orderbook hydrator after each Kalshi quote lands.
+// Walks every visible model row whose ticker matches and rewrites the
+// edge fragment + the row's tint class from the freshly-known market
+// implied probability. Idempotent — safe to call many times.
+function updateModelEdgeForTicker(ticker, marketYesProb) {
+    if (typeof document === "undefined" || !ticker) return;
+    const rows = document.querySelectorAll(`.model-row[data-ticker="${cssEscape(ticker)}"]`);
+    rows.forEach((row) => {
+        const yes = parseFloat(row.getAttribute("data-model-yes"));
+        if (!Number.isFinite(yes)) return;
+        const slot = row.querySelector("[data-model-edge-slot]");
+        if (slot) slot.innerHTML = renderEdgeFragment(yes, marketYesProb);
+        const edgePts = Math.round((yes - marketYesProb) * 1000) / 10;
+        row.classList.remove("model-edge-yes", "model-edge-no", "model-edge-flat");
+        row.classList.add(
+            edgePts >=  2 ? "model-edge-yes"
+            : edgePts <= -2 ? "model-edge-no"
+            : "model-edge-flat",
+        );
+    });
+}
+
+// Minimal CSS.escape polyfill for attribute selectors. The hydrator
+// callback runs in older browsers occasionally; native CSS.escape is
+// fine on modern Chrome / Safari but defending against the rare case.
+function cssEscape(s) {
+    if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^\w-]/g, (c) => "\\" + c);
+}
+
+// Click delegation for threshold-chip selection. Each chip is keyed
+// by "{cardId}:{index}" and the card's market list lives in
+// window._propCards[cardId]. Selecting swaps the active pane HTML
+// and re-runs orderbook hydration for the new ticker.
+if (typeof window !== "undefined") {
+    document.addEventListener("click", (e) => {
+        const chip = e.target.closest("[data-prop-pick]");
+        if (!chip) return;
+        const [cardId, idxStr] = chip.getAttribute("data-prop-pick").split(":");
+        const idx = parseInt(idxStr, 10);
+        const markets = window._propCards?.[cardId];
+        if (!markets || !markets[idx]) return;
+        e.preventDefault();
+        const card = chip.closest(`[data-prop-card-id="${cardId}"]`);
+        if (!card) return;
+        // Persist the user's pick under the stable group key so the
+        // next 8s markets re-render restores it (otherwise renderer
+        // resets to defaultIdx=0 every poll and the user loses their
+        // selection). Cleared only on hard reload.
+        const groupKey = card.getAttribute("data-prop-group-key");
+        if (groupKey) {
+            window._propPicks = window._propPicks || {};
+            window._propPicks[groupKey] = getPropThreshold(markets[idx]);
+        }
+        card.querySelectorAll(".prop-chip").forEach((c) =>
+            c.classList.toggle("active", c === chip));
+        const pane = card.querySelector("[data-prop-pane]");
+        if (pane) {
+            pane.innerHTML = renderPropPane(markets[idx]);
+            if (typeof hydrateKalshiBookCells === "function") {
+                hydrateKalshiBookCells();
+            }
+        }
+    });
+
+    // Click delegation for stat-type sub-tabs (Home Runs / Hits /
+    // Strikeouts / …) inside the Player Props and Team Props panes.
+    // We do a local DOM swap rather than re-rendering the whole
+    // markets section — that keeps it instant and preserves any
+    // open chip selection / hydrated orderbook in other cards.
+    // The state vars (marketsPlayerStatTab / marketsTeamStatTab)
+    // get updated too so the 8s dashboard re-render restores the
+    // user's pick instead of snapping back to the default.
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-stat-tab], [data-team-stat-tab]");
+        if (!btn) return;
+        e.preventDefault();
+        const isTeam   = btn.hasAttribute("data-team-stat-tab");
+        const key      = isTeam ? btn.getAttribute("data-team-stat-tab")
+                                : btn.getAttribute("data-stat-tab");
+        const tabAttr  = isTeam ? "data-team-stat-tab"  : "data-stat-tab";
+        const paneAttr = isTeam ? "data-team-stat-pane" : "data-stat-pane";
+        if (isTeam) marketsTeamStatTab   = key;
+        else        marketsPlayerStatTab = key;
+        // Find the nearest enclosing scope so we only touch the active
+        // player/team props section — markets pane uses .markets-tab-body,
+        // team page uses [data-prop-tabs-scope].
+        const body = btn.closest(".markets-tab-body, [data-prop-tabs-scope]") || document;
+        body.querySelectorAll(`[${tabAttr}]`).forEach((t) =>
+            t.classList.toggle("active", t.getAttribute(tabAttr) === key));
+        body.querySelectorAll(`[${paneAttr}]`).forEach((p) =>
+            p.classList.toggle("active", p.getAttribute(paneAttr) === key));
+    });
 }
 
 // Sportsbook-style market row.
@@ -4296,6 +7720,13 @@ function renderMarketRow(market) {
         .slice()
         .sort((a, b) => (b.probability || 0) - (a.probability || 0));
 
+    // Inline "Buy YES / Buy NO" buttons on Kalshi markets — only when
+    // the Kalshi client script is loaded. The buttons call into the
+    // global Kalshi.openBetModal via click delegation (kalshi.js).
+    const betButtons = (src === "kalshi" && typeof window !== "undefined" && window.Kalshi)
+        ? window.Kalshi.renderBetButtons(market)
+        : "";
+
     return `
       <article class="market-row" data-source="${src}">
         <header class="market-row-head">
@@ -4306,14 +7737,15 @@ function renderMarketRow(market) {
           </a>
         </header>
         <div class="market-outcomes">
-          ${outcomes.map(renderMarketOutcome).join("")}
+          ${outcomes.map((o) => renderMarketOutcome(o, market)).join("")}
         </div>
+        ${betButtons}
         <div class="market-meta">${src}${liquidity}${volume}${bookCount}</div>
       </article>
     `;
 }
 
-function renderMarketOutcome(outcome) {
+function renderMarketOutcome(outcome, market) {
     const prob = outcome.probability;
     const probDevig = outcome.probability_devig;       // optional: vig-removed
     const american  = outcome.american;                // optional: "+130", "-150"
@@ -4325,9 +7757,31 @@ function renderMarketOutcome(outcome) {
         : (outcome.price != null ? `${Number(outcome.price).toFixed(2)} dec` : null);
     const isFav = isAmericanFavorite(american) || (prob != null && prob >= 0.5);
     const noQuote = pct == null && oddsText == null;
+    const displayName = outcomeDisplayName(outcome, market);
+
+    // Kalshi's /markets endpoint gives null prices on most MLB
+    // markets — emit a hydration-tagged placeholder so
+    // hydrateKalshiBookCells (called after pane innerHTML set) fills
+    // the price in from /markets/{ticker}/orderbook. The .mab-cell-odds
+    // class makes the existing hydrator find it.
+    if (noQuote && market?.source === "kalshi") {
+        const idMatch = String(outcome.id || "").match(/^(.*):(yes|no)$/i);
+        const ticker = idMatch ? idMatch[1] : (market.raw_market_id || "");
+        return `
+          <div class="market-outcome"
+               data-kalshi-ob-cell
+               data-ticker="${escapeHTMLAttr(ticker)}">
+            <div class="mo-name">${escapeHTML(displayName)}</div>
+            <div class="mo-odds-block mab-cell-odds">
+              <span class="mab-cell-loading">…</span>
+            </div>
+          </div>
+        `;
+    }
+
     return `
       <div class="market-outcome ${isFav ? "is-favorite" : ""}">
-        <div class="mo-name">${escapeHTML(outcome.name || "")}</div>
+        <div class="mo-name">${escapeHTML(displayName)}</div>
         ${noQuote
             ? `<div class="mo-no-quote">no quote yet</div>`
             : `
@@ -4338,6 +7792,29 @@ function renderMarketOutcome(outcome) {
             `}
       </div>
     `;
+}
+
+// Pick the display label for an outcome row. When the market is a
+// binary YES + NO on the SAME Kalshi ticker (player props, team-
+// future questions like "Will Yankees win the AL East"), Kalshi
+// repeats the subject as the name on BOTH outcomes — so the row
+// would read "Yankees / Yankees" instead of "Yes / No". Detect that
+// and show YES/NO instead. Outcomes that are SEPARATE Kalshi
+// markets (moneylines where each team is its own ticker) keep
+// their team name as the label.
+function outcomeDisplayName(outcome, market) {
+    const outcomes = market?.outcomes || [];
+    if (outcomes.length === 2) {
+        const bases = outcomes.map((o) => {
+            const m = String(o.id || "").match(/^(.*):(yes|no)$/i);
+            return m ? m[1] : null;
+        });
+        if (bases[0] && bases[0] === bases[1]) {
+            const m = String(outcome.id || "").match(/^.*:(yes|no)$/i);
+            if (m) return m[1].toUpperCase();
+        }
+    }
+    return outcome.name || "";
 }
 
 function formatAmericanOdds(american) {
@@ -4430,7 +7907,7 @@ async function hydrateMatchup(batterMlbam, pitcherMlbam, requestedFor, balls, st
         const slot = document.getElementById("matchup-slot");
         if (!slot || !m.available) return;
         const html = renderMatchupCard(m);
-        slot.innerHTML = html;
+        safeSetHTML(slot, html);
         cachedMatchupSlot = html;
         cachedMatchupKey = key;
         // After paint, look up player-prop markets for both sides and
@@ -4502,9 +7979,14 @@ function renderForecastWE(d, game) {
     // appeared in the median simulation.
     const used = (d.pitcher_sequence || []).filter((p) => p.pa_count > 0);
     const chain = used.map((p) => {
+        // New role tags from buildPitcherSequence:
+        //   current_starter, closer, setup_<inning>, long_<inning>,
+        //   inning_<inning>, middle_<inning>
         const roleHint = p.role === "closer"            ? "closer"
                        : p.role === "current_starter"   ? "current"
-                       : p.role?.startsWith("inning_")  ? `${p.role.replace("inning_","")}th inn`
+                       : p.role?.startsWith("setup_")   ? `setup · ${p.role.split("_")[1]}th`
+                       : p.role?.startsWith("long_")    ? `long relief · ${p.role.split("_")[1]}th`
+                       : p.role?.startsWith("inning_")  ? `${p.role.split("_")[1]}th inn`
                        : "";
         const roleTag = roleHint ? `<span class="fwe-role">${roleHint}</span>` : "";
         const we = p.we_at_exit !== null ? `${Math.round(p.we_at_exit * 100)}%` : "—";
@@ -5207,7 +8689,7 @@ function renderMatchupCard(m) {
 async function hydrateMatchupPropChips(gameId, batterName, pitcherName) {
     if (!gameId || (!batterName && !pitcherName)) return;
     try {
-        const res = await fetch(`/api/markets`);
+        const res = await fetch(`/api/markets?source=kalshi`);
         if (!res.ok) return;
         const data = await res.json();
         const slot = document.getElementById("matchup-prop-chips-slot");
@@ -5848,4 +9330,188 @@ function renderEmpty(container, message, sub) {
         ${sub ? `<p class="sub">${sub}</p>` : ""}
       </div>
     `;
+}
+
+// ── WATCH ────────────────────────────────────────────────────────────
+// A launcher for MLB.tv. MLB's video is DRM-protected, so the browser
+// can't embed it — the companion Chrome extension (web/extension/) does
+// the watching: it opens the chosen game on MLB.tv and floats it into a
+// picture-in-picture window. This tab lists today's slate and hands the
+// pick to the extension; with no extension installed it falls back to
+// opening MLB.tv in a new tab.
+
+// TEST MODE — until real games are live, route EVERY Watch click to MLB
+// Network (the always-on MLB.tv channel) so the open → play → PiP flow can
+// be exercised end to end before first pitch. Flip to false to go back to
+// per-game streaming gated by game state.
+const WATCH_TEST_MODE = true;
+const WATCH_TEST_URL = "https://www.mlb.com/tv/watch/mlbn";
+
+// The content-bridge content script sets this attribute on <html> when the
+// extension is installed (a content script can't touch page JS directly,
+// but it can write a DOM attribute the page reads).
+function watchExtInstalled() {
+    return document.documentElement.dataset.dcWatchExt === "1";
+}
+
+function showWatch() {
+    activeGameId = null;
+    clearAllTimers();
+    hideAllViews();
+    watchView.hidden = false;
+    refreshWatch();
+    watchTimer = setInterval(refreshWatch, BOARD_REFRESH_MS);
+}
+
+async function refreshWatch() {
+    try {
+        const res = await fetch("/api/games/today");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const games = sortGames(data.games || []);
+        watchView.innerHTML = watchBanner() + (
+            games.length
+                ? `<div class="watch-grid">${games.map(renderWatchCard).join("")}</div>`
+                : `<div class="empty"><p>No games scheduled today.</p></div>`
+        );
+    } catch (e) {
+        renderEmpty(watchView, "Could not load today's games.", `${e.message || e}`);
+    }
+}
+
+function watchBanner() {
+    const ok = watchExtInstalled();
+    return `
+      <header class="watch-head">
+        <h2 class="watch-title">Watch</h2>
+        <p class="watch-sub">Watch any live game — it opens on MLB.tv and floats
+        into a picture-in-picture window you can park in the corner of your
+        screen. Upcoming games show their start time until first pitch.</p>
+        ${WATCH_TEST_MODE ? `<div class="watch-test-note">⚙️ Test mode — every
+          Watch opens the always-on MLB Network feed so you can test the PiP
+          flow before games start.</div>` : ""}
+        <div class="watch-ext ${ok ? "ok" : "missing"}">
+          <span class="dot"></span>
+          ${ok
+            ? `Watch extension connected — games open automatically.`
+            : `Watch extension not detected. Install it from
+               <code>web/extension/</code> to auto-open games in PiP; until
+               then, “Watch” just opens MLB.tv in a new tab.`}
+        </div>
+      </header>
+    `;
+}
+
+function renderWatchCard(g) {
+    const live  = g.status === "Live";
+    const final = g.status === "Final";
+    const score = (s) => (g.status === "Preview" ? "" : (s ?? ""));
+
+    // Normally only Live (the stream) and Final (the replay) are watchable —
+    // MLB.tv has nothing to show for a game that hasn't started, so upcoming
+    // games show a start-time chip instead of a dead Watch button. In test
+    // mode every game is watchable (it opens the always-on MLB Network feed).
+    const watchable = WATCH_TEST_MODE || live || final;
+    const btnText = WATCH_TEST_MODE ? "▶ Watch (test feed)"
+                  : live           ? "▶ Watch live"
+                  :                   "▶ Watch replay";
+    const action = watchable
+        ? `<button class="watch-btn ${live ? "is-live" : ""}"
+                   data-pk="${g.game_pk}"
+                   data-away="${escapeHTMLAttr(g.away)}"
+                   data-home="${escapeHTMLAttr(g.home)}">
+             ${btnText}
+           </button>`
+        : `<div class="watch-soon" title="Watchable once the game starts">
+             🕒 Starts ${stateLabel(g)}
+           </div>`;
+
+    return `
+      <div class="watch-card" data-status="${g.status}">
+        <div class="matchup">
+          <div class="team">
+            <span class="team-id">
+              ${inlineTeamLogo(g.away, { size: 22, class: "team-logo" })}
+              <span class="name">${g.away}</span>
+            </span>
+            <span class="score">${score(g.away_score)}</span>
+          </div>
+          <div class="team">
+            <span class="team-id">
+              ${inlineTeamLogo(g.home, { size: 22, class: "team-logo" })}
+              <span class="name">${g.home}</span>
+            </span>
+            <span class="score">${score(g.home_score)}</span>
+          </div>
+        </div>
+        <div class="watch-state">${stateLabel(g)}</div>
+        ${action}
+      </div>
+    `;
+}
+
+// Delegated click — survives the refreshWatch() innerHTML swaps.
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".watch-btn");
+    if (!btn) return;
+    requestWatch(btn.dataset.pk, btn.dataset.away, btn.dataset.home, btn);
+});
+
+function requestWatch(gamePk, away, home, btn) {
+    // In test mode every click targets the always-on MLB Network feed; a
+    // null watchUrl means the extension builds the per-game deep link.
+    const watchUrl = WATCH_TEST_MODE ? WATCH_TEST_URL : null;
+    if (watchExtInstalled()) {
+        // Hand off to the extension. It opens MLB.tv and auto-PiPs the feed
+        // the moment you tab back here.
+        window.postMessage({
+            source: "diamond-context",
+            type: "DC_WATCH",
+            gamePk, away, home,
+            date: todayInET(),
+            watchUrl,
+        }, "*");
+        if (btn) flashWatchBtn(btn, "Opening on MLB.tv…");
+    } else {
+        // No extension — the most a web page can do is open MLB.tv.
+        window.open(watchUrl || "https://www.mlb.com/tv", "_blank", "noopener");
+        if (btn) flashWatchBtn(btn, "Opened MLB.tv ↗");
+    }
+}
+
+function flashWatchBtn(btn, text) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = text;
+    btn.disabled = true;
+    setTimeout(() => {
+        btn.innerHTML = orig;
+        btn.disabled = false;
+    }, 2500);
+}
+
+// The extension tells us (via content-bridge → postMessage) when a watch
+// request landed on MLB's login page instead of the player — i.e. the
+// MLB.tv session expired. We surface a one-time, one-click re-login prompt.
+// We never touch the password: the user signs in on MLB themselves and the
+// browser session carries every Watch click after that.
+window.addEventListener("message", (e) => {
+    if (e.source !== window) return;
+    if (e.data?.source === "diamond-context-ext" && e.data.type === "DC_LOGIN_REQUIRED") {
+        showWatchLoginPrompt();
+    }
+});
+
+function showWatchLoginPrompt() {
+    if (document.getElementById("dc-watch-login-toast")) return;
+    const el = document.createElement("div");
+    el.id = "dc-watch-login-toast";
+    el.className = "watch-login-toast";
+    el.innerHTML = `
+      <span>You're signed out of MLB.tv. Sign in once — every Watch click works after that.</span>
+      <a href="https://www.mlb.com/login" target="_blank" rel="noopener">Sign in ↗</a>
+      <button class="wlt-x" aria-label="Dismiss">×</button>
+    `;
+    document.body.appendChild(el);
+    el.querySelector(".wlt-x").addEventListener("click", () => el.remove());
+    setTimeout(() => { if (el.isConnected) el.remove(); }, 20000);
 }
