@@ -40,6 +40,17 @@ function fallbackRect(dc) {
 const pending = new Map();   // mlbTabId -> watch intent (until DC_MLB_READY)
 const originTab = new Map(); // mlbTabId -> the DIAMOND:CONTEXT tab that asked
 
+// Send to a tab, swallowing the "Receiving end does not exist" lastError that
+// Chrome logs when that tab has no content script (e.g. it was closed). Reading
+// chrome.runtime.lastError in the callback marks it handled.
+function tabSend(tabId, message) {
+  try {
+    chrome.tabs.sendMessage(tabId, message, () => void chrome.runtime.lastError);
+  } catch (_) {
+    /* tab gone */
+  }
+}
+
 // One reused MLB.tv window — never stack multiple (stacking holds multiple
 // stream slots and trips MLB.tv's concurrent-stream cap, "content not available").
 let watchWindowId = null;
@@ -79,18 +90,21 @@ function openWatch(msg, origin, dcWindowId) {
           if (origin != null) originTab.set(tab.id, origin);
         }
         if (bounds && bounds.width) {
-          const reapply = () =>
-            chrome.windows.update(win.id, {
+          const reapply = () => {
+            const p = chrome.windows.update(win.id, {
               left: bounds.left,
               top: bounds.top,
               width: bounds.width,
               height: bounds.height,
             });
+            if (p && p.catch) p.catch(() => {});
+          };
           setTimeout(reapply, 300);
           setTimeout(reapply, 1000);
           setTimeout(reapply, 2000);
         }
-      });
+      })
+      .catch(() => {});
   };
 
   // Placement is automatic: the page measures the exact box above the field
@@ -132,7 +146,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     findWatchWindow((win) => {
       if (!win) {
         if (origin != null)
-          chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_SAVED", ok: false });
+          tabSend(origin, { type: "DC_WATCH_POS_SAVED", ok: false });
         return;
       }
       const bounds = {
@@ -143,7 +157,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       };
       chrome.storage.local.set({ [BOUNDS_KEY]: bounds }, () => {
         if (origin != null)
-          chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_SAVED", ok: true, bounds });
+          tabSend(origin, { type: "DC_WATCH_POS_SAVED", ok: true, bounds });
       });
     });
     sendResponse?.({ ok: true });
@@ -170,7 +184,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.local.get(BOUNDS_KEY, (data) => {
       const saved = (data && data[BOUNDS_KEY]) || null;
       if (origin != null)
-        chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_STATE", bounds: saved });
+        tabSend(origin, { type: "DC_WATCH_POS_STATE", bounds: saved });
     });
     sendResponse?.({ ok: true });
     return true;
@@ -181,7 +195,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.storage.local.remove(BOUNDS_KEY);
     const origin = sender.tab?.id;
     if (origin != null)
-      chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_RESET", ok: true });
+      tabSend(origin, { type: "DC_WATCH_POS_RESET", ok: true });
     sendResponse?.({ ok: true });
     return true;
   }
@@ -189,7 +203,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // The video is now floating in Picture-in-Picture (stays on top of D:C), so
   // minimize the bare MLB.tv window — only the PiP player remains visible.
   if (msg?.type === "DC_PIP_ON" && sender.tab) {
-    chrome.windows.update(sender.tab.windowId, { state: "minimized" });
+    const p = chrome.windows.update(sender.tab.windowId, { state: "minimized" });
+    if (p && p.catch) p.catch(() => {});
     return;
   }
 
@@ -208,7 +223,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "DC_MLB_READY" && sender.tab) {
     const intent = pending.get(sender.tab.id);
     if (intent) {
-      chrome.tabs.sendMessage(sender.tab.id, { type: "DC_ENTER_PIP", ...intent });
+      tabSend(sender.tab.id, { type: "DC_ENTER_PIP", ...intent });
       pending.delete(sender.tab.id);
     }
   }
@@ -216,7 +231,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "DC_LOGIN_REQUIRED" && sender.tab) {
     const origin = originTab.get(sender.tab.id);
     if (origin != null) {
-      chrome.tabs.sendMessage(origin, { type: "DC_LOGIN_REQUIRED" });
+      tabSend(origin, { type: "DC_LOGIN_REQUIRED" });
     }
   }
 });
