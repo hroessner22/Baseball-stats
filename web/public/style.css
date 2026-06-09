@@ -12277,7 +12277,8 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 .dcw-widget {
     position: fixed;
     right: 16px;
-    bottom: 132px;           /* stacked ABOVE the bot-launcher (ACTIVE BETS) */
+    top: 60px;               /* top-right, just below the 47px header — clear
+                                of the crowded bottom bar (nav / bets / launcher) */
     z-index: 5200;
     display: flex;
     align-items: center;
@@ -12319,10 +12320,31 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 }
 .dcw-x:hover { color: var(--text); }
 
+/* Collapsed state — a small TV icon (never fully hidden, so it can't be lost). */
+.dcw-widget.is-collapsed {
+    padding: 0;
+    gap: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.dcw-grip-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    font-size: 1.05rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.dcw-grip-btn:hover { filter: brightness(1.15); }
+
 #dcw-setup-panel {
     position: fixed;
     right: 16px;
-    bottom: 190px;           /* above the relocated widget */
+    top: 112px;              /* just below the top-right widget */
     z-index: 5300;
     width: min(360px, calc(100vw - 32px));
     padding: 14px 16px;
