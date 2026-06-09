@@ -12388,3 +12388,7 @@ body.dc-watching .field-pane {
     cursor: pointer;
 }
 #dcw-exit-theater:hover { color: var(--text); }
+
+/* On the game view the red "▶ Watch" tab is the watch control, so hide the
+   floating widget there (avoid two Watch buttons on one screen). */
+body:has(#game-view:not([hidden])) .dcw-widget { display: none !important; }

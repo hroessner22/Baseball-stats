@@ -250,6 +250,16 @@
     timer = setInterval(refresh, REFRESH_MS);
   }
 
+  // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can
+  // trigger the exact same flow: extension → MLB.tv → auto-PiP → theater.
+  // For a live game pass watchUrl=null (per-game deep link); otherwise the
+  // always-on MLBN feed.
+  window.DCWatch = {
+    start(gamePk, live) {
+      watch(gamePk, null, null, live ? null : MLBN_URL);
+    },
+  };
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mount);
   } else {

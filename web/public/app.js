@@ -4226,7 +4226,8 @@ function renderGame(g) {
         <button class="game-watch-btn"
                 data-watch
                 data-game-pk="${g.game_pk}"
-                title="Open MLB.tv in a popup window. Use the player's PiP button to keep the video floating over DIAMOND:CONTEXT."
+                data-live="${g.status === 'Live' ? '1' : '0'}"
+                title="Watch on MLB.tv — opens the feed and floats it over DIAMOND:CONTEXT."
                 aria-label="Watch on MLB.tv">▶ Watch</button>
       </div>
       ${mode === 'gamecast'
@@ -4814,17 +4815,15 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     const pk = btn.getAttribute("data-game-pk");
     if (!pk) return;
-    const url = `https://www.mlb.com/tv/g${pk}`;
-    // 720p-ish window, anchored to the top-right so it doesn't cover
-    // the bot drawer (which docks to the right). User can drag /
-    // resize after open.
-    const w = 720, h = 460;
-    const left = Math.max(0, (window.screen.availWidth || 1280) - w - 40);
-    const top  = 80;
-    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes`;
-    const win = window.open(url, "mlbtv-stream", features);
-    if (!win) {
-        alert("Popup blocked. Allow popups for DIAMOND:CONTEXT and try again — the MLB.tv player needs to open as a separate window.");
+    // Same flow as the Watch widget: hand the game to the extension, which
+    // opens MLB.tv, auto-PiPs it, and centers it (theater layout). Falls back
+    // to opening MLB.tv if the extension isn't installed.
+    const live = btn.getAttribute("data-live") === "1";
+    if (window.DCWatch && document.documentElement.dataset.dcWatchExt === "1") {
+        window.DCWatch.start(pk, live);
+    } else {
+        window.open(live ? `https://www.mlb.com/tv/g${pk}` : "https://www.mlb.com/tv",
+                    "_blank", "noopener");
     }
 });
 
@@ -7029,11 +7028,9 @@ function renderMarketsAllBooksPanel(d) {
             || (oName.includes(want === "home" ? "home" : "away"));
     };
 
-    // Friendly chip labels — raw slugs ("vi_draftkings") are engineering
-    // shorthand; users see "DraftKings (VI)" instead so the firehose is
-    // readable. VI = scraped from VegasInsider's HTML grid, BP = pulled
-    // from BettingPros's aggregator API. Same operator can appear twice
-    // (e.g. DraftKings via VI + BP) so users can sanity-check.
+    // Friendly chip labels for the 8 VegasInsider-scraped books — the
+    // raw slug ("vi_draftkings") is engineering shorthand; users see
+    // "DraftKings (VI)" instead so the firehose is readable.
     const VI_LABELS = {
         vi_draftkings: "DraftKings (VI)",
         vi_fanduel:    "FanDuel (VI)",
@@ -7044,25 +7041,7 @@ function renderMarketsAllBooksPanel(d) {
         vi_fanatics:   "Fanatics (VI)",
         vi_riverscasino: "BetRivers (VI)",
     };
-    const BP_LABELS = {
-        bp_draftkings:     "DraftKings (BP)",
-        bp_fanduel:        "FanDuel (BP)",
-        bp_betmgm:         "BetMGM (BP)",
-        bp_caesars:        "Caesars (BP)",
-        bp_bet365:         "Bet365 (BP)",
-        bp_hardrock:       "Hard Rock (BP)",
-        bp_fanatics:       "Fanatics (BP)",
-        bp_betrivers:      "BetRivers (BP)",
-        bp_sugarhouse:     "SugarHouse (BP)",
-        bp_tipico:         "Tipico",
-        bp_thescorebet:    "theScore Bet",
-        bp_prophetx:       "ProphetX",
-        bp_fliff:          "Fliff",
-        bp_novig:          "Novig",
-        bp_dk_predictions: "DK Predictions",
-        bp_fanduel_picks:  "FanDuel Picks",
-    };
-    const labelForSource = (s) => VI_LABELS[s] || BP_LABELS[s] || s;
+    const labelForSource = (s) => VI_LABELS[s] || s;
 
     const cards = sources.map((src) => {
         const ml = allML.find((m) => m.source === src);
