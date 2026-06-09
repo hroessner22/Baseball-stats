@@ -53,7 +53,7 @@
     pipBtn.style.cssText = [
       "position:fixed", "top:12px", "left:50%", "transform:translateX(-50%)",
       "z-index:2147483647", "padding:16px 26px", "font:700 17px system-ui,sans-serif",
-      "color:#fff", "background:#c8102e", "border:0", "border-radius:999px",
+      "color:#fff", "background:#1a73e8", "border:0", "border-radius:999px",
       "box-shadow:0 8px 28px rgba(0,0,0,.55)", "cursor:pointer",
     ].join(";");
     pipBtn.addEventListener("click", async (e) => {
