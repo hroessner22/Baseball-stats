@@ -12368,15 +12368,8 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
    Hammerspoon helper. Shrink the field proportionally (the field SVG scales
    with its container width) and drop it below the video. The two tunables to
    match your screen: max-width here, and TOP_OFFSET in hammerspoon-dc-pip.lua. */
-body.dc-watching .field-canvas {
-    max-width: 56%;             /* shrink the field proportionally (SVG scales) */
-    margin-left: auto;
-    margin-right: auto;
-    transition: max-width .3s ease;
-}
-/* Push the field pane down so the centered PiP has room above it. (margin-top
-   on the canvas is overridden — it's a grid item — so reserve space on the
-   pane instead.) */
+/* Theater mode only SHIFTS the field down to open the area at the top where
+   the centered PiP lands — the field keeps its normal size (no shrink). */
 body.dc-watching .field-pane {
     padding-top: 40vh;
     transition: padding-top .3s ease;
