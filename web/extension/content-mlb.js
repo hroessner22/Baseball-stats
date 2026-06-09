@@ -69,36 +69,34 @@
       return;
     }
 
+    armAutoPip(video);          // register the Media Session auto-PiP path
     await tryPlay(video);
-    await enablePiP(video);
-  }
+    showPiPOverlay(video);      // one-tap fallback, always available
 
-  // Float the feed into picture-in-picture.
-  //
-  // requestPictureInPicture() requires a user gesture, and the Watch click
-  // happened in the DIAMOND:CONTEXT tab (a gesture there doesn't carry to
-  // this one). video.autoPictureInPicture isn't supported in this Chrome
-  // either. So: try once (covers browsers/States where it's allowed), and
-  // if that's blocked, show a one-tap overlay — the user's first click in
-  // THIS tab is a gesture that pops PiP. After it floats out, switching back
-  // to DIAMOND:CONTEXT leaves the PiP window on top; drag it to the corner
-  // once and Chrome keeps it there.
-  async function enablePiP(video) {
-    video.autoPictureInPicture = true; // harmless where unsupported; helps Safari
-    try {
-      if (
-        document.pictureInPictureEnabled &&
-        video !== document.pictureInPictureElement
-      ) {
-        await video.requestPictureInPicture();
-        return; // a gesture was available — done
+    // Tell the worker we're playing so it switches focus back to
+    // DIAMOND:CONTEXT — hiding this tab triggers Chrome's automatic PiP.
+    const announce = () => chrome.runtime.sendMessage({ type: "DC_PLAYING" });
+    if (!video.paused && video.readyState >= 2) announce();
+    else video.addEventListener("playing", announce, { once: true });
+
+    // If auto-PiP doesn't engage shortly after this tab is hidden, ask the
+    // worker to bring this tab back so the one-tap overlay is usable.
+    let checked = false;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && !checked) {
+        checked = true;
+        setTimeout(() => {
+          if (!document.pictureInPictureElement) {
+            chrome.runtime.sendMessage({ type: "DC_PIP_FAILED" });
+          }
+        }, 2500);
       }
-    } catch (_) {
-      /* needs a gesture in this tab — fall through to the overlay */
-    }
-    showPiPOverlay(video);
+    });
   }
 
+  // One-tap PiP fallback overlay (used when Chrome's automatic PiP doesn't
+  // fire). requestPictureInPicture() needs a user gesture, so a single click
+  // on this button — a gesture in THIS tab — pops the feed into PiP.
   function showPiPOverlay(video) {
     if (document.getElementById("dc-pip-overlay")) return;
     const el = document.createElement("div");
