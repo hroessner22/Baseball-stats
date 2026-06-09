@@ -11,6 +11,8 @@
 
 local M = {}
 
+local placed = {}          -- window id -> true; each video window is sized/placed
+                           -- ONCE, then left alone so the user can resize/move it
 local SCAN_INTERVAL = 0.5
 local WIDTH_FRAC = 0.70    -- video width ÷ D:C window width (fills the field column)
 local CENTER_FRAC = 0.50   -- horizontal center, as a fraction of the D:C window
@@ -53,12 +55,18 @@ local function scan()
   if x < f.x + 8 then x = f.x + 8 end
   for _, win in ipairs(chrome:allWindows()) do
     if isVideoWindow(win) then
-      local wf = win:frame()
-      if math.abs(wf.x - x) > TOLERANCE or math.abs(wf.y - y) > TOLERANCE
-        or math.abs(wf.w - w) > TOLERANCE or math.abs(wf.h - h) > TOLERANCE then
-        win:setFrame({ x = x, y = y, w = w, h = h })  -- size to fill + position
+      local id = win:id()
+      -- Set the size + position ONCE, when the window first appears. After
+      -- that we leave it alone so you can resize / drag it freely.
+      if id and not placed[id] then
+        placed[id] = true
+        win:setFrame({ x = x, y = y, w = w, h = h })
       end
     end
+  end
+  -- forget closed windows so a re-opened video gets placed again
+  for id in pairs(placed) do
+    if not hs.window.get(id) then placed[id] = nil end
   end
 end
 
