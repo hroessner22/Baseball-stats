@@ -35,17 +35,58 @@
     enablePip(video);
   }
 
-  // Make sure the PiP button is available (some players disable it), and when
-  // the user clicks PiP, minimize this bare MLB.tv window so only the floating
-  // player remains. DIAMOND:CONTEXT + the Hammerspoon helper then snap that PiP
-  // window into the box above the field.
+  // Picture-in-Picture needs ONE user click in this tab (a hard browser rule —
+  // it can't be started programmatically). So we drop a big, unmissable button
+  // on top of the MLB.tv window: one click pops the game into PiP, then this
+  // bare window minimizes and DIAMOND:CONTEXT + Hammerspoon snap the PiP window
+  // into the box above the field.
+  let pipBtn = null;
+
+  function removePipButton() {
+    if (pipBtn) { pipBtn.remove(); pipBtn = null; }
+  }
+
+  function showPipButton(video) {
+    if (pipBtn || document.pictureInPictureElement === video) return;
+    pipBtn = document.createElement("button");
+    pipBtn.textContent = "▶ Pop into Picture-in-Picture";
+    pipBtn.style.cssText = [
+      "position:fixed", "top:12px", "left:50%", "transform:translateX(-50%)",
+      "z-index:2147483647", "padding:16px 26px", "font:700 17px system-ui,sans-serif",
+      "color:#fff", "background:#c8102e", "border:0", "border-radius:999px",
+      "box-shadow:0 8px 28px rgba(0,0,0,.55)", "cursor:pointer",
+    ].join(";");
+    pipBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Re-find the active video at click time — the player may have swapped
+      // elements (ads → game) since the button appeared.
+      const v = pickVideo() || video;
+      try {
+        try { v.disablePictureInPicture = false; } catch (_) {}
+        if (v.paused) { try { await v.play(); } catch (_) {} }
+        await v.requestPictureInPicture();
+      } catch (_) {
+        pipBtn.textContent = "Click the video first, then tap here";
+      }
+    });
+    document.documentElement.appendChild(pipBtn);
+  }
+
   function enablePip(video) {
     if (!("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled) return;
     try { video.disablePictureInPicture = false; } catch (_) {}
     try { video.autoPictureInPicture = true; } catch (_) {}
+
+    // Once it's floating, minimize this bare window; if the user closes PiP,
+    // bring the button back.
     video.addEventListener("enterpictureinpicture", () => {
+      removePipButton();
       chrome.runtime.sendMessage({ type: "DC_PIP_ON" });
     });
+    video.addEventListener("leavepictureinpicture", () => showPipButton(video));
+
+    showPipButton(video);
   }
 
   // Largest visible <video> on the page is the game feed.
