@@ -186,6 +186,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // The video is now floating in Picture-in-Picture (stays on top of D:C), so
+  // minimize the bare MLB.tv window — only the PiP player remains visible.
+  if (msg?.type === "DC_PIP_ON" && sender.tab) {
+    chrome.windows.update(sender.tab.windowId, { state: "minimized" });
+    return;
+  }
+
   if (msg?.type === "DC_MLB_READY" && sender.tab) {
     const intent = pending.get(sender.tab.id);
     if (intent) {
