@@ -15,14 +15,16 @@ local MARGIN = 16        -- gap from the screen edges, in points
 local SCAN_INTERVAL = 0.6
 local snapped = {}       -- window id -> true (so each PiP window moves once)
 
-local MAX_W = 820       -- clamp the corner window so it stays compact
-local MAX_H = 520
+local PIP_WIDTH_FRAC = 0.40   -- PiP width as a fraction of the D:C window width
+local PIP_CENTER_FRAC = 0.30  -- horizontal center of the PiP, as a fraction of
+                              -- window width (~the live-view / field column, not
+                              -- the whole window — the right side holds stats)
+local TOP_OFFSET = 118        -- px below the D:C window top (clears header + board strip)
 
--- Should this window be snapped to the corner? Catches both:
---   1. Chrome's Picture-in-Picture window (always-on-top, just the video), and
---   2. the dedicated "MLB.TV Web Player" window (the game in its own window).
--- The fallback catches PiP even if a Chrome update renames its title, by
--- looking for a small, non-standard floating window.
+-- Is this the Chrome Picture-in-Picture window? (Just the video, always-on-top.)
+-- Title match first; fallback catches it even if Chrome renames the title, via
+-- a small non-standard floating window. We only move the PiP — never the full
+-- MLB.TV player window (that's the source, left wherever it is).
 local function shouldSnap(win)
   if not win then return false end
   local app = win:application()
@@ -31,9 +33,6 @@ local function shouldSnap(win)
 
   local title = (win:title() or ""):lower()
   if title:find("picture in picture") or title:find("picture%-in%-picture") then
-    return true
-  end
-  if title:find("mlb%.tv web player") then
     return true
   end
 
@@ -47,18 +46,38 @@ local function shouldSnap(win)
   return false
 end
 
+-- Find the DIAMOND:CONTEXT browser window so we can center the PiP over it.
+local function dcWindow()
+  local chrome = hs.application.get("Google Chrome")
+  if not chrome then return nil end
+  for _, w in ipairs(chrome:allWindows()) do
+    if (w:title() or ""):find("DIAMOND") then return w end
+  end
+  return nil
+end
+
+-- Center the PiP over the top-center of the DIAMOND:CONTEXT window (so the
+-- field can sit below it — see the watch-mode layout in the web app). Falls
+-- back to the screen's bottom-right if the D:C window isn't open.
 local function snap(win)
-  local screen = win:screen() or hs.screen.mainScreen()
-  local sf = screen:frame()          -- usable area (excludes menu bar + Dock)
-  local wf = win:frame()
-  local w = math.min(wf.w, MAX_W)
-  local h = math.min(wf.h, MAX_H)
-  win:setFrame({
-    x = sf.x + sf.w - w - MARGIN,
-    y = sf.y + sf.h - h - MARGIN,
-    w = w,
-    h = h,
-  })
+  local dc = dcWindow()
+  if dc then
+    local f = dc:frame()
+    local w = math.floor(f.w * PIP_WIDTH_FRAC)
+    local h = math.floor(w * 9 / 16)
+    win:setFrame({
+      x = math.floor(f.x + f.w * PIP_CENTER_FRAC - w / 2),
+      y = math.floor(f.y + TOP_OFFSET),
+      w = w,
+      h = h,
+    })
+  else
+    local sf = (win:screen() or hs.screen.mainScreen()):frame()
+    local wf = win:frame()
+    local w = math.min(wf.w, 820)
+    local h = math.min(wf.h, 520)
+    win:setFrame({ x = sf.x + sf.w - w - MARGIN, y = sf.y + sf.h - h - MARGIN, w = w, h = h })
+  end
 end
 
 local function scan()

@@ -12277,7 +12277,8 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 .dcw-widget {
     position: fixed;
     right: 16px;
-    bottom: 84px;            /* clear of the bottom nav */
+    top: 60px;               /* top-right, just below the 47px header — clear
+                                of the crowded bottom bar (nav / bets / launcher) */
     z-index: 5200;
     display: flex;
     align-items: center;
@@ -12319,10 +12320,31 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 }
 .dcw-x:hover { color: var(--text); }
 
+/* Collapsed state — a small TV icon (never fully hidden, so it can't be lost). */
+.dcw-widget.is-collapsed {
+    padding: 0;
+    gap: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.dcw-grip-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    font-size: 1.05rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.dcw-grip-btn:hover { filter: brightness(1.15); }
+
 #dcw-setup-panel {
     position: fixed;
     right: 16px;
-    bottom: 140px;
+    top: 112px;              /* just below the top-right widget */
     z-index: 5300;
     width: min(360px, calc(100vw - 32px));
     padding: 14px 16px;
@@ -12340,3 +12362,33 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 .dcw-steps code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 0.76rem; }
 .dcw-steps a { color: var(--accent-action); }
 .dcw-panel-foot { margin: 10px 0 0; font-size: 0.78rem; color: var(--text-faint); }
+
+/* ── THEATER (watch) MODE ──────────────────────────────────────────────
+   When watching, the PiP is centered over the top of the D:C window by the
+   Hammerspoon helper. Shrink the field proportionally (the field SVG scales
+   with its container width) and drop it below the video. The two tunables to
+   match your screen: max-width here, and TOP_OFFSET in hammerspoon-dc-pip.lua. */
+/* Theater mode only SHIFTS the field down to open the area at the top where
+   the centered PiP lands — the field keeps its normal size (no shrink). */
+body.dc-watching .field-pane {
+    padding-top: 40vh;
+    transition: padding-top .3s ease;
+}
+#dcw-exit-theater {
+    position: fixed;
+    top: 60px;
+    left: 16px;
+    z-index: 5400;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-dim);
+    font: 600 12px system-ui, sans-serif;
+    cursor: pointer;
+}
+#dcw-exit-theater:hover { color: var(--text); }
+
+/* On the game view the red "▶ Watch" tab is the watch control, so hide the
+   floating widget there (avoid two Watch buttons on one screen). */
+body:has(#game-view:not([hidden])) .dcw-widget { display: none !important; }

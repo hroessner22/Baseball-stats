@@ -19,7 +19,12 @@
 
   const REFRESH_MS = 30000;
   const MLBN_URL = "https://www.mlb.com/tv/watch/mlbn"; // always-on fallback feed
-  const LS_HIDDEN = "diamond_context_watch_widget_hidden";
+  const LS_COLLAPSED = "diamond_context_watch_widget_collapsed";
+
+  // One-time cleanup: an earlier build had a "×" that hid the widget forever
+  // via this key. Remove it so anyone who dismissed it gets the widget back —
+  // the widget now collapses to an icon instead of vanishing.
+  try { localStorage.removeItem("diamond_context_watch_widget_hidden"); } catch {}
 
   let rootEl = null;
   let timer = null;
@@ -31,11 +36,13 @@
     return document.documentElement.dataset.dcWatchExt === "1";
   }
 
-  function hidden() {
-    try { return localStorage.getItem(LS_HIDDEN) === "1"; } catch { return false; }
+  // Collapsed = shrunk to a small TV icon (never fully hidden, so it can't be
+  // lost). Persists across pages.
+  function collapsed() {
+    try { return localStorage.getItem(LS_COLLAPSED) === "1"; } catch { return false; }
   }
-  function setHidden(v) {
-    try { localStorage.setItem(LS_HIDDEN, v ? "1" : "0"); } catch {}
+  function setCollapsed(v) {
+    try { localStorage.setItem(LS_COLLAPSED, v ? "1" : "0"); } catch {}
   }
 
   // ── data ────────────────────────────────────────────────────────────
@@ -78,16 +85,48 @@
         { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl },
         "*"
       );
+      // Enter "theater" layout: the PiP gets centered over this window by the
+      // Hammerspoon helper, so shrink the field to sit below it.
+      setTheater(true);
     } else {
       openSetup();
+    }
+  }
+
+  // ── theater mode ────────────────────────────────────────────────────
+  // Shrinks the field (body.dc-watching) so the centered PiP has room above
+  // it. Persists so it survives navigation; a floating "exit" chip turns it
+  // off. The PiP itself is positioned by the Hammerspoon helper.
+  const LS_THEATER = "diamond_context_theater";
+  function theaterOn() {
+    try { return localStorage.getItem(LS_THEATER) === "1"; } catch { return false; }
+  }
+  function setTheater(on) {
+    try { localStorage.setItem(LS_THEATER, on ? "1" : "0"); } catch {}
+    document.body.classList.toggle("dc-watching", on);
+    let exit = document.getElementById("dcw-exit-theater");
+    if (on && !exit) {
+      exit = document.createElement("button");
+      exit.id = "dcw-exit-theater";
+      exit.textContent = "✕ Exit theater";
+      exit.addEventListener("click", () => setTheater(false));
+      document.body.appendChild(exit);
+    } else if (!on && exit) {
+      exit.remove();
     }
   }
 
   // ── render ──────────────────────────────────────────────────────────
   function render() {
     if (!rootEl) return;
-    if (hidden()) { rootEl.style.display = "none"; return; }
-    rootEl.style.display = "flex";
+
+    // Collapsed: just a small TV icon that re-expands on click.
+    if (collapsed()) {
+      rootEl.classList.add("is-collapsed");
+      rootEl.innerHTML = `<button class="dcw-grip-btn" title="Watch a game">📺</button>`;
+      return;
+    }
+    rootEl.classList.remove("is-collapsed");
 
     const { game, live } = featured();
     const ready = extInstalled();
@@ -126,7 +165,7 @@
     return `
       <span class="dcw-grip" title="DIAMOND:CONTEXT — Watch">📺</span>
       ${inner}
-      <button class="dcw-x" title="Hide">×</button>
+      <button class="dcw-x" title="Minimize">–</button>
     `;
   }
 
@@ -192,7 +231,10 @@
 
     // delegated clicks
     rootEl.addEventListener("click", (e) => {
-      if (e.target.closest(".dcw-x")) { setHidden(true); render(); return; }
+      // collapsed icon -> expand
+      if (e.target.closest(".dcw-grip-btn")) { setCollapsed(false); render(); return; }
+      // minimize -> collapse to icon (never fully hidden)
+      if (e.target.closest(".dcw-x")) { setCollapsed(true); render(); return; }
       if (e.target.closest(".dcw-setup")) { openSetup(); return; }
       const btn = e.target.closest(".dcw-btn");
       if (btn) {
@@ -203,9 +245,20 @@
       }
     });
 
+    if (theaterOn()) setTheater(true); // restore theater layout across navigation
     refresh();
     timer = setInterval(refresh, REFRESH_MS);
   }
+
+  // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can
+  // trigger the exact same flow: extension → MLB.tv → auto-PiP → theater.
+  // For a live game pass watchUrl=null (per-game deep link); otherwise the
+  // always-on MLBN feed.
+  window.DCWatch = {
+    start(gamePk, live) {
+      watch(gamePk, null, null, live ? null : MLBN_URL);
+    },
+  };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mount);

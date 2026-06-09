@@ -1,45 +1,46 @@
 // background.js — the service worker.
 //
-// Receives a "watch this game" request from the DIAMOND:CONTEXT page,
-// opens the game on MLB.tv, and once the player page reports in, tells it
-// to start playback and float into picture-in-picture.
+// Receives a "watch this game" request from DIAMOND:CONTEXT, opens MLB.tv,
+// starts playback, then switches focus back to D:C so the now-hidden MLB tab
+// auto-pops into picture-in-picture (via the Media Session handler that
+// content-mlb.js registers). Falls back to the one-tap overlay if Chrome's
+// auto-PiP doesn't fire.
 
-// MLB.tv deep link for a gamePk. MLB changes this path from time to time;
-// if it stops landing on the player, update it here. It degrades safely:
-// the in-page script (content-mlb.js) falls back to finding the game in
-// the MLB.tv listing by team name, so a stale URL means "open the listing"
-// rather than a hard break.
+// MLB.tv deep link for a gamePk. MLB changes this path from time to time; the
+// in-page script falls back to finding the game in the listing, so a stale URL
+// degrades to "open the listing" rather than a hard break.
 function mlbTvUrl(gamePk) {
   return `https://www.mlb.com/tv/g${gamePk}`;
 }
 
-// mlbTabId -> the watch intent, held until that tab's content script reports
-// it has loaded (DC_MLB_READY). We only auto-play + auto-PiP on tabs we
-// opened for a watch request, never on tabs the user opened themselves.
-const pending = new Map();
+const pending = new Map();   // mlbTabId -> watch intent (until DC_MLB_READY)
+const originTab = new Map(); // mlbTabId -> the DIAMOND:CONTEXT tab that asked
 
-// mlbTabId -> the DIAMOND:CONTEXT tab that asked for this game. Kept for the
-// life of the MLB tab so we can route a "you're signed out" prompt back to
-// the app where the user is looking.
-const originTab = new Map();
+// One reused MLB.tv tab — never stack multiple (stacking holds multiple stream
+// slots and trips MLB.tv's concurrent-stream cap, "content not available").
+let mlbTabId = null;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "DC_WATCH") {
     const origin = sender.tab?.id;
-    // watchUrl (test mode) wins; otherwise build the per-game deep link.
+    const winId = sender.tab?.windowId;
     const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
-    // Open in its OWN window (not a tab next to DIAMOND:CONTEXT) so it
-    // doesn't clutter the app's tab bar and Hammerspoon can snap it to the
-    // corner. 'popup' drops the tab bar/omnibox for a cleaner watch window.
-    chrome.windows
-      .create({ url, type: "popup", width: 760, height: 470, focused: true })
-      .then((win) => {
-        const tab = win.tabs && win.tabs[0];
-        if (tab) {
-          pending.set(tab.id, msg);
-          if (origin != null) originTab.set(tab.id, origin);
-        }
-      });
+
+    const remember = (tabId) => {
+      mlbTabId = tabId;
+      pending.set(tabId, msg);
+      if (origin != null) originTab.set(tabId, origin);
+    };
+
+    if (mlbTabId != null) {
+      // Reuse the existing MLB tab (one stream only).
+      chrome.tabs.update(mlbTabId, { url, active: true }).then(
+        (t) => remember(t.id),
+        () => chrome.tabs.create({ url, active: true, windowId: winId }).then((t) => remember(t.id))
+      );
+    } else {
+      chrome.tabs.create({ url, active: true, windowId: winId }).then((t) => remember(t.id));
+    }
     sendResponse?.({ ok: true });
     return true;
   }
@@ -50,6 +51,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.tabs.sendMessage(sender.tab.id, { type: "DC_ENTER_PIP", ...intent });
       pending.delete(sender.tab.id);
     }
+  }
+
+  // Feed is playing — switch focus back to DIAMOND:CONTEXT. That hides the MLB
+  // tab, which triggers Chrome's automatic PiP (the Media Session handler).
+  if (msg?.type === "DC_PLAYING" && sender.tab) {
+    const origin = originTab.get(sender.tab.id);
+    if (origin != null) {
+      chrome.tabs.update(origin, { active: true }).catch(() => {});
+    }
+  }
+
+  // Auto-PiP didn't engage after the tab was hidden — bring the MLB tab back
+  // so the one-tap overlay is visible (graceful fallback).
+  if (msg?.type === "DC_PIP_FAILED" && sender.tab) {
+    chrome.tabs.update(sender.tab.id, { active: true }).catch(() => {});
   }
 
   if (msg?.type === "DC_LOGIN_REQUIRED" && sender.tab) {
@@ -63,4 +79,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   pending.delete(tabId);
   originTab.delete(tabId);
+  if (tabId === mlbTabId) mlbTabId = null;
 });

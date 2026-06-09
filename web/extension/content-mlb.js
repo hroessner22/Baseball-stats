@@ -27,9 +27,12 @@
   // possible at all on MLB.tv.
   offerPiPWhenReady();
 
+  let autoPipArmed = false;
+
   async function offerPiPWhenReady() {
     for (let i = 0; i < 90; i++) {
       const v = pickVideo();
+      if (v) armAutoPip(v); // set up automatic PiP as soon as a feed exists
       if (
         v &&
         !document.getElementById("dc-pip-overlay") &&
@@ -66,36 +69,34 @@
       return;
     }
 
+    armAutoPip(video);          // register the Media Session auto-PiP path
     await tryPlay(video);
-    await enablePiP(video);
-  }
+    showPiPOverlay(video);      // one-tap fallback, always available
 
-  // Float the feed into picture-in-picture.
-  //
-  // requestPictureInPicture() requires a user gesture, and the Watch click
-  // happened in the DIAMOND:CONTEXT tab (a gesture there doesn't carry to
-  // this one). video.autoPictureInPicture isn't supported in this Chrome
-  // either. So: try once (covers browsers/States where it's allowed), and
-  // if that's blocked, show a one-tap overlay — the user's first click in
-  // THIS tab is a gesture that pops PiP. After it floats out, switching back
-  // to DIAMOND:CONTEXT leaves the PiP window on top; drag it to the corner
-  // once and Chrome keeps it there.
-  async function enablePiP(video) {
-    video.autoPictureInPicture = true; // harmless where unsupported; helps Safari
-    try {
-      if (
-        document.pictureInPictureEnabled &&
-        video !== document.pictureInPictureElement
-      ) {
-        await video.requestPictureInPicture();
-        return; // a gesture was available — done
+    // Tell the worker we're playing so it switches focus back to
+    // DIAMOND:CONTEXT — hiding this tab triggers Chrome's automatic PiP.
+    const announce = () => chrome.runtime.sendMessage({ type: "DC_PLAYING" });
+    if (!video.paused && video.readyState >= 2) announce();
+    else video.addEventListener("playing", announce, { once: true });
+
+    // If auto-PiP doesn't engage shortly after this tab is hidden, ask the
+    // worker to bring this tab back so the one-tap overlay is usable.
+    let checked = false;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && !checked) {
+        checked = true;
+        setTimeout(() => {
+          if (!document.pictureInPictureElement) {
+            chrome.runtime.sendMessage({ type: "DC_PIP_FAILED" });
+          }
+        }, 2500);
       }
-    } catch (_) {
-      /* needs a gesture in this tab — fall through to the overlay */
-    }
-    showPiPOverlay(video);
+    });
   }
 
+  // One-tap PiP fallback overlay (used when Chrome's automatic PiP doesn't
+  // fire). requestPictureInPicture() needs a user gesture, so a single click
+  // on this button — a gesture in THIS tab — pops the feed into PiP.
   function showPiPOverlay(video) {
     if (document.getElementById("dc-pip-overlay")) return;
     const el = document.createElement("div");
@@ -119,14 +120,67 @@
     // Clicking the button itself is the user gesture that PiP requires. We
     // bind to the button (not the whole document) so it doesn't hijack
     // clicks elsewhere on the page.
-    el.addEventListener("click", async (e) => {
+    el.addEventListener("click", (e) => {
       e.stopPropagation();
       el.remove();
-      try {
-        await video.requestPictureInPicture();
-      } catch (_) {}
+      // One button does it all: start playback (MLB often needs a play click
+      // first) AND pop to picture-in-picture — both inside this click so they
+      // count as a user gesture.
+      startAndPip(video);
     });
     document.body.appendChild(el);
+  }
+
+  // Play the feed (if paused) and float it into PiP. requestPictureInPicture
+  // needs the video to have a frame (readyState ≥ 1) plus a recent user
+  // gesture, so we try right away (covers an already-buffered/paused feed)
+  // and again the moment playback actually starts — both land inside the
+  // click's activation window.
+  function startAndPip(video) {
+    const p = video.play();
+    if (p && p.catch) p.catch(() => clickPlayButton());
+    pip(video);
+    const onReady = () => pip(video);
+    video.addEventListener("playing", onReady, { once: true });
+    video.addEventListener("loadeddata", onReady, { once: true });
+    setTimeout(() => {
+      video.removeEventListener("playing", onReady);
+      video.removeEventListener("loadeddata", onReady);
+    }, 8000);
+  }
+
+  function pip(video) {
+    try {
+      if (
+        document.pictureInPictureEnabled &&
+        video !== document.pictureInPictureElement &&
+        video.readyState >= 1
+      ) {
+        video.requestPictureInPicture();
+      }
+    } catch (_) {}
+  }
+
+  function clickPlayButton() {
+    const b = document.querySelector(
+      '[aria-label*="play" i], button[title*="play" i], .bmpui-ui-playbacktogglebutton'
+    );
+    if (b) b.click();
+  }
+
+  // Automatic PiP — no overlay click. Registers the Media Session
+  // "enterpictureinpicture" action so Chrome floats the feed into PiP on its
+  // own when you switch back to DIAMOND:CONTEXT, and sets autoPictureInPicture
+  // where supported. Best-effort (Chrome only auto-fires when its auto-PiP is
+  // available + the feed is playing), so the overlay button stays as a
+  // guaranteed one-click fallback.
+  function armAutoPip(video) {
+    if (autoPipArmed) return;
+    autoPipArmed = true;
+    try { video.autoPictureInPicture = true; } catch (_) {}
+    try {
+      navigator.mediaSession.setActionHandler("enterpictureinpicture", () => pip(video));
+    } catch (_) {}
   }
 
   // Largest visible <video> on the page is the game feed.
