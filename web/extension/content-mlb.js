@@ -23,11 +23,6 @@
     if (msg?.type === "DC_ENTER_PIP") startWatch(msg);
   });
 
-  // Show the PiP button IMMEDIATELY on any MLB.tv page — never gate it on a
-  // video being detected (pre-game / MLB.TV HOME pages may not have one yet).
-  // The button finds the playing video when you click it.
-  if (/\/tv\b/.test(location.pathname)) showPipButton();
-
   async function startWatch(intent) {
     showPipButton(); // make sure the button is up no matter what
     // If the deep link missed and we're on a listing, click into the game.
@@ -181,4 +176,19 @@
       await new Promise((r) => setTimeout(r, 2500));
     }
   }
+
+  // Keep the button present on MLB.tv watch pages — show it immediately and
+  // re-add it if the player's SPA re-renders the page out from under it. (Runs
+  // AFTER all declarations above, so `pipBtn` is initialized — calling
+  // showPipButton earlier would hit the let's temporal dead zone and throw.)
+  function ensureButton() {
+    if (!/\/tv\b/.test(location.pathname)) { removePipButton(); return; }
+    if (document.pictureInPictureElement) { removePipButton(); return; }
+    if (!pipBtn || !document.documentElement.contains(pipBtn)) {
+      pipBtn = null;
+      showPipButton();
+    }
+  }
+  ensureButton();
+  setInterval(ensureButton, 1500);
 })();
