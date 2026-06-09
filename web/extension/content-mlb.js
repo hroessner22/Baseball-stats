@@ -27,9 +27,12 @@
   // possible at all on MLB.tv.
   offerPiPWhenReady();
 
+  let autoPipArmed = false;
+
   async function offerPiPWhenReady() {
     for (let i = 0; i < 90; i++) {
       const v = pickVideo();
+      if (v) armAutoPip(v); // set up automatic PiP as soon as a feed exists
       if (
         v &&
         !document.getElementById("dc-pip-overlay") &&
@@ -165,6 +168,21 @@
       '[aria-label*="play" i], button[title*="play" i], .bmpui-ui-playbacktogglebutton'
     );
     if (b) b.click();
+  }
+
+  // Automatic PiP — no overlay click. Registers the Media Session
+  // "enterpictureinpicture" action so Chrome floats the feed into PiP on its
+  // own when you switch back to DIAMOND:CONTEXT, and sets autoPictureInPicture
+  // where supported. Best-effort (Chrome only auto-fires when its auto-PiP is
+  // available + the feed is playing), so the overlay button stays as a
+  // guaranteed one-click fallback.
+  function armAutoPip(video) {
+    if (autoPipArmed) return;
+    autoPipArmed = true;
+    try { video.autoPictureInPicture = true; } catch (_) {}
+    try {
+      navigator.mediaSession.setActionHandler("enterpictureinpicture", () => pip(video));
+    } catch (_) {}
   }
 
   // Largest visible <video> on the page is the game feed.

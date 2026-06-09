@@ -16,6 +16,9 @@ local SCAN_INTERVAL = 0.6
 local snapped = {}       -- window id -> true (so each PiP window moves once)
 
 local PIP_WIDTH_FRAC = 0.40   -- PiP width as a fraction of the D:C window width
+local PIP_CENTER_FRAC = 0.30  -- horizontal center of the PiP, as a fraction of
+                              -- window width (~the live-view / field column, not
+                              -- the whole window — the right side holds stats)
 local TOP_OFFSET = 118        -- px below the D:C window top (clears header + board strip)
 
 -- Is this the Chrome Picture-in-Picture window? (Just the video, always-on-top.)
@@ -63,7 +66,7 @@ local function snap(win)
     local w = math.floor(f.w * PIP_WIDTH_FRAC)
     local h = math.floor(w * 9 / 16)
     win:setFrame({
-      x = math.floor(f.x + (f.w - w) / 2),
+      x = math.floor(f.x + f.w * PIP_CENTER_FRAC - w / 2),
       y = math.floor(f.y + TOP_OFFSET),
       w = w,
       h = h,
