@@ -9363,21 +9363,61 @@ function watchBanner() {
     return `
       <header class="watch-head">
         <h2 class="watch-title">Watch</h2>
-        <p class="watch-sub">Watch any live game — it opens on MLB.tv and floats
-        into a picture-in-picture window you can park in the corner of your
-        screen. Upcoming games show their start time until first pitch.</p>
+        <p class="watch-sub">Click Watch on any game — it opens on MLB.tv in a tab
+        next to DIAMOND:CONTEXT. Click the blue “Pop into Picture-in-Picture”
+        button, then switch back here and the player snaps into place above the
+        field and floats on top while you browse. Upcoming games show their start
+        time until first pitch.</p>
         ${WATCH_TEST_MODE ? `<div class="watch-test-note">⚙️ Test mode — every
-          Watch opens the always-on MLB Network feed so you can test the PiP
-          flow before games start.</div>` : ""}
+          Watch opens the always-on MLB Network feed so you can test the flow
+          before games start.</div>` : ""}
         <div class="watch-ext ${ok ? "ok" : "missing"}">
           <span class="dot"></span>
           ${ok
             ? `Watch extension connected — games open automatically.`
-            : `Watch extension not detected. Install it from
-               <code>web/extension/</code> to auto-open games in PiP; until
-               then, “Watch” just opens MLB.tv in a new tab.`}
+            : `Watch extension not detected. Follow the setup guide below.`}
         </div>
+        ${watchSetupGuide()}
       </header>
+    `;
+}
+
+// Persistent, collapsible "how to install everything" guide. One-time setup,
+// per device (macOS + Chrome). Lives in the Watch tab so it's always findable.
+function watchSetupGuide() {
+    return `
+      <details class="watch-setup">
+        <summary>⚙︎ Setup guide — how to install everything (one time)</summary>
+        <div class="watch-setup-body">
+          <ol>
+            <li><strong>Install the Chrome extension.</strong> Go to
+              <code>chrome://extensions</code> → turn on <em>Developer mode</em>
+              (top-right) → <em>Load unpacked</em> → choose the
+              <code>web/extension/</code> folder of this repo. Re-click the
+              circular ↻ on the “DIAMOND:CONTEXT — Watch” card whenever it’s
+              updated.</li>
+            <li><strong>Install Hammerspoon</strong> (positions the PiP window
+              above the field). <code>brew install --cask hammerspoon</code>,
+              launch it, and grant Accessibility permission when asked
+              (<em>System Settings → Privacy &amp; Security → Accessibility</em>).
+              <a href="https://www.hammerspoon.org/" target="_blank" rel="noopener">hammerspoon.org ↗</a></li>
+            <li><strong>Wire up the positioner.</strong> Add these lines to
+              <code>~/.hammerspoon/init.lua</code> (point the path at this repo),
+              then <em>Reload Config</em> from the Hammerspoon menu:
+              <pre>require("hs.ipc")
+package.path = package.path ..
+  ";/path/to/Baseball-stats/web/extension/?.lua"
+require("hammerspoon-dc-pip").start()</pre></li>
+            <li><strong>Sign in to MLB.tv</strong> with your subscription —
+              <a href="https://www.mlb.com/login" target="_blank" rel="noopener">mlb.com/login ↗</a>.
+              Your login stays in your own browser; it’s never shared.</li>
+          </ol>
+          <p class="watch-setup-foot"><strong>To watch:</strong> click Watch →
+          on the MLB.tv tab click the blue <em>Pop into Picture-in-Picture</em>
+          button → switch back to DIAMOND:CONTEXT and the player snaps above the
+          field.</p>
+        </div>
+      </details>
     `;
 }
 

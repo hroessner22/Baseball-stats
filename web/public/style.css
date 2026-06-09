@@ -12157,6 +12157,48 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
     font-size: 0.78rem;
 }
 
+/* Setup / install guide (collapsible) in the Watch tab */
+.watch-setup {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    overflow: hidden;
+}
+.watch-setup > summary {
+    cursor: pointer;
+    padding: 11px 14px;
+    font-weight: 600;
+    font-size: 0.86rem;
+    color: var(--text);
+    list-style: none;
+}
+.watch-setup > summary::-webkit-details-marker { display: none; }
+.watch-setup[open] > summary { border-bottom: 1px solid var(--border); }
+.watch-setup-body { padding: 12px 16px 4px; font-size: 0.84rem; color: var(--text-dim); }
+.watch-setup-body ol { margin: 0; padding-left: 20px; }
+.watch-setup-body li { margin-bottom: 12px; line-height: 1.5; }
+.watch-setup-body code {
+    background: var(--surface); padding: 1px 5px; border-radius: 4px; font-size: 0.8rem;
+}
+.watch-setup-body pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 8px 0 0;
+    font-size: 0.78rem;
+    overflow-x: auto;
+    color: var(--text);
+}
+.watch-setup-body a { color: var(--accent, #4f8cff); }
+.watch-setup-foot {
+    margin: 4px 0 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    color: var(--text);
+}
+
 .watch-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(var(--tile-w), 1fr));
