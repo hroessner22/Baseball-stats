@@ -12364,14 +12364,13 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 .dcw-panel-foot { margin: 10px 0 0; font-size: 0.78rem; color: var(--text-faint); }
 
 /* ── THEATER (watch) MODE ──────────────────────────────────────────────
-   When watching, the PiP is centered over the top of the D:C window by the
-   Hammerspoon helper. Shrink the field proportionally (the field SVG scales
-   with its container width) and drop it below the video. The two tunables to
-   match your screen: max-width here, and TOP_OFFSET in hammerspoon-dc-pip.lua. */
-/* Theater mode only SHIFTS the field down to open the area at the top where
-   the centered PiP lands — the field keeps its normal size (no shrink). */
-body.dc-watching .field-pane {
-    padding-top: 28vh;
+   When watching, the video window is placed (by the Hammerspoon helper) in
+   the space directly above the field. We open that space by shifting ONLY the
+   field (the .field-canvas) down — NOT the whole field-pane, so the AT BAT /
+   PITCHING cards in .field-narrative stay exactly where they are. */
+body.dc-watching .field-pane .field-canvas {
+    padding-top: 44vh;
+    align-self: start;
     transition: padding-top .3s ease;
 }
 #dcw-exit-theater {

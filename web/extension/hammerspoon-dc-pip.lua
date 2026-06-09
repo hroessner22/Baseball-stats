@@ -15,8 +15,8 @@ local placed = {}          -- window id -> true; each video window is sized/plac
                            -- ONCE, then left alone so the user can resize/move it
 local SAVE_KEY = "dcVideoFrame"  -- persisted (across restarts) user position/size
 local SCAN_INTERVAL = 0.5
-local WIDTH_FRAC = 0.38    -- video width ÷ D:C window width (fills the field column)
-local CENTER_FRAC = 0.50   -- horizontal center, as a fraction of the D:C window
+local WIDTH_FRAC = 0.37    -- video width ÷ D:C window width (fills the field column)
+local CENTER_FRAC = 0.38   -- horizontal center, as a fraction of the D:C window
                            -- width (~the live-view / field column)
 local TOP_OFFSET = 240     -- px below the D:C window top (above the field)
 local TITLEBAR = 40        -- popup title bar / player chrome added to 16:9 height
