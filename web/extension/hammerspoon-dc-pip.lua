@@ -14,10 +14,10 @@ local M = {}
 local placed = {}          -- window id -> true; each video window is sized/placed
                            -- ONCE, then left alone so the user can resize/move it
 local SCAN_INTERVAL = 0.5
-local WIDTH_FRAC = 0.70    -- video width ÷ D:C window width (fills the field column)
+local WIDTH_FRAC = 0.92    -- video width ÷ D:C window width (fills the field column)
 local CENTER_FRAC = 0.50   -- horizontal center, as a fraction of the D:C window
                            -- width (~the live-view / field column)
-local TOP_OFFSET = 200     -- px below the D:C window top (above the field)
+local TOP_OFFSET = 320     -- px below the D:C window top (above the field)
 local TITLEBAR = 40        -- popup title bar / player chrome added to 16:9 height
 local TOLERANCE = 24       -- only re-pin if it has drifted/resized this much (avoid jitter)
 
