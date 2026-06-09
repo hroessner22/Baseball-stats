@@ -12,7 +12,7 @@
 local M = {}
 
 local SCAN_INTERVAL = 0.5
-local WIDTH_FRAC = 0.58    -- video width ÷ D:C window width (fills the field column)
+local WIDTH_FRAC = 0.29    -- video width ÷ D:C window width (fills the field column)
 local CENTER_FRAC = 0.31   -- horizontal center, as a fraction of the D:C window
                            -- width (~the live-view / field column)
 local TOP_OFFSET = 200     -- px below the D:C window top (above the field)
