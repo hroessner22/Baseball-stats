@@ -1,14 +1,27 @@
 // background.js — the service worker.
 //
-// Receives a "watch this game" request from DIAMOND:CONTEXT and opens MLB.tv
-// in its own popup window. The Hammerspoon helper then places that window
-// into the theater area over D:C — no picture-in-picture, no click needed.
+// On a Watch click, open MLB.tv in a popup window ALREADY sized and positioned
+// into the theater area over DIAMOND:CONTEXT — computed from the D:C window's
+// own bounds, so it appears correct instantly (no snap, no manual adjust, no
+// picture-in-picture). Hammerspoon is no longer needed to move it.
 
-// MLB.tv deep link for a gamePk. MLB changes this path occasionally; the
-// in-page script falls back to the listing, so a stale URL degrades to "open
-// the listing" rather than a hard break.
+// ── Theater placement (fractions of the D:C window) — tweak to taste ──
+const VID_WIDTH_FRAC = 0.52;   // video window width ÷ D:C window width
+const VID_CENTER_FRAC = 0.32;  // horizontal center (~the live-view/field column)
+const TOP_OFFSET = 250;        // px below the D:C window's top (clears chrome + header + tabs)
+const TITLEBAR = 96;           // popup title bar + player chrome added to 16:9 height
+
 function mlbTvUrl(gamePk) {
   return `https://www.mlb.com/tv/g${gamePk}`;
+}
+
+// Compute the popup's screen rect from the D:C window's bounds.
+function theaterRect(dc) {
+  const w = Math.round(dc.width * VID_WIDTH_FRAC);
+  const h = Math.round((w * 9) / 16) + TITLEBAR;
+  let left = Math.round(dc.left + dc.width * VID_CENTER_FRAC - w / 2);
+  if (left < dc.left + 8) left = dc.left + 8; // keep it on-screen
+  return { left, top: Math.round(dc.top + TOP_OFFSET), width: w, height: h };
 }
 
 const pending = new Map();   // mlbTabId -> watch intent (until DC_MLB_READY)
@@ -21,19 +34,30 @@ let watchWindowId = null;
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "DC_WATCH") {
     const origin = sender.tab?.id;
+    const dcWindowId = sender.tab?.windowId;
     const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
 
     const open = () => {
-      chrome.windows
-        .create({ url, type: "popup", width: 820, height: 500, focused: true })
-        .then((win) => {
-          watchWindowId = win.id;
-          const tab = win.tabs && win.tabs[0];
-          if (tab) {
-            pending.set(tab.id, msg);
-            if (origin != null) originTab.set(tab.id, origin);
-          }
+      // Position relative to the D:C window so it lands in the theater area.
+      const create = (rect) => {
+        chrome.windows
+          .create({ url, type: "popup", focused: true, ...rect })
+          .then((win) => {
+            watchWindowId = win.id;
+            const tab = win.tabs && win.tabs[0];
+            if (tab) {
+              pending.set(tab.id, msg);
+              if (origin != null) originTab.set(tab.id, origin);
+            }
+          });
+      };
+      if (dcWindowId != null) {
+        chrome.windows.get(dcWindowId, (dc) => {
+          create(dc ? theaterRect(dc) : { width: 820, height: 500 });
         });
+      } else {
+        create({ width: 820, height: 500 });
+      }
     };
 
     // Reuse the single watch window: close the old one first.

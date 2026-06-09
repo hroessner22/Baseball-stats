@@ -31,7 +31,9 @@ local function shouldSnap(win)
 
   local title = (win:title() or ""):lower()
   if title:find("diamond") then return false end             -- never the app window
-  if title:find("mlb%.tv") or title:find("mlb%.com") then return true end -- MLB.tv window
+  -- The MLB.tv WINDOW is now sized + placed by the extension itself on open
+  -- (background.js), so Hammerspoon no longer touches it (avoids a double-move).
+  -- Only a PiP window, if one ever appears, gets snapped here.
   if title:find("picture in picture") or title:find("picture%-in%-picture") then
     return true
   end
