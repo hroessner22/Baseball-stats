@@ -148,6 +148,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // Close the MLB.tv window — fired when the user exits the video player on
+  // the site (Exit theater).
+  if (msg?.type === "DC_CLOSE_WATCH") {
+    findWatchWindow((win) => {
+      if (win) {
+        const p = chrome.windows.remove(win.id);
+        if (p && p.catch) p.catch(() => {});
+      }
+      watchWindowId = null;
+    });
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
+  // Report whether a position is saved (so the page can confirm it).
+  if (msg?.type === "DC_GET_WATCH_POS") {
+    const origin = sender.tab?.id;
+    chrome.storage.local.get(BOUNDS_KEY, (data) => {
+      const saved = (data && data[BOUNDS_KEY]) || null;
+      if (origin != null)
+        chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_STATE", bounds: saved });
+    });
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
   // Forget the saved position (use the measured default again).
   if (msg?.type === "DC_RESET_WATCH_POS") {
     chrome.storage.local.remove(BOUNDS_KEY);

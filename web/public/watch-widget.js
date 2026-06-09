@@ -170,24 +170,33 @@
       exit.remove();
     }
 
-    // "Save video spot": after dragging/resizing the MLB.tv window where you
-    // want it, click this — the extension reads the window's actual bounds and
-    // reuses them for every future watch.
-    let save = document.getElementById("dcw-save-pos");
-    if (on && !save) {
-      save = document.createElement("button");
-      save.id = "dcw-save-pos";
-      save.textContent = "📌 Save video spot";
-      save.title = "Drag/resize the MLB.tv window where you want it, then click to save it for every game";
-      save.addEventListener("click", () => {
-        window.postMessage({ source: "diamond-context", type: "DC_SAVE_WATCH_POS" }, "*");
-        save.textContent = "Saving…";
-        setTimeout(() => { save.textContent = "📌 Save video spot"; }, 2500);
-      });
-      document.body.appendChild(save);
-    } else if (!on && save) {
-      save.remove();
+    if (on) {
+      // Show "Save video spot" only until a spot is saved. Once saved, the
+      // window reopens at that exact position+size every time, so the button
+      // has done its job and disappears. Ask the extension whether one's
+      // already saved so a returning viewer never sees the button.
+      ensureSaveButton();
+      window.postMessage({ source: "diamond-context", type: "DC_GET_WATCH_POS" }, "*");
+    } else {
+      document.getElementById("dcw-save-pos")?.remove();
+      // Exiting the video player on the site closes the MLB.tv window too.
+      window.postMessage({ source: "diamond-context", type: "DC_CLOSE_WATCH" }, "*");
     }
+  }
+
+  // The "Save video spot" button: drag/resize the MLB.tv window where you want
+  // it, click this, and the extension stores those exact bounds for every game.
+  function ensureSaveButton() {
+    if (document.getElementById("dcw-save-pos")) return;
+    const save = document.createElement("button");
+    save.id = "dcw-save-pos";
+    save.textContent = "📌 Save video spot";
+    save.title = "Drag/resize the MLB.tv window where you want it, then click to save it for every game";
+    save.addEventListener("click", () => {
+      window.postMessage({ source: "diamond-context", type: "DC_SAVE_WATCH_POS" }, "*");
+      save.textContent = "Saving…";
+    });
+    document.body.appendChild(save);
   }
 
   // Brief toast in the corner.
@@ -206,12 +215,27 @@
     const msg = event.data;
     if (!msg || msg.source !== "diamond-context-ext") return;
     if (msg.type === "DC_WATCH_POS_SAVED") {
-      toast(
-        msg.ok ? "✓ Video spot saved — used for every game" : "Open a game with Watch first, then save",
-        !!msg.ok
-      );
+      if (msg.ok) {
+        const b = msg.bounds;
+        toast(
+          b
+            ? `✓ Saved ${Math.round(b.width)}×${Math.round(b.height)} — reopens right here every game`
+            : "✓ Video spot saved — used for every game",
+          true
+        );
+        // Done its job — the spot persists, so the button disappears.
+        document.getElementById("dcw-save-pos")?.remove();
+      } else {
+        toast("Open a game with Watch first, then save", false);
+      }
+    } else if (msg.type === "DC_WATCH_POS_STATE") {
+      // A spot is already saved → no button needed.
+      if (msg.bounds && msg.bounds.width) {
+        document.getElementById("dcw-save-pos")?.remove();
+      }
     } else if (msg.type === "DC_WATCH_POS_RESET") {
-      toast("Video spot reset to default", true);
+      toast("Video spot reset — drag the window and save a new one", true);
+      if (document.body.classList.contains("dc-watching")) ensureSaveButton();
     }
   });
 

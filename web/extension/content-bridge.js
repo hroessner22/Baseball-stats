@@ -31,6 +31,10 @@
       });
     } else if (msg.type === "DC_SAVE_WATCH_POS") {
       chrome.runtime.sendMessage({ type: "DC_SAVE_WATCH_POS" });
+    } else if (msg.type === "DC_GET_WATCH_POS") {
+      chrome.runtime.sendMessage({ type: "DC_GET_WATCH_POS" });
+    } else if (msg.type === "DC_CLOSE_WATCH") {
+      chrome.runtime.sendMessage({ type: "DC_CLOSE_WATCH" });
     } else if (msg.type === "DC_RESET_WATCH_POS") {
       chrome.runtime.sendMessage({ type: "DC_RESET_WATCH_POS" });
     }
@@ -47,7 +51,12 @@
       );
     } else if (msg?.type === "DC_WATCH_POS_SAVED") {
       window.postMessage(
-        { source: "diamond-context-ext", type: "DC_WATCH_POS_SAVED", ok: !!msg.ok },
+        { source: "diamond-context-ext", type: "DC_WATCH_POS_SAVED", ok: !!msg.ok, bounds: msg.bounds || null },
+        "*"
+      );
+    } else if (msg?.type === "DC_WATCH_POS_STATE") {
+      window.postMessage(
+        { source: "diamond-context-ext", type: "DC_WATCH_POS_STATE", bounds: msg.bounds || null },
         "*"
       );
     } else if (msg?.type === "DC_WATCH_POS_RESET") {
