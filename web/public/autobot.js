@@ -6007,7 +6007,7 @@ async function renderPracticeBetsPane() {
             <div class="bot-recent-row-head-wrap">
               <button class="bot-recent-row-head" data-fire-toggle="${escapeText(id)}" aria-expanded="${isOpen}">
                 <span class="bot-recent-chevron">${isOpen ? "▾" : "▸"}</span>
-                <span class="bot-recent-label">${label}</span>
+                <span class="bot-recent-label" title="${label}">${label}</span>
                 <span class="bot-recent-meta">
                   ${f.dead_flag ? `<span class="bot-dead-badge" title="${escapeText(f.dead_reason || "no closing bid")}">DEAD</span>` : ""}
                   <span class="${sideCls}">${sideTag}</span>
@@ -6412,7 +6412,7 @@ function renderRecentFireRow(f) {
     const ago     = formatNotifTime(f.placed_at);
     return `
       <div class="bot-recent-row">
-        <span class="bot-recent-label">${label}</span>
+        <span class="bot-recent-label" title="${label}">${label}</span>
         <span class="bot-recent-meta">
           <span class="${sideCls}">${side}</span>
           $${cost}

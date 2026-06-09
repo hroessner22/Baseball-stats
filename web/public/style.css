@@ -12160,6 +12160,7 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 /* Setup / install guide (collapsible) in the Watch tab */
 .watch-setup {
     margin-top: 12px;
+    max-width: 680px;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--surface-2);
@@ -12453,3 +12454,6 @@ body.dc-watching .field-pane .field-canvas {
 /* On the game view the red "▶ Watch" tab is the watch control, so hide the
    floating widget there (avoid two Watch buttons on one screen). */
 body:has(#game-view:not([hidden])) .dcw-widget { display: none !important; }
+/* The Watch tab IS the watch UI — hide the floating launcher there so it
+   doesn't cover the cards/header. */
+body:has(#watch-view:not([hidden])) .dcw-widget { display: none !important; }

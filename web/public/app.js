@@ -9361,24 +9361,18 @@ async function refreshWatch() {
 function watchBanner() {
     const ok = watchExtInstalled();
     return `
-      <header class="watch-head">
+      <div class="watch-head">
         <h2 class="watch-title">Watch</h2>
-        <p class="watch-sub">Click Watch on any game — it opens on MLB.tv in a tab
-        next to DIAMOND:CONTEXT. Click the blue “Pop into Picture-in-Picture”
-        button, then switch back here and the player snaps into place above the
-        field and floats on top while you browse. Upcoming games show their start
-        time until first pitch.</p>
-        ${WATCH_TEST_MODE ? `<div class="watch-test-note">⚙️ Test mode — every
-          Watch opens the always-on MLB Network feed so you can test the flow
-          before games start.</div>` : ""}
+        <p class="watch-sub">Click Watch on a game — it opens MLB.tv in a tab next
+        to DIAMOND:CONTEXT. Click the blue PiP button, switch back here, and the
+        player floats above the field.</p>
         <div class="watch-ext ${ok ? "ok" : "missing"}">
           <span class="dot"></span>
-          ${ok
-            ? `Watch extension connected — games open automatically.`
-            : `Watch extension not detected. Follow the setup guide below.`}
+          ${ok ? `Watch extension connected.` : `Watch extension not detected — see setup below.`}
+          ${WATCH_TEST_MODE ? ` · Test mode: opens the MLB Network feed.` : ""}
         </div>
         ${watchSetupGuide()}
-      </header>
+      </div>
     `;
 }
 
