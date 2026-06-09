@@ -1,46 +1,34 @@
--- DIAMOND:CONTEXT — auto-snap Chrome's Picture-in-Picture window to the
--- bottom-right corner.
+-- DIAMOND:CONTEXT — keep the MLB video window pinned above the field.
 --
--- The browser can't position its own PiP window (the OS owns it), so this
--- macOS-side helper watches for Chrome's PiP window and snaps it into the
--- bottom-right of whatever screen it appears on. Each PiP window is moved
--- once, so you can still drag it elsewhere afterward if you want.
+-- Whatever MLB video window appears (Chrome's Picture-in-Picture window, or
+-- the MLB.tv popup), continuously move it into the theater area at the top of
+-- the DIAMOND:CONTEXT window — directly above the field. It keeps the window's
+-- own size (so it stays "at that size"), and re-pins every scan, so no matter
+-- where Chrome spawns it (e.g. bottom-right) it gets pulled above the field
+-- and held there.
 --
--- Install: see web/extension/README.md ("Auto-snap the PiP to the corner").
--- This file is loaded from ~/.hammerspoon/init.lua.
+-- Install: see web/extension/README.md. Loaded from ~/.hammerspoon/init.lua.
 
 local M = {}
 
-local MARGIN = 16        -- gap from the screen edges, in points
-local SCAN_INTERVAL = 0.6
-local snapped = {}       -- window id -> true (so each PiP window moves once)
+local SCAN_INTERVAL = 0.5
+local CENTER_FRAC = 0.30   -- horizontal center, as a fraction of the D:C window
+                           -- width (~the live-view / field column)
+local TOP_OFFSET = 220     -- px below the D:C window top (above the field)
+local TOLERANCE = 24       -- only move if it has drifted this many px (avoid jitter)
 
-local VID_WIDTH_FRAC = 0.42   -- video window width as a fraction of the D:C window
-local VID_CENTER_FRAC = 0.30  -- horizontal center, as a fraction of window width
-                              -- (~the live-view / field column; right side is stats)
-local TOP_OFFSET = 150        -- px below the D:C window top (clears header + tabs)
-
--- Is this the MLB.tv watch window (the popup the extension opens) or a PiP
--- window? Either gets placed into the theater area over DIAMOND:CONTEXT.
--- Never move the app window itself.
-local function shouldSnap(win)
+-- The MLB video window: Chrome's PiP window, or the MLB.tv popup. Never the
+-- DIAMOND:CONTEXT app window itself.
+local function isVideoWindow(win)
   if not win then return false end
   local app = win:application()
-  if not app then return false end
-  if not (app:name() or ""):find("Chrome") then return false end
-
+  if not app or not (app:name() or ""):find("Chrome") then return false end
   local title = (win:title() or ""):lower()
-  if title:find("diamond") then return false end             -- never the app window
-  -- The MLB.tv WINDOW is now sized + placed by the extension itself on open
-  -- (background.js), so Hammerspoon no longer touches it (avoids a double-move).
-  -- Only a PiP window, if one ever appears, gets snapped here.
-  if title:find("picture in picture") or title:find("picture%-in%-picture") then
-    return true
-  end
-  return false
+  if title:find("diamond") then return false end
+  return title:find("picture in picture") or title:find("picture%-in%-picture")
+      or title:find("mlb%.tv") or title:find("mlb%.com")
 end
 
--- Find the DIAMOND:CONTEXT browser window so we can center the PiP over it.
 local function dcWindow()
   local chrome = hs.application.get("Google Chrome")
   if not chrome then return nil end
@@ -50,59 +38,32 @@ local function dcWindow()
   return nil
 end
 
--- Place the MLB.tv video window into the theater area: top-center of the
--- live-view column of the DIAMOND:CONTEXT window (the field is shifted down
--- by the web app's theater mode to make room). Falls back to the screen's
--- bottom-right if the D:C window isn't open.
-local function snap(win)
-  local dc = dcWindow()
-  if dc then
-    local f = dc:frame()
-    local w = math.floor(f.w * VID_WIDTH_FRAC)
-    local h = math.floor(w * 9 / 16) + 28   -- +28 for the window's title bar
-    win:setFrame({
-      x = math.floor(f.x + f.w * VID_CENTER_FRAC - w / 2),
-      y = math.floor(f.y + TOP_OFFSET),
-      w = w,
-      h = h,
-    })
-  else
-    local sf = (win:screen() or hs.screen.mainScreen()):frame()
-    local wf = win:frame()
-    local w = math.min(wf.w, 820)
-    local h = math.min(wf.h, 520)
-    win:setFrame({ x = sf.x + sf.w - w - MARGIN, y = sf.y + sf.h - h - MARGIN, w = w, h = h })
-  end
-end
-
 local function scan()
   local chrome = hs.application.get("Google Chrome")
-  if chrome then
-    for _, win in ipairs(chrome:allWindows()) do
-      if shouldSnap(win) then
-        local id = win:id()
-        if id and not snapped[id] then
-          snapped[id] = true
-          snap(win)
-        end
+  if not chrome then return end
+  local dc = dcWindow()
+  if not dc then return end
+  local f = dc:frame()
+  for _, win in ipairs(chrome:allWindows()) do
+    if isVideoWindow(win) then
+      local wf = win:frame()
+      local x = math.floor(f.x + f.w * CENTER_FRAC - wf.w / 2)
+      local y = math.floor(f.y + TOP_OFFSET)
+      if x < f.x + 8 then x = f.x + 8 end
+      if math.abs(wf.x - x) > TOLERANCE or math.abs(wf.y - y) > TOLERANCE then
+        win:setTopLeft({ x = x, y = y })  -- keep its size; just reposition
       end
     end
   end
-  -- forget closed windows so a re-opened PiP snaps again
-  for id in pairs(snapped) do
-    if not hs.window.get(id) then snapped[id] = nil end
-  end
 end
 
--- Print every Chrome window (title / subrole / size) — run dcPiPDebug() from
--- the Hammerspoon console if detection ever needs tuning.
+-- Console helper for tuning: lists Chrome windows.
 function dcPiPDebug()
   local chrome = hs.application.get("Google Chrome")
   if not chrome then print("Chrome not running"); return end
   for _, win in ipairs(chrome:allWindows()) do
     local f = win:frame()
-    print(string.format("title=%q subrole=%q size=%dx%d",
-      win:title() or "", win:subrole() or "", f.w, f.h))
+    print(string.format("title=%q size=%dx%d at (%d,%d)", win:title() or "", f.w, f.h, f.x, f.y))
   end
 end
 
