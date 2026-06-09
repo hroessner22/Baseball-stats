@@ -81,15 +81,69 @@
   // ── handoff ─────────────────────────────────────────────────────────
   function watch(gamePk, away, home, watchUrl) {
     if (extInstalled()) {
-      window.postMessage(
-        { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl },
-        "*"
-      );
-      // Enter "theater" layout: the PiP gets centered over this window by the
-      // Hammerspoon helper, so shrink the field to sit below it.
+      // Enter "theater" layout first (shifts the field down), THEN measure the
+      // exact rectangle that opens up directly above the field and hand it to
+      // the extension so the MLB.tv window lands there precisely — over the
+      // field column, clear of the left cards and the right stats panel.
       setTheater(true);
+      const send = () => {
+        const rect = computeVideoRect();
+        window.postMessage(
+          { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl, rect },
+          "*"
+        );
+      };
+      // Wait for the theater padding transition (~.3s) to settle before
+      // measuring, so the field has finished shifting down.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => setTimeout(send, 360))
+      );
     } else {
       openSetup();
+    }
+  }
+
+  // The exact screen rectangle (CSS px, as chrome.windows uses) directly above
+  // the field: field-column width, 16:9, fit into the gap that theater mode
+  // opens up over the field — and never overlapping the left AT BAT/PITCHING
+  // cards (.field-narrative) or the right stats panel (.card-pane).
+  function computeVideoRect() {
+    try {
+      const fc = document.querySelector(".field-pane .field-canvas");
+      const svg = fc && fc.querySelector("svg");
+      const narr = document.querySelector(".field-narrative");
+      const cardPane = document.querySelector(".card-pane");
+      if (!fc || !svg) return null;
+      const fcr = fc.getBoundingClientRect();
+      const svgr = svg.getBoundingClientRect();
+      const contentTop = fcr.top;       // top of the live-view content column
+      const fieldTop = svgr.top;        // top of the field SVG (pushed down)
+      const gap = fieldTop - contentTop; // open space above the field
+      if (gap < 80) return null;        // theater layout hasn't applied yet
+
+      let width = fcr.width;
+      let height = Math.round((width * 9) / 16);
+      if (height > gap - 12) {          // too tall for the gap → fit to gap
+        height = Math.round(gap - 12);
+        width = Math.round((height * 16) / 9);
+      }
+      let left = fcr.left + (fcr.width - width) / 2; // center over the field column
+      let top = contentTop + 4;
+
+      // Keep clear of the side panels.
+      const narrR = narr ? narr.getBoundingClientRect().right : 0;
+      const cardL = cardPane ? cardPane.getBoundingClientRect().left : window.innerWidth;
+      if (left < narrR + 10) left = narrR + 10;
+      if (left + width > cardL - 10) width = cardL - 10 - left;
+
+      // Page coords → screen coords (add window origin + browser chrome height).
+      const sx = Math.round(window.screenX + left);
+      const sy = Math.round(
+        window.screenY + (window.outerHeight - window.innerHeight) + top
+      );
+      return { left: sx, top: sy, width: Math.round(width), height: Math.round(height) };
+    } catch {
+      return null;
     }
   }
 

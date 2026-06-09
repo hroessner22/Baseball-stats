@@ -1,89 +1,33 @@
--- DIAMOND:CONTEXT — keep the MLB video window pinned above the field.
+-- DIAMOND:CONTEXT — Hammerspoon helper (now a no-op).
 --
--- Whatever MLB video window appears (Chrome's Picture-in-Picture window, or
--- the MLB.tv popup), continuously move it into the theater area at the top of
--- the DIAMOND:CONTEXT window — directly above the field. It keeps the window's
--- own size (so it stays "at that size"), and re-pins every scan, so no matter
--- where Chrome spawns it (e.g. bottom-right) it gets pulled above the field
--- and held there.
+-- The MLB video window is positioned ENTIRELY by the Chrome extension now:
+-- the DIAMOND:CONTEXT page measures the exact rectangle directly above the
+-- field and hands it to background.js, which opens the MLB.tv popup there and
+-- re-applies the bounds. That single source of truth is reliable, so this
+-- helper no longer moves, restores, or saves any window position.
+--
+-- Why this file still exists: ~/.hammerspoon/init.lua requires it, and an
+-- earlier version restored a SAVED frame (hs.settings key "dcVideoFrame") on
+-- every watch — which is what made the window spawn huge and cover the screen.
+-- We keep the module loadable but inert, and provide a helper to wipe that
+-- stale saved frame for good.
 --
 -- Install: see web/extension/README.md. Loaded from ~/.hammerspoon/init.lua.
 
 local M = {}
 
-local placed = {}          -- window id -> true; each video window is sized/placed
-                           -- ONCE, then left alone so the user can resize/move it
-local SAVE_KEY = "dcVideoFrame"  -- persisted (across restarts) user position/size
-local SCAN_INTERVAL = 0.5
-local WIDTH_FRAC = 0.37    -- video width ÷ D:C window width (fills the field column)
-local CENTER_FRAC = 0.38   -- horizontal center, as a fraction of the D:C window
-                           -- width (~the live-view / field column)
-local TOP_OFFSET = 240     -- px below the D:C window top (above the field)
-local TITLEBAR = 40        -- popup title bar / player chrome added to 16:9 height
-local TOLERANCE = 24       -- only re-pin if it has drifted/resized this much (avoid jitter)
+local SAVE_KEY = "dcVideoFrame"
 
--- The MLB video window: Chrome's PiP window, or the MLB.tv popup. Never the
--- DIAMOND:CONTEXT app window itself.
-local function isVideoWindow(win)
-  if not win then return false end
-  local app = win:application()
-  if not app or not (app:name() or ""):find("Chrome") then return false end
-  local title = (win:title() or ""):lower()
-  if title:find("diamond") then return false end
-  return title:find("picture in picture") or title:find("picture%-in%-picture")
-      or title:find("mlb%.tv") or title:find("mlb%.com")
-end
-
-local function dcWindow()
-  local chrome = hs.application.get("Google Chrome")
-  if not chrome then return nil end
-  for _, w in ipairs(chrome:allWindows()) do
-    if (w:title() or ""):find("DIAMOND") then return w end
-  end
-  return nil
-end
-
-local function scan()
-  local chrome = hs.application.get("Google Chrome")
-  if not chrome then return end
-  for _, win in ipairs(chrome:allWindows()) do
-    if isVideoWindow(win) then
-      local id = win:id()
-      if id and not placed[id] then
-        -- First time this window appears: restore YOUR saved position/size if
-        -- you've set one; otherwise place it at a sensible default above the
-        -- field (needs the D:C window to compute that).
-        local s = hs.settings.get(SAVE_KEY)
-        if s and s.w and s.h then
-          placed[id] = true
-          win:setFrame({ x = s.x, y = s.y, w = s.w, h = s.h })
-        else
-          local dc = dcWindow()
-          if dc then
-            placed[id] = true
-            local f = dc:frame()
-            local w = math.floor(f.w * WIDTH_FRAC)
-            local h = math.floor((w * 9) / 16) + TITLEBAR
-            local x = math.floor(f.x + f.w * CENTER_FRAC - w / 2)
-            if x < f.x + 8 then x = f.x + 8 end
-            win:setFrame({ x = x, y = math.floor(f.y + TOP_OFFSET), w = w, h = h })
-          end
-        end
-      elseif id then
-        -- Remember wherever you've moved/resized it, so the next watch reopens
-        -- in the same spot. (Saved across Hammerspoon restarts.)
-        local wf = win:frame()
-        hs.settings.set(SAVE_KEY, { x = wf.x, y = wf.y, w = wf.w, h = wf.h })
-      end
-    end
-  end
-  -- forget closed windows so a re-opened video gets placed again
-  for id in pairs(placed) do
-    if not hs.window.get(id) then placed[id] = nil end
+-- One-time cleanup: drop the stale saved position that used to be restored
+-- (and blown up) on every watch. Safe to call repeatedly.
+local function clearStaleFrame()
+  if hs.settings.get(SAVE_KEY) ~= nil then
+    hs.settings.set(SAVE_KEY, nil)
+    print("DIAMOND:CONTEXT — cleared stale saved video frame (dcVideoFrame)")
   end
 end
 
--- Console helper for tuning: lists Chrome windows.
+-- Console helper, kept for convenience: lists Chrome windows.
 function dcPiPDebug()
   local chrome = hs.application.get("Google Chrome")
   if not chrome then print("Chrome not running"); return end
@@ -93,16 +37,16 @@ function dcPiPDebug()
   end
 end
 
--- Console helper: forget the saved position so the next watch uses the
--- default again (run dcResetVideoPos() in the Hammerspoon console).
+-- Console helper: explicitly wipe the saved position.
 function dcResetVideoPos()
   hs.settings.set(SAVE_KEY, nil)
   print("DIAMOND:CONTEXT — saved video position cleared")
 end
 
 function M.start()
-  M.timer = hs.timer.doEvery(SCAN_INTERVAL, scan)
-  M.timer:start()
+  -- The extension owns window placement now. Just make sure the old saved
+  -- frame can never be restored again.
+  clearStaleFrame()
 end
 
 return M

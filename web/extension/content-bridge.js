@@ -26,6 +26,7 @@
       home: msg.home,
       date: msg.date,
       watchUrl: msg.watchUrl, // when set (test mode), overrides the deep link
+      rect: msg.rect, // exact screen rect to float the video above the field
     });
   });
 
