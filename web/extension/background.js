@@ -23,23 +23,40 @@ const pending = new Map();
 // the app where the user is looking.
 const originTab = new Map();
 
+// The single watch window we keep open. Reused on every Watch click so we
+// never stack multiple MLB.tv windows — stacking holds multiple stream slots
+// and trips MLB.tv's concurrent-stream cap ("content not available").
+let watchWindowId = null;
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "DC_WATCH") {
     const origin = sender.tab?.id;
     // watchUrl (test mode) wins; otherwise build the per-game deep link.
     const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
-    // Open in its OWN window (not a tab next to DIAMOND:CONTEXT) so it
-    // doesn't clutter the app's tab bar and Hammerspoon can snap it to the
-    // corner. 'popup' drops the tab bar/omnibox for a cleaner watch window.
-    chrome.windows
-      .create({ url, type: "popup", width: 760, height: 470, focused: true })
-      .then((win) => {
-        const tab = win.tabs && win.tabs[0];
-        if (tab) {
-          pending.set(tab.id, msg);
-          if (origin != null) originTab.set(tab.id, origin);
-        }
-      });
+
+    const openWindow = () => {
+      // Own window (not a tab next to DIAMOND:CONTEXT); 'popup' drops the tab
+      // bar/omnibox for a cleaner watch window that Hammerspoon positions.
+      chrome.windows
+        .create({ url, type: "popup", width: 760, height: 470, focused: true })
+        .then((win) => {
+          watchWindowId = win.id;
+          const tab = win.tabs && win.tabs[0];
+          if (tab) {
+            pending.set(tab.id, msg);
+            if (origin != null) originTab.set(tab.id, origin);
+          }
+        });
+    };
+
+    // Close the previous watch window first so only one stream is ever open.
+    if (watchWindowId != null) {
+      const old = watchWindowId;
+      watchWindowId = null;
+      chrome.windows.remove(old).then(openWindow, openWindow);
+    } else {
+      openWindow();
+    }
     sendResponse?.({ ok: true });
     return true;
   }
@@ -63,4 +80,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   pending.delete(tabId);
   originTab.delete(tabId);
+});
+
+// If the watch window is closed (by the user or us), forget it so the next
+// Watch opens fresh instead of trying to reuse a dead window id.
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === watchWindowId) watchWindowId = null;
 });
