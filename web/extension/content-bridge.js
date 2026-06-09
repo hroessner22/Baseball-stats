@@ -35,6 +35,8 @@
       chrome.runtime.sendMessage({ type: "DC_GET_WATCH_POS" });
     } else if (msg.type === "DC_CLOSE_WATCH") {
       chrome.runtime.sendMessage({ type: "DC_CLOSE_WATCH" });
+    } else if (msg.type === "DC_PLACE_PIP") {
+      chrome.runtime.sendMessage({ type: "DC_PLACE_PIP", rect: msg.rect });
     } else if (msg.type === "DC_RESET_WATCH_POS") {
       chrome.runtime.sendMessage({ type: "DC_RESET_WATCH_POS" });
     }

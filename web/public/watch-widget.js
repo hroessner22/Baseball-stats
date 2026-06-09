@@ -325,6 +325,19 @@
     if (theaterOn()) setTheater(true); // restore theater layout across navigation
     refresh();
     timer = setInterval(refresh, REFRESH_MS);
+
+    // While you're viewing D:C in theater mode, continuously hand the exact box
+    // above the field to the extension → Hammerspoon, which snaps Chrome's PiP
+    // window into it. It only fires while this tab is visible, so the PiP
+    // tracks D:C while you're looking at it and is left alone otherwise.
+    setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (!document.body.classList.contains("dc-watching")) return;
+      const rect = computeVideoRect();
+      if (rect) {
+        window.postMessage({ source: "diamond-context", type: "DC_PLACE_PIP", rect }, "*");
+      }
+    }, 600);
   }
 
   // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can

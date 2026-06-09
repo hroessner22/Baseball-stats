@@ -193,6 +193,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // The page (while you're viewing D:C) heartbeats the exact box above the
+  // field; relay it to the Hammerspoon helper, which snaps Chrome's PiP window
+  // there. Pages can't reach http://localhost (mixed content / https), but the
+  // service worker can with host permission.
+  if (msg?.type === "DC_PLACE_PIP" && msg.rect) {
+    fetch("http://127.0.0.1:27894/pip", {
+      method: "POST",
+      body: JSON.stringify(msg.rect),
+    }).catch(() => {});
+    return;
+  }
+
   if (msg?.type === "DC_MLB_READY" && sender.tab) {
     const intent = pending.get(sender.tab.id);
     if (intent) {

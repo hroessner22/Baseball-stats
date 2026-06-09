@@ -35,48 +35,17 @@
     enablePip(video);
   }
 
-  // Float the game in Picture-in-Picture so it stays ON TOP of everything,
-  // including DIAMOND:CONTEXT, as the user clicks around. PiP needs a user
-  // gesture in this tab, so we try right away (in case one already happened)
-  // and otherwise arm the first click/keypress anywhere on the page to pop it
-  // out. Once it's floating, the bare MLB.tv window minimizes itself so only
-  // the PiP player remains over the browser.
+  // Make sure the PiP button is available (some players disable it), and when
+  // the user clicks PiP, minimize this bare MLB.tv window so only the floating
+  // player remains. DIAMOND:CONTEXT + the Hammerspoon helper then snap that PiP
+  // window into the box above the field.
   function enablePip(video) {
     if (!("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled) return;
     try { video.disablePictureInPicture = false; } catch (_) {}
     try { video.autoPictureInPicture = true; } catch (_) {}
-
-    const tryPip = async () => {
-      try {
-        if (
-          document.pictureInPictureElement !== video &&
-          video.readyState >= 1 &&
-          !video.disablePictureInPicture
-        ) {
-          await video.requestPictureInPicture();
-          return true;
-        }
-      } catch (_) {
-        return false;
-      }
-      return false;
-    };
-
-    // When PiP engages, minimize this bare window — the floating player stays.
     video.addEventListener("enterpictureinpicture", () => {
       chrome.runtime.sendMessage({ type: "DC_PIP_ON" });
     });
-
-    // Try immediately, then on the first real user gesture.
-    tryPip();
-    const onGesture = async () => {
-      if (await tryPip()) {
-        document.removeEventListener("click", onGesture, true);
-        document.removeEventListener("keydown", onGesture, true);
-      }
-    };
-    document.addEventListener("click", onGesture, true);
-    document.addEventListener("keydown", onGesture, true);
   }
 
   // Largest visible <video> on the page is the game feed.
