@@ -15,16 +15,14 @@ local MARGIN = 16        -- gap from the screen edges, in points
 local SCAN_INTERVAL = 0.6
 local snapped = {}       -- window id -> true (so each PiP window moves once)
 
-local PIP_WIDTH_FRAC = 0.40   -- PiP width as a fraction of the D:C window width
-local PIP_CENTER_FRAC = 0.30  -- horizontal center of the PiP, as a fraction of
-                              -- window width (~the live-view / field column, not
-                              -- the whole window — the right side holds stats)
-local TOP_OFFSET = 118        -- px below the D:C window top (clears header + board strip)
+local VID_WIDTH_FRAC = 0.42   -- video window width as a fraction of the D:C window
+local VID_CENTER_FRAC = 0.30  -- horizontal center, as a fraction of window width
+                              -- (~the live-view / field column; right side is stats)
+local TOP_OFFSET = 150        -- px below the D:C window top (clears header + tabs)
 
--- Is this the Chrome Picture-in-Picture window? (Just the video, always-on-top.)
--- Title match first; fallback catches it even if Chrome renames the title, via
--- a small non-standard floating window. We only move the PiP — never the full
--- MLB.TV player window (that's the source, left wherever it is).
+-- Is this the MLB.tv watch window (the popup the extension opens) or a PiP
+-- window? Either gets placed into the theater area over DIAMOND:CONTEXT.
+-- Never move the app window itself.
 local function shouldSnap(win)
   if not win then return false end
   local app = win:application()
@@ -32,16 +30,10 @@ local function shouldSnap(win)
   if not (app:name() or ""):find("Chrome") then return false end
 
   local title = (win:title() or ""):lower()
+  if title:find("diamond") then return false end             -- never the app window
+  if title:find("mlb%.tv") or title:find("mlb%.com") then return true end -- MLB.tv window
   if title:find("picture in picture") or title:find("picture%-in%-picture") then
     return true
-  end
-
-  local sub = win:subrole() or ""
-  if sub ~= "AXStandardWindow" then
-    local f = win:frame()
-    if f and f.w > 120 and f.w < 900 and f.h > 90 and f.h < 700 then
-      return true
-    end
   end
   return false
 end
@@ -56,17 +48,18 @@ local function dcWindow()
   return nil
 end
 
--- Center the PiP over the top-center of the DIAMOND:CONTEXT window (so the
--- field can sit below it — see the watch-mode layout in the web app). Falls
--- back to the screen's bottom-right if the D:C window isn't open.
+-- Place the MLB.tv video window into the theater area: top-center of the
+-- live-view column of the DIAMOND:CONTEXT window (the field is shifted down
+-- by the web app's theater mode to make room). Falls back to the screen's
+-- bottom-right if the D:C window isn't open.
 local function snap(win)
   local dc = dcWindow()
   if dc then
     local f = dc:frame()
-    local w = math.floor(f.w * PIP_WIDTH_FRAC)
-    local h = math.floor(w * 9 / 16)
+    local w = math.floor(f.w * VID_WIDTH_FRAC)
+    local h = math.floor(w * 9 / 16) + 28   -- +28 for the window's title bar
     win:setFrame({
-      x = math.floor(f.x + f.w * PIP_CENTER_FRAC - w / 2),
+      x = math.floor(f.x + f.w * VID_CENTER_FRAC - w / 2),
       y = math.floor(f.y + TOP_OFFSET),
       w = w,
       h = h,

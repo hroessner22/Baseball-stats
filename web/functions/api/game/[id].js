@@ -29,7 +29,7 @@ function lookupWE(inning, half, outs, bases, homeLead) {
     const leadC = clip(homeLead, -10, 10);
     const k2 = `${innC}|${half}|${outs}|${bases}|${leadC}`;
     let wpHome = WE_TABLE_V2[k2];
-    // Fallback 1: V1 table at the previous half-state (existing).
+    // Fallback 1: V1 table at the previous half-state.
     if (wpHome === undefined) {
         const prev = previousHalfState(innC, half);
         if (prev) {
@@ -47,19 +47,10 @@ function lookupWE(inning, half, outs, bases, homeLead) {
     // WE and youre not using it.' The bot's ML scan blocks when this
     // returns null. Returning a sensible estimate covers the rare
     // states the table misses, so ML can scan every live game.
-    //
-    // Approximation: each inning of progress with the same lead = more
-    // confident WE. Empirical regression line: wpHome ≈ 0.5 + lead *
-    // (0.035 + 0.005 * inning_progress). Bottom-of-9 with a 1-run home
-    // lead lands around 0.86 (close to actual 0.85). Bases/outs add
-    // small adjustments but the lead × inning curve covers ~95% of
-    // the signal — good enough for a fallback.
     if (wpHome === undefined) {
         const inningProgress = innC + (half === "bottom" ? 0.5 : 0);
         const perRunWeight = 0.035 + 0.005 * inningProgress;
         let est = 0.5 + leadC * perRunWeight;
-        // Small bases/outs lift toward home for runners on with outs
-        // (offensive position), trim toward away for clean state.
         const basesLift = bases > 0 ? 0.02 : 0;
         est = Math.max(0.02, Math.min(0.98, est + basesLift));
         wpHome = est;
