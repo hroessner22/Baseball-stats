@@ -12,22 +12,28 @@
   // <html> exists at document_start; the Watch tab reads this later.
   document.documentElement.dataset.dcWatchExt = "1";
 
-  // Page → worker: a "watch this game" request.
+  // Page → worker: watch / save-position / reset-position requests.
   window.addEventListener("message", (event) => {
     // Only trust messages from this same window / our own page code.
     if (event.source !== window) return;
     const msg = event.data;
-    if (!msg || msg.source !== "diamond-context" || msg.type !== "DC_WATCH") return;
+    if (!msg || msg.source !== "diamond-context") return;
 
-    chrome.runtime.sendMessage({
-      type: "DC_WATCH",
-      gamePk: msg.gamePk,
-      away: msg.away,
-      home: msg.home,
-      date: msg.date,
-      watchUrl: msg.watchUrl, // when set (test mode), overrides the deep link
-      rect: msg.rect, // exact screen rect to float the video above the field
-    });
+    if (msg.type === "DC_WATCH") {
+      chrome.runtime.sendMessage({
+        type: "DC_WATCH",
+        gamePk: msg.gamePk,
+        away: msg.away,
+        home: msg.home,
+        date: msg.date,
+        watchUrl: msg.watchUrl, // when set (test mode), overrides the deep link
+        rect: msg.rect, // exact screen rect to float the video above the field
+      });
+    } else if (msg.type === "DC_SAVE_WATCH_POS") {
+      chrome.runtime.sendMessage({ type: "DC_SAVE_WATCH_POS" });
+    } else if (msg.type === "DC_RESET_WATCH_POS") {
+      chrome.runtime.sendMessage({ type: "DC_RESET_WATCH_POS" });
+    }
   });
 
   // Worker → page: surface a one-time "sign in to MLB.tv" prompt. Tagged
@@ -37,6 +43,16 @@
     if (msg?.type === "DC_LOGIN_REQUIRED") {
       window.postMessage(
         { source: "diamond-context-ext", type: "DC_LOGIN_REQUIRED" },
+        "*"
+      );
+    } else if (msg?.type === "DC_WATCH_POS_SAVED") {
+      window.postMessage(
+        { source: "diamond-context-ext", type: "DC_WATCH_POS_SAVED", ok: !!msg.ok },
+        "*"
+      );
+    } else if (msg?.type === "DC_WATCH_POS_RESET") {
+      window.postMessage(
+        { source: "diamond-context-ext", type: "DC_WATCH_POS_RESET", ok: !!msg.ok },
         "*"
       );
     }

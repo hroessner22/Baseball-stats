@@ -12389,6 +12389,25 @@ body.dc-watching .field-pane .field-canvas {
 }
 #dcw-exit-theater:hover { color: var(--text); }
 
+/* "Save video spot" — sits just right of the Exit chip while watching. Drag
+   the MLB.tv window where you want it, click this, and the extension stores
+   those exact bounds to reuse for every game. */
+#dcw-save-pos {
+    position: fixed;
+    top: 60px;
+    left: 150px;
+    z-index: 5400;
+    padding: 6px 14px;
+    border: 1px solid var(--accent, #4f8cff);
+    border-radius: 999px;
+    background: var(--accent, #4f8cff);
+    color: #fff;
+    font: 600 12px system-ui, sans-serif;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+#dcw-save-pos:hover { filter: brightness(1.08); }
+
 /* On the game view the red "▶ Watch" tab is the watch control, so hide the
    floating widget there (avoid two Watch buttons on one screen). */
 body:has(#game-view:not([hidden])) .dcw-widget { display: none !important; }

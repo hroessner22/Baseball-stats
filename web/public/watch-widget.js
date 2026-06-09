@@ -158,6 +158,7 @@
   function setTheater(on) {
     try { localStorage.setItem(LS_THEATER, on ? "1" : "0"); } catch {}
     document.body.classList.toggle("dc-watching", on);
+
     let exit = document.getElementById("dcw-exit-theater");
     if (on && !exit) {
       exit = document.createElement("button");
@@ -168,7 +169,51 @@
     } else if (!on && exit) {
       exit.remove();
     }
+
+    // "Save video spot": after dragging/resizing the MLB.tv window where you
+    // want it, click this — the extension reads the window's actual bounds and
+    // reuses them for every future watch.
+    let save = document.getElementById("dcw-save-pos");
+    if (on && !save) {
+      save = document.createElement("button");
+      save.id = "dcw-save-pos";
+      save.textContent = "📌 Save video spot";
+      save.title = "Drag/resize the MLB.tv window where you want it, then click to save it for every game";
+      save.addEventListener("click", () => {
+        window.postMessage({ source: "diamond-context", type: "DC_SAVE_WATCH_POS" }, "*");
+        save.textContent = "Saving…";
+        setTimeout(() => { save.textContent = "📌 Save video spot"; }, 2500);
+      });
+      document.body.appendChild(save);
+    } else if (!on && save) {
+      save.remove();
+    }
   }
+
+  // Brief toast in the corner.
+  function toast(text, ok) {
+    const t = document.createElement("div");
+    t.className = "watch-login-toast";
+    t.style.borderColor = ok ? "#2ecc71" : "#e74c3c";
+    t.textContent = text;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+
+  // Confirmations from the extension (sign-in prompt, save/reset results).
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    const msg = event.data;
+    if (!msg || msg.source !== "diamond-context-ext") return;
+    if (msg.type === "DC_WATCH_POS_SAVED") {
+      toast(
+        msg.ok ? "✓ Video spot saved — used for every game" : "Open a game with Watch first, then save",
+        !!msg.ok
+      );
+    } else if (msg.type === "DC_WATCH_POS_RESET") {
+      toast("Video spot reset to default", true);
+    }
+  });
 
   // ── render ──────────────────────────────────────────────────────────
   function render() {

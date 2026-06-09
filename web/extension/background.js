@@ -1,19 +1,24 @@
 // background.js — the service worker.
 //
-// On a Watch click, open MLB.tv in a popup window placed EXACTLY into the gap
-// directly above the field. The DIAMOND:CONTEXT page measures that gap itself
-// (it knows precisely where the field sits) and sends the target rect in the
-// DC_WATCH message, so the window lands over the field column — clear of the
-// left cards and the right stats panel — with no picture-in-picture and no
-// manual adjusting. We re-apply the bounds a few times after creation because
-// Chrome occasionally ignores create-time bounds for popups.
+// On a Watch click, open MLB.tv in a popup window placed where the user wants
+// it. The user drags/resizes that window once and clicks "Save video spot" in
+// DIAMOND:CONTEXT; we read the window's actual bounds and store them. Every
+// later watch reopens the window at those saved bounds.
+//
+// Placement priority for each watch:
+//   1. saved bounds  (chrome.storage.local "dcWatchBounds") — what the user set
+//   2. msg.rect      — the rect the page measured above the field (good default)
+//   3. fallback rect — fractions of the D:C window, if nothing else is known
+// After creating the popup we re-apply the bounds a few times, because Chrome
+// occasionally ignores create-time bounds for popups.
+
+const BOUNDS_KEY = "dcWatchBounds";
 
 function mlbTvUrl(gamePk) {
   return `https://www.mlb.com/tv/g${gamePk}`;
 }
 
-// Fallback only — used when the page couldn't measure a rect (e.g. not on a
-// game's live view). Fractions of the D:C window, above the field column.
+// Fallback only — fractions of the D:C window, above the field column.
 const VID_WIDTH_FRAC = 0.34;
 const VID_CENTER_FRAC = 0.38;
 const TOP_OFFSET = 200;
@@ -34,24 +39,41 @@ const originTab = new Map(); // mlbTabId -> the DIAMOND:CONTEXT tab that asked
 // stream slots and trips MLB.tv's concurrent-stream cap, "content not available").
 let watchWindowId = null;
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === "DC_WATCH") {
-    const origin = sender.tab?.id;
-    const dcWindowId = sender.tab?.windowId;
-    const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
+// Find the open MLB.tv window. Prefer the one we opened; if the service worker
+// was torn down (losing watchWindowId), fall back to any open mlb.com window.
+function findWatchWindow(cb) {
+  if (watchWindowId != null) {
+    chrome.windows.get(watchWindowId, { populate: false }, (w) => {
+      if (!chrome.runtime.lastError && w) return cb(w);
+      watchWindowId = null;
+      findWatchWindow(cb);
+    });
+    return;
+  }
+  chrome.tabs.query({ url: ["*://*.mlb.com/*", "*://*.mlb.tv/*"] }, (tabs) => {
+    if (tabs && tabs.length) {
+      watchWindowId = tabs[0].windowId;
+      chrome.windows.get(watchWindowId, (w) => cb(w || null));
+    } else {
+      cb(null);
+    }
+  });
+}
 
-    const create = (bounds) => {
-      chrome.windows
-        .create({ url, type: "popup", focused: true, ...bounds })
-        .then((win) => {
-          watchWindowId = win.id;
-          const tab = win.tabs && win.tabs[0];
-          if (tab) {
-            pending.set(tab.id, msg);
-            if (origin != null) originTab.set(tab.id, origin);
-          }
-          // Re-apply the bounds: Chrome sometimes ignores create-time bounds
-          // for popups, and the page-measured rect is the source of truth.
+function openWatch(msg, origin, dcWindowId) {
+  const url = msg.watchUrl || mlbTvUrl(msg.gamePk);
+
+  const create = (bounds) => {
+    chrome.windows
+      .create({ url, type: "popup", focused: true, ...bounds })
+      .then((win) => {
+        watchWindowId = win.id;
+        const tab = win.tabs && win.tabs[0];
+        if (tab) {
+          pending.set(tab.id, msg);
+          if (origin != null) originTab.set(tab.id, origin);
+        }
+        if (bounds && bounds.width) {
           const reapply = () =>
             chrome.windows.update(win.id, {
               left: bounds.left,
@@ -62,30 +84,76 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           setTimeout(reapply, 300);
           setTimeout(reapply, 1000);
           setTimeout(reapply, 2000);
-        });
-    };
+        }
+      });
+  };
 
-    const open = () => {
-      // Prefer the exact rect the page measured (directly above the field).
-      if (msg.rect && msg.rect.width) {
-        create(msg.rect);
-      } else if (dcWindowId != null) {
-        chrome.windows.get(dcWindowId, (dc) => {
-          create(dc ? fallbackRect(dc) : { width: 520, height: 320 });
-        });
-      } else {
-        create({ width: 520, height: 320 });
-      }
-    };
+  // Resolve bounds: saved → page rect → fallback.
+  chrome.storage.local.get(BOUNDS_KEY, (data) => {
+    const saved = data && data[BOUNDS_KEY];
+    if (saved && saved.width) {
+      create(saved);
+    } else if (msg.rect && msg.rect.width) {
+      create(msg.rect);
+    } else if (dcWindowId != null) {
+      chrome.windows.get(dcWindowId, (dc) => {
+        create(dc ? fallbackRect(dc) : { width: 520, height: 320 });
+      });
+    } else {
+      create({ width: 520, height: 320 });
+    }
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === "DC_WATCH") {
+    const origin = sender.tab?.id;
+    const dcWindowId = sender.tab?.windowId;
+    const go = () => openWatch(msg, origin, dcWindowId);
 
     // Reuse the single watch window: close the old one first.
     if (watchWindowId != null) {
       const old = watchWindowId;
       watchWindowId = null;
-      chrome.windows.remove(old).then(open, open);
+      chrome.windows.remove(old).then(go, go);
     } else {
-      open();
+      go();
     }
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
+  // Save the MLB.tv window's CURRENT position/size so every future watch
+  // reopens it exactly there.
+  if (msg?.type === "DC_SAVE_WATCH_POS") {
+    const origin = sender.tab?.id;
+    findWatchWindow((win) => {
+      if (!win) {
+        if (origin != null)
+          chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_SAVED", ok: false });
+        return;
+      }
+      const bounds = {
+        left: win.left,
+        top: win.top,
+        width: win.width,
+        height: win.height,
+      };
+      chrome.storage.local.set({ [BOUNDS_KEY]: bounds }, () => {
+        if (origin != null)
+          chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_SAVED", ok: true, bounds });
+      });
+    });
+    sendResponse?.({ ok: true });
+    return true;
+  }
+
+  // Forget the saved position (use the measured default again).
+  if (msg?.type === "DC_RESET_WATCH_POS") {
+    chrome.storage.local.remove(BOUNDS_KEY);
+    const origin = sender.tab?.id;
+    if (origin != null)
+      chrome.tabs.sendMessage(origin, { type: "DC_WATCH_POS_RESET", ok: true });
     sendResponse?.({ ok: true });
     return true;
   }
