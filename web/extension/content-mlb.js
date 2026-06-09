@@ -1,29 +1,45 @@
 // content-mlb.js — runs on mlb.com.
 //
-// When DIAMOND:CONTEXT asks to watch a game, make sure the right game is
-// playing. That's it — no picture-in-picture. The MLB.tv window itself is
-// placed into D:C's theater area by the Hammerspoon helper, which needs no
-// user gesture, so the whole flow is automatic on the Watch click.
+// On an MLB.tv page it puts a big blue "Pop into Picture-in-Picture" button on
+// screen (always — it doesn't wait for a video to appear). One click pops the
+// game into PiP; D:C comes back to the front and the PiP snaps into the box
+// above the field. Also makes sure the right game is playing and handles a
+// signed-out session.
 
 (function () {
+  // Safe send — ignore "Extension context invalidated" after an extension reload.
+  function safeSend(message) {
+    try {
+      if (!chrome.runtime || !chrome.runtime.id) return;
+      const p = chrome.runtime.sendMessage(message);
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch (_) {}
+  }
+
   // Announce we're loaded so the worker hands us the watch intent.
-  chrome.runtime.sendMessage({ type: "DC_MLB_READY" });
+  safeSend({ type: "DC_MLB_READY" });
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "DC_ENTER_PIP") startWatch(msg);
   });
 
+  // Show the PiP button IMMEDIATELY on any MLB.tv page — never gate it on a
+  // video being detected (pre-game / MLB.TV HOME pages may not have one yet).
+  // The button finds the playing video when you click it.
+  if (/\/tv\b/.test(location.pathname)) showPipButton();
+
   async function startWatch(intent) {
+    showPipButton(); // make sure the button is up no matter what
     // If the deep link missed and we're on a listing, click into the game.
     await maybeClickIntoGame(intent);
 
     const video = await waitForVideo();
     if (!video) {
       // No player showed up. If the MLB.tv session is signed out, prompt
-      // DIAMOND:CONTEXT and send this window to MLB's login so the user can
-      // sign in — then re-click Watch. We never handle the password.
+      // DIAMOND:CONTEXT and send this tab to MLB's login so the user can sign
+      // in — then re-click Watch. We never handle the password.
       if (looksLoggedOut()) {
-        chrome.runtime.sendMessage({ type: "DC_LOGIN_REQUIRED" });
+        safeSend({ type: "DC_LOGIN_REQUIRED" });
         if (!/\/login/i.test(location.href)) {
           location.href = "https://www.mlb.com/login";
         }
@@ -31,23 +47,36 @@
       return;
     }
 
+    wirePip(video);
     await tryPlay(video);
-    enablePip(video);
   }
 
-  // Picture-in-Picture needs ONE user click in this tab (a hard browser rule —
-  // it can't be started programmatically). So we drop a big, unmissable button
-  // on top of the MLB.tv window: one click pops the game into PiP, then this
-  // bare window minimizes and DIAMOND:CONTEXT + Hammerspoon snap the PiP window
-  // into the box above the field.
+  // The big blue PiP button. Picture-in-Picture needs ONE user click in this
+  // tab (a hard browser rule — it can't be started from code), so this button
+  // IS that click: tap it → the game pops into PiP → D:C comes forward and the
+  // PiP snaps into the box above the field.
   let pipBtn = null;
 
   function removePipButton() {
     if (pipBtn) { pipBtn.remove(); pipBtn = null; }
   }
 
-  function showPipButton(video) {
-    if (pipBtn || document.pictureInPictureElement === video) return;
+  // Wire a video so entering PiP brings D:C forward, and closing PiP restores
+  // the button. Idempotent per element.
+  function wirePip(video) {
+    if (!video || video.__dcPipWired) return;
+    video.__dcPipWired = true;
+    try { video.disablePictureInPicture = false; } catch (_) {}
+    try { video.autoPictureInPicture = true; } catch (_) {}
+    video.addEventListener("enterpictureinpicture", () => {
+      removePipButton();
+      safeSend({ type: "DC_PIP_ON" });
+    });
+    video.addEventListener("leavepictureinpicture", () => showPipButton());
+  }
+
+  function showPipButton() {
+    if (pipBtn) return;
     pipBtn = document.createElement("button");
     pipBtn.textContent = "▶ Pop into Picture-in-Picture";
     pipBtn.style.cssText = [
@@ -59,9 +88,12 @@
     pipBtn.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // Re-find the active video at click time — the player may have swapped
-      // elements (ads → game) since the button appeared.
-      const v = pickVideo() || video;
+      const v = pickVideo();
+      if (!v) {
+        pipBtn.textContent = "Press play, then tap here";
+        return;
+      }
+      wirePip(v);
       try {
         try { v.disablePictureInPicture = false; } catch (_) {}
         if (v.paused) { try { await v.play(); } catch (_) {} }
@@ -70,23 +102,7 @@
         pipBtn.textContent = "Click the video first, then tap here";
       }
     });
-    document.documentElement.appendChild(pipBtn);
-  }
-
-  function enablePip(video) {
-    if (!("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled) return;
-    try { video.disablePictureInPicture = false; } catch (_) {}
-    try { video.autoPictureInPicture = true; } catch (_) {}
-
-    // Once it's floating, minimize this bare window; if the user closes PiP,
-    // bring the button back.
-    video.addEventListener("enterpictureinpicture", () => {
-      removePipButton();
-      chrome.runtime.sendMessage({ type: "DC_PIP_ON" });
-    });
-    video.addEventListener("leavepictureinpicture", () => showPipButton(video));
-
-    showPipButton(video);
+    (document.body || document.documentElement).appendChild(pipBtn);
   }
 
   // Largest visible <video> on the page is the game feed.
