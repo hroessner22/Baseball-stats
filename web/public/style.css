@@ -12371,7 +12371,7 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 /* Theater mode only SHIFTS the field down to open the area at the top where
    the centered PiP lands — the field keeps its normal size (no shrink). */
 body.dc-watching .field-pane {
-    padding-top: 66vh;
+    padding-top: 44vh;
     transition: padding-top .3s ease;
 }
 #dcw-exit-theater {
