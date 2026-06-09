@@ -14,6 +14,11 @@
 
 const BOUNDS_KEY = "dcWatchBounds";
 
+// Placement is automatic now (the page measures the exact box above the field).
+// Wipe any position saved by the old manual "save spot" flow so it can't
+// override the correct automatic placement.
+chrome.storage.local.remove(BOUNDS_KEY);
+
 function mlbTvUrl(gamePk) {
   return `https://www.mlb.com/tv/g${gamePk}`;
 }
@@ -88,21 +93,18 @@ function openWatch(msg, origin, dcWindowId) {
       });
   };
 
-  // Resolve bounds: saved → page rect → fallback.
-  chrome.storage.local.get(BOUNDS_KEY, (data) => {
-    const saved = data && data[BOUNDS_KEY];
-    if (saved && saved.width) {
-      create(saved);
-    } else if (msg.rect && msg.rect.width) {
-      create(msg.rect);
-    } else if (dcWindowId != null) {
-      chrome.windows.get(dcWindowId, (dc) => {
-        create(dc ? fallbackRect(dc) : { width: 520, height: 320 });
-      });
-    } else {
-      create({ width: 520, height: 320 });
-    }
-  });
+  // Placement is automatic: the page measures the exact box above the field
+  // and sends it as msg.rect — that's authoritative. Fall back to a fraction
+  // of the D:C window only if no rect arrived.
+  if (msg.rect && msg.rect.width) {
+    create(msg.rect);
+  } else if (dcWindowId != null) {
+    chrome.windows.get(dcWindowId, (dc) => {
+      create(dc ? fallbackRect(dc) : { width: 520, height: 320 });
+    });
+  } else {
+    create({ width: 520, height: 320 });
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

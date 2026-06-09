@@ -94,49 +94,52 @@
         );
       };
       // Wait for the theater padding transition (~.3s) to settle before
-      // measuring, so the field has finished shifting down.
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => setTimeout(send, 360))
-      );
+      // measuring, so the field has finished shifting down. (Plain timeout, not
+      // requestAnimationFrame, so it fires even if the tab isn't focused.)
+      setTimeout(send, 420);
     } else {
       openSetup();
     }
   }
 
-  // The exact screen rectangle (CSS px, as chrome.windows uses) directly above
-  // the field: field-column width, 16:9, fit into the gap that theater mode
-  // opens up over the field — and never overlapping the left AT BAT/PITCHING
-  // cards (.field-narrative) or the right stats panel (.card-pane).
+  // The video box, dead simple:
+  //   • width  = the EXACT field width, at the field's left edge
+  //   • top    = right below the WATCH tab row
+  //   • bottom = right above the field
+  // Returned in screen CSS px (what chrome.windows uses).
   function computeVideoRect() {
     try {
-      const fc = document.querySelector(".field-pane .field-canvas");
-      const svg = fc && fc.querySelector("svg");
-      const narr = document.querySelector(".field-narrative");
-      const cardPane = document.querySelector(".card-pane");
-      if (!fc || !svg) return null;
-      const fcr = fc.getBoundingClientRect();
-      const svgr = svg.getBoundingClientRect();
-      const contentTop = fcr.top;       // top of the live-view content column
-      const fieldTop = svgr.top;        // top of the field SVG (pushed down)
-      const gap = fieldTop - contentTop; // open space above the field
-      if (gap < 80) return null;        // theater layout hasn't applied yet
+      const svg = document.querySelector(".field-pane .field-canvas svg");
+      if (!svg) return null;
+      const f = svg.getBoundingClientRect(); // the field itself
 
-      let width = fcr.width;
-      let height = Math.round((width * 9) / 16);
-      if (height > gap - 12) {          // too tall for the gap → fit to gap
-        height = Math.round(gap - 12);
-        width = Math.round((height * 16) / 9);
+      // Bottom of the tab row that holds the WATCH tab.
+      const watchTab = [...document.querySelectorAll("a,button")].find((e) => {
+        const t = (e.textContent || "").trim();
+        const w = e.getBoundingClientRect().width;
+        return /^▶?\s*watch$/i.test(t) && w > 0 && w < 300;
+      });
+      let tabBottom;
+      if (watchTab) {
+        let row = watchTab;
+        while (
+          row.parentElement &&
+          row.parentElement.getBoundingClientRect().height < 80
+        ) {
+          row = row.parentElement;
+        }
+        tabBottom = row.getBoundingClientRect().bottom;
+      } else {
+        tabBottom = f.top - 300; // fallback if the tab row can't be found
       }
-      let left = fcr.left + (fcr.width - width) / 2; // center over the field column
-      let top = contentTop + 4;
 
-      // Keep clear of the side panels.
-      const narrR = narr ? narr.getBoundingClientRect().right : 0;
-      const cardL = cardPane ? cardPane.getBoundingClientRect().left : window.innerWidth;
-      if (left < narrR + 10) left = narrR + 10;
-      if (left + width > cardL - 10) width = cardL - 10 - left;
+      const M = 8; // small breathing room top & bottom
+      const left = f.left;
+      const width = f.width;
+      const top = tabBottom + M;
+      const height = f.top - M - top;
+      if (height < 60) return null; // theater layout hasn't opened the gap yet
 
-      // Page coords → screen coords (add window origin + browser chrome height).
       const sx = Math.round(window.screenX + left);
       const sy = Math.round(
         window.screenY + (window.outerHeight - window.innerHeight) + top
@@ -170,33 +173,12 @@
       exit.remove();
     }
 
-    if (on) {
-      // Show "Save video spot" only until a spot is saved. Once saved, the
-      // window reopens at that exact position+size every time, so the button
-      // has done its job and disappears. Ask the extension whether one's
-      // already saved so a returning viewer never sees the button.
-      ensureSaveButton();
-      window.postMessage({ source: "diamond-context", type: "DC_GET_WATCH_POS" }, "*");
-    } else {
-      document.getElementById("dcw-save-pos")?.remove();
+    if (!on) {
       // Exiting the video player on the site closes the MLB.tv window too.
       window.postMessage({ source: "diamond-context", type: "DC_CLOSE_WATCH" }, "*");
     }
-  }
-
-  // The "Save video spot" button: drag/resize the MLB.tv window where you want
-  // it, click this, and the extension stores those exact bounds for every game.
-  function ensureSaveButton() {
-    if (document.getElementById("dcw-save-pos")) return;
-    const save = document.createElement("button");
-    save.id = "dcw-save-pos";
-    save.textContent = "📌 Save video spot";
-    save.title = "Drag/resize the MLB.tv window where you want it, then click to save it for every game";
-    save.addEventListener("click", () => {
-      window.postMessage({ source: "diamond-context", type: "DC_SAVE_WATCH_POS" }, "*");
-      save.textContent = "Saving…";
-    });
-    document.body.appendChild(save);
+    // Placement is fully automatic now (computeVideoRect → the exact box above
+    // the field), so there's no manual "save spot" button anymore.
   }
 
   // Brief toast in the corner.
@@ -209,35 +191,7 @@
     setTimeout(() => t.remove(), 3200);
   }
 
-  // Confirmations from the extension (sign-in prompt, save/reset results).
-  window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
-    const msg = event.data;
-    if (!msg || msg.source !== "diamond-context-ext") return;
-    if (msg.type === "DC_WATCH_POS_SAVED") {
-      if (msg.ok) {
-        const b = msg.bounds;
-        toast(
-          b
-            ? `✓ Saved ${Math.round(b.width)}×${Math.round(b.height)} — reopens right here every game`
-            : "✓ Video spot saved — used for every game",
-          true
-        );
-        // Done its job — the spot persists, so the button disappears.
-        document.getElementById("dcw-save-pos")?.remove();
-      } else {
-        toast("Open a game with Watch first, then save", false);
-      }
-    } else if (msg.type === "DC_WATCH_POS_STATE") {
-      // A spot is already saved → no button needed.
-      if (msg.bounds && msg.bounds.width) {
-        document.getElementById("dcw-save-pos")?.remove();
-      }
-    } else if (msg.type === "DC_WATCH_POS_RESET") {
-      toast("Video spot reset — drag the window and save a new one", true);
-      if (document.body.classList.contains("dc-watching")) ensureSaveButton();
-    }
-  });
+  // (No save/reset confirmations needed — placement is automatic.)
 
   // ── render ──────────────────────────────────────────────────────────
   function render() {
