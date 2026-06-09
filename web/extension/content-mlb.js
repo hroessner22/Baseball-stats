@@ -119,14 +119,52 @@
     // Clicking the button itself is the user gesture that PiP requires. We
     // bind to the button (not the whole document) so it doesn't hijack
     // clicks elsewhere on the page.
-    el.addEventListener("click", async (e) => {
+    el.addEventListener("click", (e) => {
       e.stopPropagation();
       el.remove();
-      try {
-        await video.requestPictureInPicture();
-      } catch (_) {}
+      // One button does it all: start playback (MLB often needs a play click
+      // first) AND pop to picture-in-picture — both inside this click so they
+      // count as a user gesture.
+      startAndPip(video);
     });
     document.body.appendChild(el);
+  }
+
+  // Play the feed (if paused) and float it into PiP. requestPictureInPicture
+  // needs the video to have a frame (readyState ≥ 1) plus a recent user
+  // gesture, so we try right away (covers an already-buffered/paused feed)
+  // and again the moment playback actually starts — both land inside the
+  // click's activation window.
+  function startAndPip(video) {
+    const p = video.play();
+    if (p && p.catch) p.catch(() => clickPlayButton());
+    pip(video);
+    const onReady = () => pip(video);
+    video.addEventListener("playing", onReady, { once: true });
+    video.addEventListener("loadeddata", onReady, { once: true });
+    setTimeout(() => {
+      video.removeEventListener("playing", onReady);
+      video.removeEventListener("loadeddata", onReady);
+    }, 8000);
+  }
+
+  function pip(video) {
+    try {
+      if (
+        document.pictureInPictureEnabled &&
+        video !== document.pictureInPictureElement &&
+        video.readyState >= 1
+      ) {
+        video.requestPictureInPicture();
+      }
+    } catch (_) {}
+  }
+
+  function clickPlayButton() {
+    const b = document.querySelector(
+      '[aria-label*="play" i], button[title*="play" i], .bmpui-ui-playbacktogglebutton'
+    );
+    if (b) b.click();
   }
 
   // Largest visible <video> on the page is the game feed.
