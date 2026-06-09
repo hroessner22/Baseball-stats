@@ -13,8 +13,9 @@ local M = {}
 
 local placed = {}          -- window id -> true; each video window is sized/placed
                            -- ONCE, then left alone so the user can resize/move it
+local SAVE_KEY = "dcVideoFrame"  -- persisted (across restarts) user position/size
 local SCAN_INTERVAL = 0.5
-local WIDTH_FRAC = 0.65    -- video width ÷ D:C window width (fills the field column)
+local WIDTH_FRAC = 0.38    -- video width ÷ D:C window width (fills the field column)
 local CENTER_FRAC = 0.50   -- horizontal center, as a fraction of the D:C window
                            -- width (~the live-view / field column)
 local TOP_OFFSET = 240     -- px below the D:C window top (above the field)
@@ -45,22 +46,34 @@ end
 local function scan()
   local chrome = hs.application.get("Google Chrome")
   if not chrome then return end
-  local dc = dcWindow()
-  if not dc then return end
-  local f = dc:frame()
-  local w = math.floor(f.w * WIDTH_FRAC)
-  local h = math.floor((w * 9) / 16) + TITLEBAR
-  local x = math.floor(f.x + f.w * CENTER_FRAC - w / 2)
-  local y = math.floor(f.y + TOP_OFFSET)
-  if x < f.x + 8 then x = f.x + 8 end
   for _, win in ipairs(chrome:allWindows()) do
     if isVideoWindow(win) then
       local id = win:id()
-      -- Set the size + position ONCE, when the window first appears. After
-      -- that we leave it alone so you can resize / drag it freely.
       if id and not placed[id] then
-        placed[id] = true
-        win:setFrame({ x = x, y = y, w = w, h = h })
+        -- First time this window appears: restore YOUR saved position/size if
+        -- you've set one; otherwise place it at a sensible default above the
+        -- field (needs the D:C window to compute that).
+        local s = hs.settings.get(SAVE_KEY)
+        if s and s.w and s.h then
+          placed[id] = true
+          win:setFrame({ x = s.x, y = s.y, w = s.w, h = s.h })
+        else
+          local dc = dcWindow()
+          if dc then
+            placed[id] = true
+            local f = dc:frame()
+            local w = math.floor(f.w * WIDTH_FRAC)
+            local h = math.floor((w * 9) / 16) + TITLEBAR
+            local x = math.floor(f.x + f.w * CENTER_FRAC - w / 2)
+            if x < f.x + 8 then x = f.x + 8 end
+            win:setFrame({ x = x, y = math.floor(f.y + TOP_OFFSET), w = w, h = h })
+          end
+        end
+      elseif id then
+        -- Remember wherever you've moved/resized it, so the next watch reopens
+        -- in the same spot. (Saved across Hammerspoon restarts.)
+        local wf = win:frame()
+        hs.settings.set(SAVE_KEY, { x = wf.x, y = wf.y, w = wf.w, h = wf.h })
       end
     end
   end
@@ -78,6 +91,13 @@ function dcPiPDebug()
     local f = win:frame()
     print(string.format("title=%q size=%dx%d at (%d,%d)", win:title() or "", f.w, f.h, f.x, f.y))
   end
+end
+
+-- Console helper: forget the saved position so the next watch uses the
+-- default again (run dcResetVideoPos() in the Hammerspoon console).
+function dcResetVideoPos()
+  hs.settings.set(SAVE_KEY, nil)
+  print("DIAMOND:CONTEXT — saved video position cleared")
 end
 
 function M.start()
