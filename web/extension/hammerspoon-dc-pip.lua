@@ -16,31 +16,37 @@
 local M = {}
 
 local PORT = 27894
-local SCAN_INTERVAL = 0.25
-local FRESH = 2.0          -- only pin while the page is actively heartbeating
+local SCAN_INTERVAL = 0.15
+local FRESH = 3.0          -- only pin while the page is actively heartbeating
 local TOLERANCE = 3        -- px drift before we re-pin (avoids jitter)
 
 local target = nil         -- {x, y, w, h} screen points
 local lastUpdate = 0       -- secondsSinceEpoch of the last heartbeat
 local server = nil
 
--- Chrome's PiP window: a Google Chrome window whose title is exactly
--- "Picture in Picture". Must be a Chrome window and the title must START with
--- that phrase (a window that merely *mentions* picture-in-picture — e.g. a
--- terminal showing this task name — must NOT match).
+-- Chrome's PiP window: a Google Chrome window whose title contains "picture in
+-- picture". Must be a Chrome window (so a terminal/editor that merely shows the
+-- phrase "picture-in-picture" in its title can't match) and not the D:C page.
 local function isPipWindow(win)
   if not win then return false end
   local app = win:application()
   if not app or not (app:name() or ""):find("Chrome") then return false end
   local title = (win:title() or ""):lower()
-  return title:find("^picture in picture") ~= nil
-      or title:find("^picture%-in%-picture") ~= nil
+  if title:find("diamond") then return false end
+  return title:find("picture in picture") ~= nil
+      or title:find("picture%-in%-picture") ~= nil
 end
 
 local function findPip()
+  -- Chrome's PiP can be reported under the app's window list or the global
+  -- window list depending on timing/Space — check both.
   local chrome = hs.application.get("Google Chrome")
-  if not chrome then return nil end
-  for _, w in ipairs(chrome:allWindows()) do
+  if chrome then
+    for _, w in ipairs(chrome:allWindows()) do
+      if isPipWindow(w) then return w end
+    end
+  end
+  for _, w in ipairs(hs.window.allWindows()) do
     if isPipWindow(w) then return w end
   end
   return nil
