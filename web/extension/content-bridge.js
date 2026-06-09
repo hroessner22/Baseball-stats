@@ -12,6 +12,21 @@
   // <html> exists at document_start; the Watch tab reads this later.
   document.documentElement.dataset.dcWatchExt = "1";
 
+  // Safe send: when the extension is reloaded, this content script keeps
+  // running in the already-open page but its connection is dead ("Extension
+  // context invalidated"). The page heartbeats every 600ms, so without this
+  // guard that throws repeatedly. Check the context is alive and swallow any
+  // failure (next page refresh injects a fresh content script).
+  function relay(message) {
+    try {
+      if (!chrome.runtime || !chrome.runtime.id) return; // context gone
+      const p = chrome.runtime.sendMessage(message);
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch (_) {
+      /* extension reloaded / worker unavailable */
+    }
+  }
+
   // Page → worker: watch / save-position / reset-position requests.
   window.addEventListener("message", (event) => {
     // Only trust messages from this same window / our own page code.
@@ -20,7 +35,7 @@
     if (!msg || msg.source !== "diamond-context") return;
 
     if (msg.type === "DC_WATCH") {
-      chrome.runtime.sendMessage({
+      relay({
         type: "DC_WATCH",
         gamePk: msg.gamePk,
         away: msg.away,
@@ -30,15 +45,15 @@
         rect: msg.rect, // exact screen rect to float the video above the field
       });
     } else if (msg.type === "DC_SAVE_WATCH_POS") {
-      chrome.runtime.sendMessage({ type: "DC_SAVE_WATCH_POS" });
+      relay({ type: "DC_SAVE_WATCH_POS" });
     } else if (msg.type === "DC_GET_WATCH_POS") {
-      chrome.runtime.sendMessage({ type: "DC_GET_WATCH_POS" });
+      relay({ type: "DC_GET_WATCH_POS" });
     } else if (msg.type === "DC_CLOSE_WATCH") {
-      chrome.runtime.sendMessage({ type: "DC_CLOSE_WATCH" });
+      relay({ type: "DC_CLOSE_WATCH" });
     } else if (msg.type === "DC_PLACE_PIP") {
-      chrome.runtime.sendMessage({ type: "DC_PLACE_PIP", rect: msg.rect });
+      relay({ type: "DC_PLACE_PIP", rect: msg.rect });
     } else if (msg.type === "DC_RESET_WATCH_POS") {
-      chrome.runtime.sendMessage({ type: "DC_RESET_WATCH_POS" });
+      relay({ type: "DC_RESET_WATCH_POS" });
     }
   });
 
