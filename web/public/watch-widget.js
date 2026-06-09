@@ -85,8 +85,34 @@
         { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl },
         "*"
       );
+      // Enter "theater" layout: the PiP gets centered over this window by the
+      // Hammerspoon helper, so shrink the field to sit below it.
+      setTheater(true);
     } else {
       openSetup();
+    }
+  }
+
+  // ── theater mode ────────────────────────────────────────────────────
+  // Shrinks the field (body.dc-watching) so the centered PiP has room above
+  // it. Persists so it survives navigation; a floating "exit" chip turns it
+  // off. The PiP itself is positioned by the Hammerspoon helper.
+  const LS_THEATER = "diamond_context_theater";
+  function theaterOn() {
+    try { return localStorage.getItem(LS_THEATER) === "1"; } catch { return false; }
+  }
+  function setTheater(on) {
+    try { localStorage.setItem(LS_THEATER, on ? "1" : "0"); } catch {}
+    document.body.classList.toggle("dc-watching", on);
+    let exit = document.getElementById("dcw-exit-theater");
+    if (on && !exit) {
+      exit = document.createElement("button");
+      exit.id = "dcw-exit-theater";
+      exit.textContent = "✕ Exit theater";
+      exit.addEventListener("click", () => setTheater(false));
+      document.body.appendChild(exit);
+    } else if (!on && exit) {
+      exit.remove();
     }
   }
 
@@ -219,6 +245,7 @@
       }
     });
 
+    if (theaterOn()) setTheater(true); // restore theater layout across navigation
     refresh();
     timer = setInterval(refresh, REFRESH_MS);
   }
