@@ -218,8 +218,8 @@
       ? `<span class="dcw-live">● LIVE</span> ${esc(stateText(game))}`
       : `${esc(startText(game))}`;
 
-    // Live game → watch it. No live game → offer the always-on MLBN feed so
-    // the corner-watch is always usable (and testable before first pitch).
+    // Live game → open THAT game on MLB.tv (the one we cued from). Not on yet →
+    // fall back to the always-on MLBN feed.
     const target = live
       ? { pk: game.game_pk, url: null, label: "▶ Watch" }
       : { pk: game.game_pk, url: MLBN_URL, label: "▶ Watch MLBN" };
@@ -326,24 +326,29 @@
     refresh();
     timer = setInterval(refresh, REFRESH_MS);
 
-    // While you're viewing D:C in theater mode, continuously hand the exact box
-    // above the field to the extension → Hammerspoon, which snaps Chrome's PiP
-    // window into it. It only fires while this tab is visible, so the PiP
-    // tracks D:C while you're looking at it and is left alone otherwise.
-    setInterval(() => {
+    // Hand the exact box above the field to the extension → Hammerspoon, which
+    // snaps Chrome's PiP window into it. Fires continuously while you're viewing
+    // D:C in theater mode, AND instantly the moment you switch BACK to D:C (so
+    // the PiP jumps into place the second you land here, not on the next tick).
+    const placePip = () => {
       if (document.visibilityState !== "visible") return;
       if (!document.body.classList.contains("dc-watching")) return;
       const rect = computeVideoRect();
       if (rect) {
         window.postMessage({ source: "diamond-context", type: "DC_PLACE_PIP", rect }, "*");
       }
-    }, 600);
+    };
+    setInterval(placePip, 500);
+    // Snap immediately on entering D:C (a burst, since the PiP/layout may still
+    // be settling the instant the tab becomes visible).
+    const placeBurst = () => { placePip(); setTimeout(placePip, 120); setTimeout(placePip, 350); setTimeout(placePip, 700); };
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") placeBurst(); });
+    window.addEventListener("focus", placeBurst);
   }
 
   // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can
-  // trigger the exact same flow: extension → MLB.tv → auto-PiP → theater.
-  // For a live game pass watchUrl=null (per-game deep link); otherwise the
-  // always-on MLBN feed.
+  // trigger the exact same flow. Live game → that game's MLB.tv deep link
+  // (watchUrl=null); not on yet → the always-on MLBN feed.
   window.DCWatch = {
     start(gamePk, live) {
       watch(gamePk, null, null, live ? null : MLBN_URL);
