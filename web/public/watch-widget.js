@@ -81,10 +81,12 @@
   // ── handoff ─────────────────────────────────────────────────────────
   function watch(gamePk, away, home, watchUrl) {
     if (extInstalled()) {
-      // Enter "theater" layout first (shifts the field down), THEN measure the
-      // exact rectangle that opens up directly above the field and hand it to
-      // the extension so the MLB.tv window lands there precisely — over the
-      // field column, clear of the left cards and the right stats panel.
+      // Go to this game's view, then enter the distraction-free theater layout
+      // (hides all chrome, shows just the field) as the backdrop for the
+      // floating MLB.tv PiP.
+      if (gamePk) {
+        try { location.hash = "#game/" + gamePk; } catch {}
+      }
       setTheater(true);
       const send = () => {
         const rect = computeVideoRect();
