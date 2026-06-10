@@ -841,9 +841,16 @@ async function scanOneGame(g) {
                 log("skip", `No Kalshi moneyline market for ${g.away}@${g.home}`);
                 recordPreScan("no_kalshi_ml_market");
             } else {
-                log("bot", `Scanning ${moneylines.length} moneyline${moneylines.length === 1 ? "" : "s"} for ${g.away}@${g.home} (our WE: ${(ourHome*100).toFixed(1)}% home)`);
-                for (const m of moneylines) {
-                    await checkAndMaybeFire(g, m, ourHome, savantHome);
+                // _markets.js folds Kalshi's per-team tickers into ONE
+                // game-level moneyline market with two outcomes (one per
+                // team). Iterate outcomes so we evaluate each side
+                // (home YES + away YES) independently.
+                const sides = moneylines.flatMap((m) =>
+                    (m.outcomes || []).map((o) => ({ market: m, outcome: o }))
+                );
+                log("bot", `Scanning ${sides.length} moneyline side${sides.length === 1 ? "" : "s"} for ${g.away}@${g.home} (our WE: ${(ourHome*100).toFixed(1)}% home)`);
+                for (const s of sides) {
+                    await checkAndMaybeFire(g, s.market, s.outcome, ourHome, savantHome);
                 }
             }
         }
@@ -2057,16 +2064,20 @@ function sizeContractsByConviction(askCents, score, unitCents) {
     return sizeContractsByKelly(askCents, score, unitCents, bk);
 }
 
-async function checkAndMaybeFire(g, market, ourHome, savantHome) {
-    // Identify which TEAM this Kalshi market is YES'ing on. The
-    // ticker tail is the tricode (KXMLBGAME-...-DET, ...-TB, etc.).
-    // Match against g.home / g.away to know if YES = home wins.
-    const ticker = market.raw_market_id || "";
-    const tail = ticker.split("-").slice(-1)[0]?.toUpperCase() || "";
-    const isHomeSide = tail === g.home || tail === g.home?.toUpperCase();
-    const isAwaySide = tail === g.away || tail === g.away?.toUpperCase();
-    if (!isHomeSide && !isAwaySide) {
-        log("skip", `Moneyline ${ticker}: ticker tail '${tail}' doesn't match ${g.away}/${g.home}`);
+async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
+    // _markets.js (since 2026-05-28) folds Kalshi's per-team tickers
+    // into one game-level moneyline market: raw_market_id is the
+    // game key (KXMLBGAME-26JUN101610CINSD), and each outcome carries
+    // the per-team ticker we need for the orderbook in `outcome.id`
+    // (KXMLBGAME-26JUN101610CINSD-CIN:yes). Strip the `:yes` suffix
+    // to get the per-team market ticker, and use outcome.name (the
+    // team tricode) for the home/away match.
+    const ticker = (outcome?.id || "").replace(/:yes$/i, "");
+    const tail   = (outcome?.name || "").toUpperCase();
+    const isHomeSide = tail === (g.home || "").toUpperCase();
+    const isAwaySide = tail === (g.away || "").toUpperCase();
+    if (!ticker || (!isHomeSide && !isAwaySide)) {
+        log("skip", `Moneyline ${ticker || "(no ticker)"}: outcome '${tail}' doesn't match ${g.away}/${g.home}`);
         return;
     }
 
