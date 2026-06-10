@@ -2379,6 +2379,20 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
        already cue "this is tappable." */
     display: none;
 }
+/* Watch button on each hot card — lets you watch a game straight from this
+   view (no need to open the game first). */
+.hot-actions { margin-top: 8px; }
+.hot-watch {
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent-live, #e8554e);
+    color: #fff;
+    font: 700 0.82rem system-ui, sans-serif;
+    cursor: pointer;
+}
+.hot-watch:hover { filter: brightness(1.06); }
 .hot-we-labels {
     font-size: 10px;
 }
@@ -12112,7 +12126,12 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
    The MLB.tv launcher. Cards mirror the Board's tile look but end in a
    Watch button instead of being a link to the game view. */
 .watch-view {
-    padding: 16px;
+    /* Same as .game-view — fill the space between header and bottom nav and
+       scroll internally, so the nav stays reachable and content isn't clipped. */
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 16px 16px 100px;
     max-width: 1100px;
     margin: 0 auto;
 }
@@ -12455,5 +12474,7 @@ body.dc-watching .field-pane .field-canvas {
    floating widget there (avoid two Watch buttons on one screen). */
 body:has(#game-view:not([hidden])) .dcw-widget { display: none !important; }
 /* The Watch tab IS the watch UI — hide the floating launcher there so it
-   doesn't cover the cards/header. */
+   doesn't cover the cards/header. Same on Hot (cards have their own Watch
+   buttons now). */
 body:has(#watch-view:not([hidden])) .dcw-widget { display: none !important; }
+body:has(#hot-view:not([hidden])) .dcw-widget { display: none !important; }

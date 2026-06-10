@@ -3624,8 +3624,7 @@ async function refreshHot() {
 
         const ranked = live
             .map((g) => ({ g, lev: leverage(g) }))
-            .sort((a, b) => b.lev - a.lev)
-            .slice(0, 6);
+            .sort((a, b) => b.lev - a.lev);
 
         hotView.innerHTML = renderHot(ranked);
     } catch (e) {
@@ -3686,7 +3685,11 @@ function renderHotCard(g, lev, rank) {
         <div class="hot-meter" title="Leverage: ${lev.toFixed(2)}">
           <span style="width:${leverageBar}%"></span>
         </div>
-        <div class="hot-cta">Open game view →</div>
+        <div class="hot-actions">
+          <button class="hot-watch" data-watch data-game-pk="${g.game_pk}" data-live="1"
+                  title="Watch this game">▶ Watch</button>
+          <span class="hot-cta">Open game →</span>
+        </div>
       </a>
     `;
 }
