@@ -13,7 +13,11 @@
          actually exist rather than silently rounding to the nearest
          discrete weight. -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
+<<<<<<< HEAD
     <link rel="stylesheet" href="style.css?v=20260609BOARD2">
+=======
+    <link rel="stylesheet" href="style.css?v=20260610THEATER">
+>>>>>>> b2e0421 (Fold HOT into LIVE; ship Watch theater + setup guide)
     <link rel="icon" type="image/svg+xml" href="logo.svg">
 </head>
 <body>
@@ -37,7 +41,6 @@
 
     <main id="board" class="board"></main>
     <main id="game-view" class="game-view" hidden></main>
-    <main id="hot-view" class="hot-view" hidden></main>
     <main id="standings-view" class="standings-view" hidden></main>
     <main id="leaders-view" class="leaders-view" hidden></main>
     <main id="mvp-view" class="mvp-view" hidden></main>
@@ -51,11 +54,10 @@
 
     <nav aria-label="sections">
         <a href="#live" class="nav-item active" data-route="live"><span class="num">01</span> LIVE</a>
-        <a href="#hot" class="nav-item" data-route="hot"><span class="num">02</span> HOT</a>
-        <a href="#markets" class="nav-item" data-route="markets"><span class="num">03</span> MARKETS</a>
-        <a href="#standings" class="nav-item" data-route="standings"><span class="num">04</span> STANDINGS</a>
-        <a href="#leaders" class="nav-item" data-route="leaders"><span class="num">05</span> LEADERS</a>
-        <a href="#watch" class="nav-item" data-route="watch"><span class="num">06</span> WATCH</a>
+        <a href="#markets" class="nav-item" data-route="markets"><span class="num">02</span> MARKETS</a>
+        <a href="#standings" class="nav-item" data-route="standings"><span class="num">03</span> STANDINGS</a>
+        <a href="#leaders" class="nav-item" data-route="leaders"><span class="num">04</span> LEADERS</a>
+        <a href="#watch" class="nav-item" data-route="watch"><span class="num">05</span> WATCH</a>
     </nav>
 
     <footer class="page-footer">
@@ -77,7 +79,11 @@
     <script src="parks.js"></script>
     <script src="kalshi.js?v=20260609WEFALL"></script>
     <script src="health.js?v=20260609WEFALL"></script>
+<<<<<<< HEAD
     <script src="app.js?v=20260609BOARD"></script>
+=======
+    <script src="app.js?v=20260610THEATER"></script>
+>>>>>>> b2e0421 (Fold HOT into LIVE; ship Watch theater + setup guide)
     <!-- Loaded as a module so it can import @supabase/supabase-js
          from the ESM CDN. Exposes window.Auth for any non-module
          caller that wants to gate behavior on sign-in state. -->
@@ -103,6 +109,10 @@
     <!-- Persistent Watch widget: always-on launcher (bottom-right) that
          hands the featured game to the Watch extension for corner PiP.
          Present on every page so watching is one click from anywhere. -->
+<<<<<<< HEAD
     <script src="watch-widget.js?v=20260610DRAG"></script>
+=======
+    <script src="watch-widget.js?v=20260610THEATER"></script>
+>>>>>>> b2e0421 (Fold HOT into LIVE; ship Watch theater + setup guide)
 </body>
 </html>

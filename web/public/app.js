@@ -265,9 +265,10 @@ function handleRoute() {
         setActiveNav(null);
         return;
     }
+    // HOT tab folded into LIVE — the LIVE board already sorts by
+    // leverage, so HOT was redundant. Old #hot links redirect to LIVE.
     if (hash === "#hot") {
-        showHot();
-        setActiveNav("hot");
+        window.location.hash = "#live";
         return;
     }
     if (hash === "#watch") {
@@ -436,7 +437,7 @@ function hideAllViews() {
     leadersView.hidden = true;
     mvpView.hidden = true;
     aboutView.hidden = true;
-    hotView.hidden = true;
+    if (hotView) hotView.hidden = true;   // HOT view removed; null on new builds
     playerView.hidden = true;
     marketsView.hidden = true;
     if (watchView) watchView.hidden = true;
@@ -9336,9 +9337,30 @@ function watchExtInstalled() {
     return document.documentElement.dataset.dcWatchExt === "1";
 }
 
-function showWatch() {
+async function showWatch() {
     activeGameId = null;
     clearAllTimers();
+    // Watch is now the theater: jump straight into watching the featured game
+    // full-screen (distraction-free). If the extension isn't set up yet, fall
+    // back to the grid + setup guide so the user can get going.
+    const extReady = window.DCWatch && document.documentElement.dataset.dcWatchExt === "1";
+    if (extReady) {
+        try {
+            const res = await fetch("/api/games/today");
+            const data = res.ok ? await res.json() : { games: [] };
+            const games = data.games || [];
+            const live = games.filter((g) => g.status === "Live" && g.inning)
+                .map((g) => ({ g, lev: leverage(g) }))
+                .sort((a, b) => b.lev - a.lev);
+            const pick = live[0]?.g
+                || games.find((g) => g.status === "Live")
+                || games.find((g) => g.status === "Preview");
+            if (pick) {
+                window.DCWatch.start(pick.game_pk, pick.status === "Live");
+                return;
+            }
+        } catch (_) { /* fall through to the grid */ }
+    }
     hideAllViews();
     watchView.hidden = false;
     refreshWatch();
