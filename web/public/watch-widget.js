@@ -326,24 +326,8 @@
     refresh();
     timer = setInterval(refresh, REFRESH_MS);
 
-    // Hand the exact box above the field to the extension → Hammerspoon, which
-    // snaps Chrome's PiP window into it. Fires continuously while you're viewing
-    // D:C in theater mode, AND instantly the moment you switch BACK to D:C (so
-    // the PiP jumps into place the second you land here, not on the next tick).
-    const placePip = () => {
-      if (document.visibilityState !== "visible") return;
-      if (!document.body.classList.contains("dc-watching")) return;
-      const rect = computeVideoRect();
-      if (rect) {
-        window.postMessage({ source: "diamond-context", type: "DC_PLACE_PIP", rect }, "*");
-      }
-    };
-    setInterval(placePip, 500);
-    // Snap immediately on entering D:C (a burst, since the PiP/layout may still
-    // be settling the instant the tab becomes visible).
-    const placeBurst = () => { placePip(); setTimeout(placePip, 120); setTimeout(placePip, 350); setTimeout(placePip, 700); };
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") placeBurst(); });
-    window.addEventListener("focus", placeBurst);
+    // (No PiP auto-positioning — Chrome's native PiP floats on top and you
+    // drag it where you want; we don't fight that.)
   }
 
   // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can
