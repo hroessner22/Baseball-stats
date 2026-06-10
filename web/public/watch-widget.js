@@ -79,29 +79,24 @@
   }
 
   // ── handoff ─────────────────────────────────────────────────────────
-  function watch(gamePk, away, home, watchUrl) {
-    if (extInstalled()) {
-      // Go to this game's view, then enter the distraction-free theater layout
-      // (hides all chrome, shows just the field) as the backdrop for the
-      // floating MLB.tv PiP.
-      if (gamePk) {
-        try { location.hash = "#game/" + gamePk; } catch {}
-      }
-      setTheater(true);
-      const send = () => {
-        const rect = computeVideoRect();
-        window.postMessage(
-          { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl, rect },
-          "*"
-        );
-      };
-      // Wait for the theater padding transition (~.3s) to settle before
-      // measuring, so the field has finished shifting down. (Plain timeout, not
-      // requestAnimationFrame, so it fires even if the tab isn't focused.)
-      setTimeout(send, 420);
-    } else {
-      openSetup();
+  // mode "shift" (in-game / board Watch): shift the field down, keep everything,
+  //   you PiP manually. mode "fullscreen" (bottom Watch tab): hide all chrome,
+  //   just the field on its own screen.
+  function watch(gamePk, away, home, watchUrl, mode) {
+    if (!extInstalled()) { openSetup(); return; }
+    mode = mode === "fullscreen" ? "fullscreen" : "shift";
+    if (gamePk) {
+      try { location.hash = "#game/" + gamePk; } catch {}
     }
+    setTheater(true, mode);
+    const send = () => {
+      window.postMessage(
+        { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl },
+        "*"
+      );
+    };
+    // Let the view/layout settle, then hand off to the extension.
+    setTimeout(send, 420);
   }
 
   // The video box, dead simple:
@@ -153,16 +148,23 @@
   }
 
   // ── theater mode ────────────────────────────────────────────────────
-  // Shrinks the field (body.dc-watching) so the centered PiP has room above
-  // it. Persists so it survives navigation; a floating "exit" chip turns it
-  // off. The PiP itself is positioned by the Hammerspoon helper.
+  // Two layouts (persisted, survive navigation; a floating "exit" chip turns
+  // them off):
+  //   "shift"      → body.dc-watching : shift the field down, keep everything,
+  //                  manual PiP above the field.
+  //   "fullscreen" → body.dc-theater  : hide all chrome, just the field.
   const LS_THEATER = "diamond_context_theater";
-  function theaterOn() {
-    try { return localStorage.getItem(LS_THEATER) === "1"; } catch { return false; }
+  function theaterMode() {
+    try {
+      const v = localStorage.getItem(LS_THEATER);
+      return v === "fullscreen" || v === "shift" ? v : null;
+    } catch { return null; }
   }
-  function setTheater(on) {
-    try { localStorage.setItem(LS_THEATER, on ? "1" : "0"); } catch {}
-    document.body.classList.toggle("dc-watching", on);
+  function setTheater(on, mode) {
+    mode = mode === "fullscreen" ? "fullscreen" : "shift";
+    try { localStorage.setItem(LS_THEATER, on ? mode : "0"); } catch {}
+    document.body.classList.toggle("dc-theater", on && mode === "fullscreen");
+    document.body.classList.toggle("dc-watching", on && mode === "shift");
 
     let exit = document.getElementById("dcw-exit-theater");
     if (on && !exit) {
@@ -307,15 +309,19 @@
   // cards (Hot/board) and the Watch tab. We only keep the handoff (window.DCWatch)
   // and restore the theater layout across navigation.
   function mount() {
-    if (theaterOn()) setTheater(true);
+    const m = theaterMode();
+    if (m) setTheater(true, m);
   }
 
-  // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can
-  // trigger the exact same flow. Live game → that game's MLB.tv deep link
-  // (watchUrl=null); not on yet → the always-on MLBN feed.
+  // Handoff API:
+  //   start()   — in-game / board Watch → field-shift + manual PiP.
+  //   theater() — bottom Watch tab      → full-screen separate screen.
   window.DCWatch = {
     start(gamePk, live) {
-      watch(gamePk, null, null, live ? null : MLBN_URL);
+      watch(gamePk, null, null, live ? null : MLBN_URL, "shift");
+    },
+    theater(gamePk, watchUrl) {
+      watch(gamePk, null, null, watchUrl, "fullscreen");
     },
   };
 

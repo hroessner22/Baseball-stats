@@ -12427,30 +12427,30 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 .dcw-steps a { color: var(--accent-action); }
 .dcw-panel-foot { margin: 10px 0 0; font-size: 0.78rem; color: var(--text-faint); }
 
-/* ── THEATER MODE ──────────────────────────────────────────────────────
-   Watch = distraction-free. Hide ALL app chrome and side content and show only
-   the game's field (ballpark + live score / inning / count / baserunners),
-   centered and large. The MLB.tv PiP floats on top wherever you drag it. */
-body.dc-watching > header,
-body.dc-watching > nav,
-body.dc-watching > .page-footer,
-body.dc-watching .active-bets-strip,
-body.dc-watching .bot-launcher,
-body.dc-watching .dcw-widget,
-body.dc-watching .auth-header-widget,
-body.dc-watching .health-indicator,
-body.dc-watching .global-stake-widget,
-body.dc-watching .game-view > .back-link,
-body.dc-watching .game-view > .ticker,
-body.dc-watching .game-view > .game-mode-toggle,
-body.dc-watching .field-pane > .field-narrative,
-body.dc-watching .game-pane > .card-pane {
+/* ── FULL-SCREEN THEATER (bottom Watch tab) ─────────────────────────────
+   Distraction-free: hide ALL app chrome and side content and show only the
+   game's field (ballpark + live score / inning / count / baserunners) on its
+   own screen. The MLB.tv video (Fullscreen or PiP) is the focus. */
+body.dc-theater > header,
+body.dc-theater > nav,
+body.dc-theater > .page-footer,
+body.dc-theater .active-bets-strip,
+body.dc-theater .bot-launcher,
+body.dc-theater .dcw-widget,
+body.dc-theater .auth-header-widget,
+body.dc-theater .health-indicator,
+body.dc-theater .global-stake-widget,
+body.dc-theater .game-view > .back-link,
+body.dc-theater .game-view > .ticker,
+body.dc-theater .game-view > .game-mode-toggle,
+body.dc-theater .field-pane > .field-narrative,
+body.dc-theater .game-pane > .card-pane {
     display: none !important;
 }
-body.dc-watching .game-view { padding: 0; max-width: none; height: 100vh; overflow: hidden; }
-body.dc-watching .game-pane { display: block; height: 100vh; padding: 0; }
-body.dc-watching .field-pane { display: block; height: 100vh; }
-body.dc-watching .field-pane > .field-canvas {
+body.dc-theater .game-view { padding: 0; max-width: none; height: 100vh; overflow: hidden; }
+body.dc-theater .game-pane { display: block; height: 100vh; padding: 0; }
+body.dc-theater .field-pane { display: block; height: 100vh; }
+body.dc-theater .field-pane > .field-canvas {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -12459,6 +12459,15 @@ body.dc-watching .field-pane > .field-canvas {
     max-width: 1100px;
     margin: 0 auto;
     padding: 0;
+}
+
+/* ── FIELD-SHIFT WATCH (in-game / board Watch) ──────────────────────────
+   Keep the whole game view; just shift the field down to open space above it
+   where you manually drag the MLB.tv PiP. Cards/panels stay put. */
+body.dc-watching .field-pane > .field-canvas {
+    padding-top: 44vh;
+    align-self: start;
+    transition: padding-top .3s ease;
 }
 #dcw-exit-theater {
     position: fixed;

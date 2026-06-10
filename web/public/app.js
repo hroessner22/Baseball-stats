@@ -9483,16 +9483,9 @@ function requestWatch(gamePk, away, home, btn) {
     // In test mode every click targets the always-on MLB Network feed; a
     // null watchUrl means the extension builds the per-game deep link.
     const watchUrl = WATCH_TEST_MODE ? WATCH_TEST_URL : null;
-    if (watchExtInstalled()) {
-        // Hand off to the extension. It opens MLB.tv and auto-PiPs the feed
-        // the moment you tab back here.
-        window.postMessage({
-            source: "diamond-context",
-            type: "DC_WATCH",
-            gamePk, away, home,
-            date: todayInET(),
-            watchUrl,
-        }, "*");
+    if (watchExtInstalled() && window.DCWatch && window.DCWatch.theater) {
+        // Bottom Watch tab → full-screen theater (own screen) + open MLB.tv.
+        window.DCWatch.theater(gamePk, watchUrl);
         if (btn) flashWatchBtn(btn, "Opening on MLB.tv…");
     } else {
         // No extension — the most a web page can do is open MLB.tv.
