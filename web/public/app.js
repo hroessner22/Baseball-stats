@@ -9337,30 +9337,9 @@ function watchExtInstalled() {
     return document.documentElement.dataset.dcWatchExt === "1";
 }
 
-async function showWatch() {
+function showWatch() {
     activeGameId = null;
     clearAllTimers();
-    // Watch is now the theater: jump straight into watching the featured game
-    // full-screen (distraction-free). If the extension isn't set up yet, fall
-    // back to the grid + setup guide so the user can get going.
-    const extReady = window.DCWatch && document.documentElement.dataset.dcWatchExt === "1";
-    if (extReady) {
-        try {
-            const res = await fetch("/api/games/today");
-            const data = res.ok ? await res.json() : { games: [] };
-            const games = data.games || [];
-            const live = games.filter((g) => g.status === "Live" && g.inning)
-                .map((g) => ({ g, lev: leverage(g) }))
-                .sort((a, b) => b.lev - a.lev);
-            const pick = live[0]?.g
-                || games.find((g) => g.status === "Live")
-                || games.find((g) => g.status === "Preview");
-            if (pick) {
-                window.DCWatch.start(pick.game_pk, pick.status === "Live");
-                return;
-            }
-        } catch (_) { /* fall through to the grid */ }
-    }
     hideAllViews();
     watchView.hidden = false;
     refreshWatch();
@@ -9373,11 +9352,13 @@ async function refreshWatch() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const games = sortGames(data.games || []);
-        watchView.innerHTML = watchBanner() + (
+        // Games first (click any card to watch), then a slim title + the
+        // collapsible setup guide below.
+        watchView.innerHTML = (
             games.length
                 ? `<div class="watch-grid">${games.map(renderWatchCard).join("")}</div>`
                 : `<div class="empty"><p>No games scheduled today.</p></div>`
-        );
+        ) + watchBanner();
     } catch (e) {
         renderEmpty(watchView, "Could not load today's games.", `${e.message || e}`);
     }
@@ -9465,7 +9446,8 @@ function renderWatchCard(g) {
            </div>`;
 
     return `
-      <div class="watch-card" data-status="${g.status}">
+      <div class="watch-card ${watchable ? "is-watchable" : ""}" data-status="${g.status}"
+           ${watchable ? `data-pk="${g.game_pk}" data-away="${escapeHTMLAttr(g.away)}" data-home="${escapeHTMLAttr(g.home)}" title="Click to watch"` : ""}>
         <div class="matchup">
           <div class="team">
             <span class="team-id">
@@ -9488,11 +9470,13 @@ function renderWatchCard(g) {
     `;
 }
 
-// Delegated click — survives the refreshWatch() innerHTML swaps.
+// Delegated click — the whole watchable card launches Watch (survives the
+// refreshWatch() innerHTML swaps). Also still works if the inner button is hit.
 document.addEventListener("click", (e) => {
-    const btn = e.target.closest(".watch-btn");
-    if (!btn) return;
-    requestWatch(btn.dataset.pk, btn.dataset.away, btn.dataset.home, btn);
+    const card = e.target.closest(".watch-card.is-watchable[data-pk]");
+    if (card) {
+        requestWatch(card.dataset.pk, card.dataset.away, card.dataset.home, card.querySelector(".watch-btn") || card);
+    }
 });
 
 function requestWatch(gamePk, away, home, btn) {

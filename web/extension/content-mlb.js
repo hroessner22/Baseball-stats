@@ -72,31 +72,52 @@
 
   function showPipButton() {
     if (pipBtn) return;
-    pipBtn = document.createElement("button");
-    pipBtn.textContent = "▶ Pop into Picture-in-Picture";
+    pipBtn = document.createElement("div");
     pipBtn.style.cssText = [
       "position:fixed", "top:12px", "left:50%", "transform:translateX(-50%)",
-      "z-index:2147483647", "padding:16px 26px", "font:700 17px system-ui,sans-serif",
-      "color:#fff", "background:#1a73e8", "border:0", "border-radius:999px",
-      "box-shadow:0 8px 28px rgba(0,0,0,.55)", "cursor:pointer",
+      "z-index:2147483647", "display:flex", "gap:10px",
     ].join(";");
-    pipBtn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+
+    const mkBtn = (label, bg) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText = [
+        "padding:14px 22px", "font:700 16px system-ui,sans-serif", "color:#fff",
+        "background:" + bg, "border:0", "border-radius:999px",
+        "box-shadow:0 8px 28px rgba(0,0,0,.55)", "cursor:pointer",
+      ].join(";");
+      return b;
+    };
+
+    // Fullscreen — the game takes up the WHOLE screen.
+    const full = mkBtn("⛶ Fullscreen", "#c8102e");
+    full.addEventListener("click", async (e) => {
+      e.preventDefault(); e.stopPropagation();
       const v = pickVideo();
-      if (!v) {
-        pipBtn.textContent = "Press play, then tap here";
-        return;
-      }
+      if (!v) { full.textContent = "Press play first"; return; }
+      try {
+        if (v.paused) { try { await v.play(); } catch (_) {} }
+        const req = v.requestFullscreen || v.webkitRequestFullscreen || v.webkitEnterFullscreen;
+        if (req) { await req.call(v); removePipButton(); }
+      } catch (_) { full.textContent = "Tap the video, then ⛶"; }
+    });
+
+    // Picture-in-Picture — floats on top so you can keep DIAMOND:CONTEXT visible.
+    const pip = mkBtn("▢ Picture-in-Picture", "#1a73e8");
+    pip.addEventListener("click", async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const v = pickVideo();
+      if (!v) { pip.textContent = "Press play first"; return; }
       wirePip(v);
       try {
         try { v.disablePictureInPicture = false; } catch (_) {}
         if (v.paused) { try { await v.play(); } catch (_) {} }
         await v.requestPictureInPicture();
-      } catch (_) {
-        pipBtn.textContent = "Click the video first, then tap here";
-      }
+      } catch (_) { pip.textContent = "Tap the video, then PiP"; }
     });
+
+    pipBtn.appendChild(full);
+    pipBtn.appendChild(pip);
     (document.body || document.documentElement).appendChild(pipBtn);
   }
 

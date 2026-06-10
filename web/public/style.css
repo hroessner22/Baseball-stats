@@ -12233,6 +12233,8 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
     border-radius: var(--radius);
     padding: 12px;
 }
+.watch-card.is-watchable { cursor: pointer; transition: border-color .15s, background .15s; }
+.watch-card.is-watchable:hover { border-color: var(--accent-live, #e8554e); background: var(--surface-2); }
 .watch-card .matchup { display: flex; flex-direction: column; gap: 6px; }
 .watch-card .team {
     display: flex;

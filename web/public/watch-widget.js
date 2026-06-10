@@ -303,33 +303,11 @@
   }
 
   // ── mount ───────────────────────────────────────────────────────────
+  // The floating launcher widget is gone — watching is launched from the game
+  // cards (Hot/board) and the Watch tab. We only keep the handoff (window.DCWatch)
+  // and restore the theater layout across navigation.
   function mount() {
-    rootEl = document.createElement("div");
-    rootEl.className = "dcw-widget";
-    document.body.appendChild(rootEl);
-
-    // delegated clicks
-    rootEl.addEventListener("click", (e) => {
-      // collapsed icon -> expand
-      if (e.target.closest(".dcw-grip-btn")) { setCollapsed(false); render(); return; }
-      // minimize -> collapse to icon (never fully hidden)
-      if (e.target.closest(".dcw-x")) { setCollapsed(true); render(); return; }
-      if (e.target.closest(".dcw-setup")) { openSetup(); return; }
-      const btn = e.target.closest(".dcw-btn");
-      if (btn) {
-        watch(btn.dataset.pk, btn.dataset.away, btn.dataset.home, btn.dataset.url || null);
-        const orig = btn.textContent;
-        btn.textContent = extInstalled() ? "Opening…" : "Set up ↗";
-        setTimeout(() => { btn.textContent = orig; }, 2200);
-      }
-    });
-
-    if (theaterOn()) setTheater(true); // restore theater layout across navigation
-    refresh();
-    timer = setInterval(refresh, REFRESH_MS);
-
-    // (No PiP auto-positioning — Chrome's native PiP floats on top and you
-    // drag it where you want; we don't fight that.)
+    if (theaterOn()) setTheater(true);
   }
 
   // Expose the handoff so other UI (e.g. the in-game red "▶ Watch" tab) can
