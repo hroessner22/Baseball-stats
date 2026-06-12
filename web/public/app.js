@@ -2721,9 +2721,13 @@ async function refreshHowItWorks() {
     let coefs = null;
     let coverage = null;
     try {
+        // The historical-coverage endpoint widened from 5 to 116 seasons
+        // on 2026-06-12 with a new column schema. Pin a cache-buster
+        // so anyone still holding the previous 1h cached response
+        // refetches and sees the new fields instead of "—" placeholders.
         const [coefRes, covRes] = await Promise.all([
             fetch("/api/coefficients"),
-            fetch("/api/historical-coverage"),
+            fetch("/api/historical-coverage?v=20260612b"),
         ]);
         if (coefRes.ok) coefs    = await coefRes.json();
         if (covRes.ok)  coverage = await covRes.json();
