@@ -423,15 +423,31 @@ const KALSHI_SERIES = [
     { ticker: "KXMLBRFI",         type: "per_game_team" },    // run in 1st inning
 ];
 
-async function listKalshiMlbMarkets() {
+async function listKalshiMlbMarkets(opts = {}) {
     const all = [];
 
-    // Fan ALL Kalshi series fetches out in parallel — sequential await
-    // pushed total wall-time past the per-worker budget, so the later
-    // series (HIT, TB, SPREAD, TOTAL, F5...) silently never landed.
-    // With Promise.allSettled the slowest fetch sets total latency
-    // instead of the sum, and we still get every series that succeeds.
-    const seriesResults = await Promise.allSettled(KALSHI_SERIES.map((s) =>
+    // perGameOnly: when the caller is the per-game endpoint, skip every
+    // season-long futures series (team + player) because filterMarketsForGame
+    // would discard them anyway (no away_tricode, start_time months away).
+    // Cuts the Kalshi fan-out from ~33 series to ~13 — critical for the
+    // free-tier 50-subrequest budget now that the SDK aggregates 12
+    // sportsbook adapters. 2026-06-12: without this trim, the per-game
+    // endpoint silently lost KXMLBHIT / KXMLBHR / KXMLBKS / KXMLBTB
+    // / KXMLBHRR fetches to the connection pool, killing every prop fire.
+    const series = opts.perGameOnly
+        ? KALSHI_SERIES.filter((s) =>
+            s.type === "game" ||
+            s.type === "per_game_player" ||
+            s.type === "per_game_team"   ||
+            s.type === "per_game_spread" ||
+            s.type === "per_game_total")
+        : KALSHI_SERIES;
+
+    // Fan series fetches out in parallel — sequential await pushed total
+    // wall-time past the per-worker budget, so later series (HIT, TB,
+    // SPREAD, TOTAL, F5...) silently never landed. With Promise.allSettled
+    // the slowest fetch sets total latency instead of the sum.
+    const seriesResults = await Promise.allSettled(series.map((s) =>
         fetchJson(
             `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`,
             { cacheTtl: 30 },
@@ -476,20 +492,24 @@ async function listKalshiMlbMarkets() {
     // already burn ~17 each on Bovada and Pinnacle plus Smarkets's
     // batch. Hold to the league-aggregate series KXMLBWINS only when
     // it returns batched data — single request covers all teams.
-    try {
-        const data = await fetchJson(
-            `${KALSHI_BASE}/markets?series_ticker=KXMLBWINS&status=open&limit=400`,
-            { cacheTtl: 60 },
-        );
-        const mkts = data?.markets || [];
-        for (const m of mkts) {
-            const market = toKalshiSingleMarket(m, "future_team");
-            // Try to extract tricode from ticker tail: KXMLBWINS-XXX-...
-            const triMatch = (m.ticker || "").match(/^KXMLBWINS-([A-Z]{2,4})/);
-            if (triMatch) market.home_tricode = triMatch[1];
-            all.push(market);
-        }
-    } catch { /* season wins are bonus, no fatal */ }
+    // Skipped on perGameOnly path — futures aren't relevant to a
+    // specific game's per-game tab.
+    if (!opts.perGameOnly) {
+        try {
+            const data = await fetchJson(
+                `${KALSHI_BASE}/markets?series_ticker=KXMLBWINS&status=open&limit=400`,
+                { cacheTtl: 60 },
+            );
+            const mkts = data?.markets || [];
+            for (const m of mkts) {
+                const market = toKalshiSingleMarket(m, "future_team");
+                // Try to extract tricode from ticker tail: KXMLBWINS-XXX-...
+                const triMatch = (m.ticker || "").match(/^KXMLBWINS-([A-Z]{2,4})/);
+                if (triMatch) market.home_tricode = triMatch[1];
+                all.push(market);
+            }
+        } catch { /* season wins are bonus, no fatal */ }
+    }
     return all.filter(Boolean);
 }
 
@@ -1181,9 +1201,13 @@ export async function listAllMlbMarkets(env, opts = {}) {
     // between "/api/markets degraded, slowed auto-refresh to 30s"
     // and the endpoint just working.
     const onlySource = opts.source || null;
+    // perGameOnly: per-game endpoint passes this through so Kalshi can
+    // skip its season-futures series (saves ~20 subrequests, keeps the
+    // per_game_player fetches inside the free-tier budget).
+    const perGameOnly = !!opts.perGameOnly;
     const ALL_ADAPTERS = [
         ["polymarket", listPolymarketMlbMarkets],
-        ["kalshi",     listKalshiMlbMarkets],
+        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly })],
         ["manifold",   listManifoldMlbMarkets],
         ["odds_api",   () => listOddsApiMlbMarkets(env || {})],
         ["bovada",     listBovadaMlbMarkets],

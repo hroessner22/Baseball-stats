@@ -69,7 +69,7 @@ export async function onRequest(context) {
     let savantSource = null;
     try {
         const [marketsRes, savantRes] = await Promise.allSettled([
-            listAllMlbMarkets(env),
+            listAllMlbMarkets(env, { perGameOnly: true }),
             fetchSavantWe(gameId),
         ]);
         if (marketsRes.status === "fulfilled") {
