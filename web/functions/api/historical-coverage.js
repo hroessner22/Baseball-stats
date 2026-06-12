@@ -23,10 +23,14 @@ export async function onRequest(context) {
     // from the current era backward.
     const historicalRows = (historical.rows || []).slice().reverse();
 
-    // Live current season — best-effort from Supabase. If the env vars
-    // aren't set or the rpc fails, we still serve the static slice so
-    // the page never renders blank.
-    let currentSeason = null;
+    // Live recent seasons — best-effort from Supabase's daily_pa rollup
+    // (one row per calendar year, with games/players/K%/BB%/HR%/Hit%
+    // computed from the actual PA events). Only seasons NEWER than the
+    // static historical slice get used so we never double up on a year.
+    // The most recent year is tagged live=true so the UI can highlight
+    // it; older Supabase years (e.g. 2025 once 2026 is in progress) are
+    // marked as completed.
+    let liveSeasons = [];
     if (env.SUPABASE_URL && env.SUPABASE_ANON_KEY) {
         try {
             const url = `${env.SUPABASE_URL}/rest/v1/rpc/get_historical_coverage_by_year`;
@@ -42,37 +46,33 @@ export async function onRequest(context) {
             });
             if (res.ok) {
                 const rows = await res.json();
-                // The rpc returns all seasons it knows about; pull only
-                // the row that's NEWER than the latest historical year.
-                // Older Supabase seasons (2020-2024) are duplicates of
-                // what's already in the static slice.
                 const latestHistorical = historicalRows[0]?.year ?? 0;
-                const live = (Array.isArray(rows) ? rows : []).find(
-                    (r) => Number(r.year) > latestHistorical && r.wpa_pas != null,
-                );
-                if (live) {
-                    currentSeason = {
-                        year:       Number(live.year),
-                        pa:         Number(live.wpa_pas),
-                        batters:    null,            // wpa_season doesn't track batters separately
-                        pitchers:   null,
-                        games:      null,
-                        k_pct:      null,
-                        bb_pct:     null,
-                        hr_pct:     null,
-                        hit_pct:    null,
-                        live_season: true,
-                    };
-                }
+                const sorted = (Array.isArray(rows) ? rows : [])
+                    .filter((r) => Number(r.year) > latestHistorical)
+                    .sort((a, b) => Number(b.year) - Number(a.year));
+                const newestYear = sorted[0] ? Number(sorted[0].year) : null;
+                liveSeasons = sorted.map((r) => ({
+                    year:       Number(r.year),
+                    pa:         r.pa         == null ? null : Number(r.pa),
+                    batters:    r.batters    == null ? null : Number(r.batters),
+                    pitchers:   r.pitchers   == null ? null : Number(r.pitchers),
+                    games:      r.games      == null ? null : Number(r.games),
+                    k_pct:      r.k_pct      == null ? null : Number(r.k_pct),
+                    bb_pct:     r.bb_pct     == null ? null : Number(r.bb_pct),
+                    hr_pct:     r.hr_pct     == null ? null : Number(r.hr_pct),
+                    hit_pct:    r.hit_pct    == null ? null : Number(r.hit_pct),
+                    last_game_date: r.last_game_date || null,
+                    // Only the current year is "in progress" — older
+                    // years in the live ingest are completed seasons.
+                    live_season: Number(r.year) === newestYear,
+                }));
             }
         } catch {
             // Best-effort — static slice still ships below.
         }
     }
 
-    const rows = currentSeason
-        ? [currentSeason, ...historicalRows]
-        : historicalRows;
+    const rows = [...liveSeasons, ...historicalRows];
 
     return new Response(JSON.stringify({
         source:     historical.source || "Retrosheet PBP via rates.db",

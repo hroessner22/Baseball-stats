@@ -2727,7 +2727,7 @@ async function refreshHowItWorks() {
         // refetches and sees the new fields instead of "—" placeholders.
         const [coefRes, covRes] = await Promise.all([
             fetch("/api/coefficients"),
-            fetch("/api/historical-coverage?v=20260612b"),
+            fetch("/api/historical-coverage?v=20260612c"),
         ]);
         if (coefRes.ok) coefs    = await coefRes.json();
         if (covRes.ok)  coverage = await covRes.json();
