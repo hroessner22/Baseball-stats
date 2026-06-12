@@ -2719,11 +2719,16 @@ function showHowItWorks() {
 async function refreshHowItWorks() {
     howItWorksView.innerHTML = renderHowItWorksShell();
     let coefs = null;
+    let coverage = null;
     try {
-        const res = await fetch("/api/coefficients");
-        if (res.ok) coefs = await res.json();
+        const [coefRes, covRes] = await Promise.all([
+            fetch("/api/coefficients"),
+            fetch("/api/historical-coverage"),
+        ]);
+        if (coefRes.ok) coefs    = await coefRes.json();
+        if (covRes.ok)  coverage = await covRes.json();
     } catch {}
-    howItWorksView.innerHTML = renderHowItWorks(coefs);
+    howItWorksView.innerHTML = renderHowItWorks(coefs, coverage);
 }
 
 function renderHowItWorksShell() {
@@ -2737,7 +2742,7 @@ function renderHowItWorksShell() {
     `;
 }
 
-function renderHowItWorks(coefs) {
+function renderHowItWorks(coefs, coverage) {
     if (!coefs) {
         return `
           <a class="back-link" href="#">← BOARD</a>
@@ -2855,10 +2860,61 @@ function renderHowItWorks(coefs) {
         <p class="hiw-takeaway">Takeaway: by BF 28 (≈100 pitches), 49% of starters are gone. The bot uses this to refuse K-prop YES when the math is dominated by remaining innings the pitcher won't pitch.</p>
       </section>
 
+      ${renderHistoricalCoverageSection(coverage)}
+
       <footer class="tr-foot">
         <p>All coefficients regenerate from <code>data/processed/rates.db</code> via <code>scripts/derive_coefficients.py</code>. Open-source, reproducible.</p>
         <p><a class="tr-link" href="#track-record">See the bot's track record →</a></p>
       </footer>
+    `;
+}
+
+// "5. Historical coverage by season" — sample-size breakdown of the
+// data the bot actually reads at fire time. Two sources fold together:
+// the Retrosheet aggregates loaded into Supabase (batter_rates,
+// pitcher_rates, league_rates — full seasons 2020-2024) and the live
+// plate-appearance ingest (wpa_season — current 2026 season).
+function renderHistoricalCoverageSection(coverage) {
+    const rows = coverage?.rows || [];
+    if (!rows.length) {
+        return `
+          <section class="hiw-section">
+            <h2>5. Historical coverage by season</h2>
+            <p class="page-loading">Loading per-season sample sizes…</p>
+          </section>
+        `;
+    }
+    // Newest first; format counts with thousands separators.
+    const fmt = (v) => v == null ? "—" : Number(v).toLocaleString();
+    const tableRows = rows.map((r) => `
+        <tr>
+          <td><strong>${r.year}</strong></td>
+          <td class="tr-num">${fmt(r.batter_events)}</td>
+          <td class="tr-num">${fmt(r.batters)}</td>
+          <td class="tr-num">${fmt(r.pitcher_events)}</td>
+          <td class="tr-num">${fmt(r.pitchers)}</td>
+          <td class="tr-num">${fmt(r.league_events)}</td>
+          <td class="tr-num">${fmt(r.wpa_pas)}</td>
+        </tr>
+    `).join("");
+    return `
+      <section class="hiw-section">
+        <h2>5. Historical coverage by season</h2>
+        <p>Every row of every coefficient table above rolls up from these per-season aggregates. Retrosheet seasons (2020–2024) live in Supabase as pre-aggregated rates; the current season feeds in live via the daily plate-appearance ingest (<code>wpa_season</code>).</p>
+        <table class="tr-table">
+          <thead><tr>
+            <th>Season</th>
+            <th class="tr-num">Batter events</th>
+            <th class="tr-num">Batters</th>
+            <th class="tr-num">Pitcher events</th>
+            <th class="tr-num">Pitchers</th>
+            <th class="tr-num">League events</th>
+            <th class="tr-num">Live PAs (this season)</th>
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        <p class="hiw-takeaway">Takeaway: every full historical season carries ~180K batter events and ~180K pitcher events. 2020 is short (60-game COVID season). The current season's PAs flow in nightly so projections always reflect what's happened tonight, not just history.</p>
+      </section>
     `;
 }
 
