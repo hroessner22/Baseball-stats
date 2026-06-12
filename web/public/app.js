@@ -2096,16 +2096,18 @@ function renderMdMiniMarket(markets, kind) {
     }).join("");
 }
 
-// "7:35 PM ET" without the day part — the dashboard already implies
-// today's slate.
+// "7:35 PM EDT" / "12:35 AM BST" without the day part — clock time in
+// the viewer's local timezone, abbreviation appended via Intl so a
+// London viewer sees BST instead of being asked to do mental math on
+// an ET label. The dashboard already implies today's slate, so no date.
 function formatGameClockShort(iso) {
     if (!iso) return "";
     try {
         const d = new Date(iso);
-        return d.toLocaleTimeString("en-US", {
+        return d.toLocaleTimeString(undefined, {
             hour: "numeric", minute: "2-digit",
-            timeZone: "America/New_York",
-        }) + " ET";
+            timeZoneName: "short",
+        });
     } catch {
         return "";
     }
@@ -3200,10 +3202,10 @@ function formatGameTime(iso) {
     if (!iso) return "TBD";
     try {
         const d = new Date(iso);
-        return d.toLocaleTimeString("en-US", {
+        return d.toLocaleTimeString(undefined, {
             hour: "numeric", minute: "2-digit",
-            timeZone: "America/New_York",
-        }) + " ET";
+            timeZoneName: "short",
+        });
     } catch {
         return "TBD";
     }

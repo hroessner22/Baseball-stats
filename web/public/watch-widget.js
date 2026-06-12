@@ -290,9 +290,10 @@
   function startText(g) {
     try {
       const t = new Date(g.start_time);
-      return t.toLocaleTimeString("en-US", {
-        timeZone: "America/New_York", hour: "numeric", minute: "2-digit",
-      }) + " ET";
+      return t.toLocaleTimeString(undefined, {
+        hour: "numeric", minute: "2-digit",
+        timeZoneName: "short",
+      });
     } catch { return "Today"; }
   }
   function ordinal(n) {

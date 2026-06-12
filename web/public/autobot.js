@@ -534,15 +534,30 @@ function todayUtcDate() { return currentBaseballDayKey(); }
 // and Tue. User direction (2026-06-05): 'that day doesnt mean
 // until 12am, it just means until that day of games is over
 // (including the west coast games).' Subtract 6 hours from the
-// local timestamp before taking the date — anything before 6am
-// local rolls into the previous day's slate. Covers PT-night
-// games (usually finish by 1-2am ET = 10-11pm PT) plus a
-// reasonable buffer for extra-inning overruns.
+// timestamp before taking the date — anything before 6am ET rolls
+// into the previous day's slate. Covers PT-night games (usually
+// finish by 1-2am ET = 10-11pm PT) plus a reasonable buffer for
+// extra-inning overruns.
+//
+// 2026-06-11: anchor the post-shift date to America/New_York via
+// Intl, NOT the device timezone. The slate is an MLB property —
+// a viewer in London should see the same "Yesterday" / "Today"
+// labels as a viewer in New York, even though their local clocks
+// differ by 5 hours. Before this fix the London viewer saw bets
+// labeled one calendar day ahead because the 6h shift was tuned
+// against ET but the date was read from device-local getters.
 function baseballDayKey(isoOrDate) {
     const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
     if (!Number.isFinite(d.getTime())) return "";
     const shifted = new Date(d.getTime() - 6 * 60 * 60 * 1000);
-    return `${shifted.getFullYear()}-${String(shifted.getMonth()+1).padStart(2,"0")}-${String(shifted.getDate()).padStart(2,"0")}`;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York",
+        year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(shifted);
+    const y   = parts.find((p) => p.type === "year").value;
+    const mo  = parts.find((p) => p.type === "month").value;
+    const day = parts.find((p) => p.type === "day").value;
+    return `${y}-${mo}-${day}`;
 }
 function currentBaseballDayKey() { return baseballDayKey(new Date()); }
 
