@@ -2869,11 +2869,11 @@ function renderHowItWorks(coefs, coverage) {
     `;
 }
 
-// "5. Historical coverage by season" — sample-size breakdown of the
-// data the bot actually reads at fire time. Two sources fold together:
-// the Retrosheet aggregates loaded into Supabase (batter_rates,
-// pitcher_rates, league_rates — full seasons 2020-2024) and the live
-// plate-appearance ingest (wpa_season — current 2026 season).
+// "5. Historical coverage by season" — every season the bot draws on,
+// with PA counts, roster sizes, and the league rate-environment per
+// year. Backed by 115 years of Retrosheet (1910-2024) baked into a
+// 14KB static JSON, plus the live current-season ingest from Supabase
+// merged in at the top so it always reflects tonight, not history.
 function renderHistoricalCoverageSection(coverage) {
     const rows = coverage?.rows || [];
     if (!rows.length) {
@@ -2884,36 +2884,47 @@ function renderHistoricalCoverageSection(coverage) {
           </section>
         `;
     }
-    // Newest first; format counts with thousands separators.
-    const fmt = (v) => v == null ? "—" : Number(v).toLocaleString();
+    const fmt    = (v) => v == null ? "—" : Number(v).toLocaleString();
+    const fmtPct = (v) => v == null ? "—" : `${Number(v).toFixed(1)}%`;
+    const yearsTotal   = rows.length;
+    const oldestYear   = rows[rows.length - 1]?.year;
+    const newestYear   = rows[0]?.year;
+    const totalPas     = rows.reduce((s, r) => s + (Number(r.pa) || 0), 0);
+    const totalGames   = rows.reduce((s, r) => s + (Number(r.games) || 0), 0);
     const tableRows = rows.map((r) => `
-        <tr>
-          <td><strong>${r.year}</strong></td>
-          <td class="tr-num">${fmt(r.batter_events)}</td>
+        <tr class="${r.live_season ? "hc-live" : ""}">
+          <td><strong>${r.year}</strong>${r.live_season ? ` <span class="hc-live-tag">live</span>` : ""}</td>
+          <td class="tr-num">${fmt(r.pa)}</td>
+          <td class="tr-num">${fmt(r.games)}</td>
           <td class="tr-num">${fmt(r.batters)}</td>
-          <td class="tr-num">${fmt(r.pitcher_events)}</td>
           <td class="tr-num">${fmt(r.pitchers)}</td>
-          <td class="tr-num">${fmt(r.league_events)}</td>
-          <td class="tr-num">${fmt(r.wpa_pas)}</td>
+          <td class="tr-num">${fmtPct(r.k_pct)}</td>
+          <td class="tr-num">${fmtPct(r.bb_pct)}</td>
+          <td class="tr-num">${fmtPct(r.hr_pct)}</td>
+          <td class="tr-num">${fmtPct(r.hit_pct)}</td>
         </tr>
     `).join("");
     return `
       <section class="hiw-section">
         <h2>5. Historical coverage by season</h2>
-        <p>Every row of every coefficient table above rolls up from these per-season aggregates. Retrosheet seasons (2020–2024) live in Supabase as pre-aggregated rates; the current season feeds in live via the daily plate-appearance ingest (<code>wpa_season</code>).</p>
-        <table class="tr-table">
-          <thead><tr>
-            <th>Season</th>
-            <th class="tr-num">Batter events</th>
-            <th class="tr-num">Batters</th>
-            <th class="tr-num">Pitcher events</th>
-            <th class="tr-num">Pitchers</th>
-            <th class="tr-num">League events</th>
-            <th class="tr-num">Live PAs (this season)</th>
-          </tr></thead>
-          <tbody>${tableRows}</tbody>
-        </table>
-        <p class="hiw-takeaway">Takeaway: every full historical season carries ~180K batter events and ~180K pitcher events. 2020 is short (60-game COVID season). The current season's PAs flow in nightly so projections always reflect what's happened tonight, not just history.</p>
+        <p>Every season the bot's empirical engine has access to. ${yearsTotal} seasons from <strong>${oldestYear}</strong> to <strong>${newestYear}</strong> — ${fmt(totalPas)} plate appearances across ${fmt(totalGames)} games. Each row's K%, BB%, HR%, and Hit% IS the run environment the model anchors against when projecting that era's pitcher / hitter. The current season feeds in live via the daily PA ingest (top row, tagged live).</p>
+        <div class="hc-scroll">
+          <table class="tr-table hc-table">
+            <thead><tr>
+              <th>Season</th>
+              <th class="tr-num">PAs</th>
+              <th class="tr-num">Games</th>
+              <th class="tr-num">Batters</th>
+              <th class="tr-num">Pitchers</th>
+              <th class="tr-num">K %</th>
+              <th class="tr-num">BB %</th>
+              <th class="tr-num">HR %</th>
+              <th class="tr-num">Hit %</th>
+            </tr></thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+        <p class="hiw-takeaway">Takeaway: K% rose from ~10% (1910s deadball) to ~25% (modern); HR% went from 0.4% to 3%+. The bot picks coefficients by era so a 2024 pitcher's K-prop never gets compared against 1968's pitching environment.</p>
       </section>
     `;
 }
