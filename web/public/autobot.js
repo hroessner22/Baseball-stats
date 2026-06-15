@@ -167,7 +167,8 @@ const DEFAULTS = {
     live_ev_take_pct:      0.55,
     daily_loss_limit_cents: 200,   // $2 — per user 'no more than 2 dollars lost'
     open_exposure_max:     200,    // $2 total open ($1 props / $1 ML via 50/50)
-    bet_player_props:      true,   // scan Kalshi player_prop markets too
+    bet_player_props:      true,   // PROPS BOT on/off — scan Kalshi player_prop markets
+    bet_moneylines:        true,   // ML BOT on/off — scan Kalshi moneyline markets
     // TRUE-ADVANTAGE GATE — required factor agreement. New math (post
     // 2026-06-03) is fraction of factor weight that agrees with the
     // bet direction. 0.30 = at least 30% of factor weight pulls FOR
@@ -501,6 +502,7 @@ function clampSettings(s) {
         huge_edge_pp:               clampInt(s.huge_edge_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
         huge_edge_cap_pct:          clampFloat(s.huge_edge_cap_pct, 0.20, 0.95),
         bet_player_props:           s.bet_player_props !== false,
+        bet_moneylines:             s.bet_moneylines !== false,
         bet_no_side_player_props:   s.bet_no_side_player_props === true,   // default OFF
         practice_mode:              s.practice_mode === true,               // default OFF (real-money)
         practice_starting_bankroll_cents: clampInt(s.practice_starting_bankroll_cents, 100, 1_000_00),
@@ -867,7 +869,9 @@ async function scanOneGame(g) {
             practice: _state.settings.practice_mode,
         });
     };
-    if (ourHome == null) {
+    if (!_state.settings.bet_moneylines) {
+        // ML bot is turned off — skip the moneyline scan entirely.
+    } else if (ourHome == null) {
         log("skip", `No WE for ${g.away}@${g.home} (game state too early or missing) — moneyline scan blocked`);
         recordPreScan("no_we_for_game");
     } else {
@@ -1810,7 +1814,12 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         // virtual bankroll), split checked against the practice fire
         // log. Same RULE, just keyed to the bankroll the bot is
         // actually spending from.
-        const propsCapPct = 1 - _state.settings.moneyline_reserve_pct;
+        // Props bot's share of the bankroll: the reserved split when the ML bot
+        // is also running (preserves the winning-stretch 50/50), but the FULL
+        // bankroll when the ML bot is off (props solo fires freely).
+        const propsCapPct = _state.settings.bet_moneylines
+            ? (1 - _state.settings.moneyline_reserve_pct)
+            : 1;
         const exposureBase = _state.settings.practice_mode
             ? _state.settings.practice_starting_bankroll_cents
             : _state.settings.open_exposure_max;
@@ -2279,7 +2288,11 @@ async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
     // practice bankroll in practice mode, open_exposure_max in
     // real mode.
     const tradeCostCents = contracts * yesAskCents;
-    const mlCapPct = _state.settings.moneyline_reserve_pct;
+    // ML bot's share: the reserved split when the props bot is also running,
+    // but the FULL bankroll when the props bot is off (ML solo fires freely).
+    const mlCapPct = _state.settings.bet_player_props
+        ? _state.settings.moneyline_reserve_pct
+        : 1;
     const mlExposureBase = _state.settings.practice_mode
         ? _state.settings.practice_starting_bankroll_cents
         : _state.settings.open_exposure_max;
@@ -7545,9 +7558,14 @@ function renderBotPane() {
             <span>Strict mode: REQUIRE Savant to agree (hard gate) — off by default; Savant disagreement is handled by the scoring framework</span>
           </label>
           <label class="bot-checkbox-label">
+            <input type="checkbox" ${s.bet_moneylines ? "checked" : ""}
+                   data-bot-setting-bool="bet_moneylines">
+            <span><strong>ML bot</strong> — bet moneylines (win-expectancy edge vs Kalshi)</span>
+          </label>
+          <label class="bot-checkbox-label">
             <input type="checkbox" ${s.bet_player_props ? "checked" : ""}
                    data-bot-setting-bool="bet_player_props">
-            <span>Also bet player props (HR / Hits / Ks / TB) — no Savant signal applies</span>
+            <span><strong>Player-props bot</strong> — HR / Hits / Ks / TB (no Savant signal applies). Run either bot alone and it gets the full bankroll; run both and they split it.</span>
           </label>
           <label class="bot-checkbox-label">
             <input type="checkbox" ${s.bet_no_side_player_props ? "checked" : ""}
