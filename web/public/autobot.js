@@ -823,11 +823,7 @@ async function scanOneGame(g) {
     const gInningChk = parseInt(g.inning, 10) || 0;
     const isPregame = !gameHasStarted(g);
     if (isPregame) {
-<<<<<<< Updated upstream
-        log("bot", `Pre-first-pitch — ${g.away}@${g.home} inning=${gInningChk}: moneylines allowed, props blocked`);
-=======
         log("bot", `PREGAME — ML only · ${g.away}@${g.home} (inning ${gInningChk}, no first pitch yet) — moneylines scanned, player props blocked, no cashouts`);
->>>>>>> Stashed changes
     }
     // Pull markets (for moneyline + player_prop Kalshi quotes),
     // model-props (player-level probabilities), and weather (for
