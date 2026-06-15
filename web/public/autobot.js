@@ -2131,6 +2131,15 @@ async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
         return;
     }
 
+    // NEVER bet both sides of the same game's moneyline — buying both teams to
+    // win locks in a loss of the spread. If we already hold the other team's ML
+    // in this game, skip this side outright.
+    const thisTeam = isHomeSide ? g.home : g.away;
+    if (hasOpenOppositeMoneyline(g.game_pk, thisTeam)) {
+        log("skip", `Moneyline ${thisTeam} ${g.away}@${g.home}: already hold the other side — refusing to bet both teams of one game`);
+        return;
+    }
+
     // Probabilities for THIS side. our_p, savant_p, market_p.
     const our_p    = isHomeSide ? ourHome : (1 - ourHome);
     const savant_p = savantHome == null
@@ -2482,6 +2491,29 @@ const LS_PRACTICE_FIRES = "diamond_context_bot_practice_fires";
 // and real) for an OPEN fire on the same game/player/stat/threshold/
 // side. Survives page reloads and works even if propSessionFires
 // goes out of sync.
+// Refuse to bet BOTH sides of one game's moneyline — buying both teams to win
+// is a guaranteed loss of the spread. Returns true if we already hold an OPEN
+// moneyline on a DIFFERENT team in this same game. (The only legit exceptions —
+// hedging a large position or a locked-in arb — are not something the bot does.)
+function hasOpenOppositeMoneyline(gamePk, thisTeam) {
+    const me = String(thisTeam || "").toUpperCase();
+    if (!me) return false;
+    const matches = (f) => {
+        const team = String(f.bet_team || "").toUpperCase();
+        return !f.settled
+            && String(f.game_pk) === String(gamePk)
+            && f.kind === "moneyline"
+            && team && team !== me;
+    };
+    try {
+        if (JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]").some(matches)) return true;
+    } catch {}
+    try {
+        if (JSON.parse(localStorage.getItem(LS_FIRES) || "[]").some(matches)) return true;
+    } catch {}
+    return false;
+}
+
 function hasOpenSameProp(gamePk, playerName, stat, threshold, side) {
     const normTarget = normName(playerName || "");
     const matches = (f) =>
@@ -5774,22 +5806,25 @@ async function renderPracticeBetsPane() {
     const realizedCls = bankroll.realized_pnl_cents >= 0 ? "bot-pl-pos" : "bot-pl-neg";
     const realizedTxt = `${bankroll.realized_pnl_cents >= 0 ? "+" : ""}$${(bankroll.realized_pnl_cents/100).toFixed(2)}`;
     const recordTxt   = `${bankroll.settled_won}–${bankroll.settled_lost}`;
-    // 50/50 split usage — open exposure broken into ML vs Props
-    // against each kind's cap. User direction (2026-06-04): 'Dont
-    // forget the 50/50 moneylines.' Surfacing this so the user
-    // can SEE the reserve actually exists and how full each side
-    // is. Reads from the live open-exposure helper that already
-    // backs the per-fire cap check.
-    const expSplit = computePracticeExposureByKind();
-    const splitBase  = bankroll.starting_cents;
-    const mlCapPct   = _state.settings.moneyline_reserve_pct;
-    const propsCapPct = 1 - mlCapPct;
-    const mlCap      = Math.round(splitBase * mlCapPct);
-    const propsCap   = Math.round(splitBase * propsCapPct);
-    const mlOpen     = expSplit.moneyline + expSplit.unknown;
-    const propsOpen  = expSplit.player_prop;
-    const mlPctUsed   = mlCap    ? Math.min(100, (mlOpen    / mlCap)    * 100) : 0;
-    const propsPctUsed = propsCap ? Math.min(100, (propsOpen / propsCap) * 100) : 0;
+    // TWO BOTS, ONE SHARED BANKROLL (no fixed 50/50 split). Each bot uses
+    // whatever the other isn't; total open stays ≤ the bankroll. Show each
+    // bot's open exposure + win-loss record, plus what's still available.
+    const expSplit   = computePracticeExposureByKind();
+    const bankCents  = bankroll.starting_cents;
+    const mlOpen     = expSplit.moneyline;
+    const propsOpen  = expSplit.player_prop + expSplit.unknown;
+    const availCents = Math.max(0, bankCents - mlOpen - propsOpen);
+    const pctOf = (c) => bankCents ? Math.min(100, (c / bankCents) * 100) : 0;
+    const recOf = (kind) => {
+        let w = 0, l = 0;
+        for (const f of fires) {
+            if (f.kind !== kind || !f.settled) continue;
+            if (f.settled.won) w++; else l++;
+        }
+        return (w + l) > 0 ? ` · ${w}–${l}` : "";
+    };
+    const mlRec   = recOf("moneyline");
+    const propRec = recOf("player_prop");
     // Card-style banner: a tile per number. Easier to scan than a
     // single comma-separated sentence (user feedback 2026-06-04:
     // 'make these simpler to navigate'). The four cells are the
@@ -5820,20 +5855,27 @@ async function renderPracticeBetsPane() {
           <div class="bot-practice-stat-sub">on settled bets</div>
         </div>
       </div>
-      <div class="bot-split-bar" title="50/50 split between moneylines and player props — open exposure against each kind's cap.">
+      <div class="bot-split-bar" title="Two bots share one bankroll dynamically — each uses whatever the other isn't. No fixed split.">
         <div class="bot-split-bar-row">
-          <span class="bot-split-bar-label">Moneylines</span>
+          <span class="bot-split-bar-label">ML bot${mlRec}</span>
           <span class="bot-split-bar-track">
-            <span class="bot-split-bar-fill bot-split-bar-fill-ml" style="width:${mlPctUsed.toFixed(0)}%"></span>
+            <span class="bot-split-bar-fill bot-split-bar-fill-ml" style="width:${pctOf(mlOpen).toFixed(0)}%"></span>
           </span>
-          <span class="bot-split-bar-numbers">$${(mlOpen/100).toFixed(2)} / $${(mlCap/100).toFixed(2)}</span>
+          <span class="bot-split-bar-numbers">$${(mlOpen/100).toFixed(2)} open</span>
         </div>
         <div class="bot-split-bar-row">
-          <span class="bot-split-bar-label">Player props</span>
+          <span class="bot-split-bar-label">Props bot${propRec}</span>
           <span class="bot-split-bar-track">
-            <span class="bot-split-bar-fill bot-split-bar-fill-prop" style="width:${propsPctUsed.toFixed(0)}%"></span>
+            <span class="bot-split-bar-fill bot-split-bar-fill-prop" style="width:${pctOf(propsOpen).toFixed(0)}%"></span>
           </span>
-          <span class="bot-split-bar-numbers">$${(propsOpen/100).toFixed(2)} / $${(propsCap/100).toFixed(2)}</span>
+          <span class="bot-split-bar-numbers">$${(propsOpen/100).toFixed(2)} open</span>
+        </div>
+        <div class="bot-split-bar-row">
+          <span class="bot-split-bar-label">Available</span>
+          <span class="bot-split-bar-track">
+            <span class="bot-split-bar-fill" style="width:${pctOf(availCents).toFixed(0)}%;background:var(--border)"></span>
+          </span>
+          <span class="bot-split-bar-numbers">$${(availCents/100).toFixed(2)}</span>
         </div>
       </div>
     `;
