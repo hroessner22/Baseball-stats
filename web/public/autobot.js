@@ -1807,32 +1807,26 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             continue;
         }
         const tradeCostCents = contracts * askCents;
-        // HARD 50/50 SPLIT — applies in BOTH real mode and practice
-        // mode. In real mode: cap = settings.open_exposure_max, split
-        // is checked against Kalshi positions. In practice mode: cap
-        // = practice_starting_bankroll_cents (scales the split to the
-        // virtual bankroll), split checked against the practice fire
-        // log. Same RULE, just keyed to the bankroll the bot is
-        // actually spending from.
-        // Props bot's share of the bankroll: the reserved split when the ML bot
-        // is also running (preserves the winning-stretch 50/50), but the FULL
-        // bankroll when the ML bot is off (props solo fires freely).
-        const propsCapPct = _state.settings.bet_moneylines
-            ? (1 - _state.settings.moneyline_reserve_pct)
-            : 1;
+        // DYNAMIC SHARED BANKROLL. The props bot can use the whole bankroll
+        // minus whatever the ML bot is actually holding right now. During the
+        // winning stretch ML rarely fired, so its reserved half sat idle and
+        // props was needlessly capped at 50% — this lets props use that idle
+        // room (fires freely) while total open stays ≤ the bankroll. If ML does
+        // fire, it only takes what it's actually using.
         const exposureBase = _state.settings.practice_mode
             ? _state.settings.practice_starting_bankroll_cents
             : _state.settings.open_exposure_max;
-        const propsCapCents = Math.round(exposureBase * propsCapPct);
         const expSplit = _state.settings.practice_mode
             ? computePracticeExposureByKind()
             : computeOpenExposureByKindCents();
         const propsExposure = expSplit.player_prop + expSplit.unknown;
+        const mlExposureNow = expSplit.moneyline || 0;
+        const propsCapCents = Math.max(0, exposureBase - mlExposureNow);
         if (propsExposure + tradeCostCents > propsCapCents) {
             if (score) logScoredDecisionOnce(score, {
                 action: "skip", reason: "props_cap_hit",
                 cap_cents:           propsCapCents,
-                cap_pct:             propsCapPct,
+                ml_open_now:         mlExposureNow,
                 current_props_open:  propsExposure,
                 side,
             });
@@ -2288,24 +2282,23 @@ async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
     // practice bankroll in practice mode, open_exposure_max in
     // real mode.
     const tradeCostCents = contracts * yesAskCents;
-    // ML bot's share: the reserved split when the props bot is also running,
-    // but the FULL bankroll when the props bot is off (ML solo fires freely).
-    const mlCapPct = _state.settings.bet_player_props
-        ? _state.settings.moneyline_reserve_pct
-        : 1;
+    // DYNAMIC SHARED BANKROLL (mirror of the props side). The ML bot can use the
+    // whole bankroll minus whatever the props bot is actually holding right now.
+    // Total open across both bots stays ≤ the bankroll.
     const mlExposureBase = _state.settings.practice_mode
         ? _state.settings.practice_starting_bankroll_cents
         : _state.settings.open_exposure_max;
-    const mlCapCents = Math.round(mlExposureBase * mlCapPct);
     const mlSplit = _state.settings.practice_mode
         ? computePracticeExposureByKind()
         : computeOpenExposureByKindCents();
-    const mlExposure = mlSplit.moneyline + mlSplit.unknown;
+    const mlExposure   = mlSplit.moneyline;
+    const propsOpenNow = (mlSplit.player_prop || 0) + (mlSplit.unknown || 0);
+    const mlCapCents   = Math.max(0, mlExposureBase - propsOpenNow);
     if (mlExposure + tradeCostCents > mlCapCents) {
         if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "moneyline_cap_hit",
             cap_cents:        mlCapCents,
-            cap_pct:          mlCapPct,
+            props_open_now:   propsOpenNow,
             current_ml_open:  mlExposure,
         });
         emitMlScan(false, "moneyline_cap_hit");
