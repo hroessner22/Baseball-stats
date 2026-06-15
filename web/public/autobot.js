@@ -2345,7 +2345,7 @@ async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
                         })),
                     } : null,
                     savant_p,
-                    savant_stance,
+                    savant_stance: savantStance,
                     inning:        g.inning || null,
                     game_state:    g,
                     gates_passed:  ["edge_threshold", "min_inning"],
