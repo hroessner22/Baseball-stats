@@ -776,6 +776,36 @@ async function fetchLiveGames() {
     );
 }
 
+// Has the first pitch actually been thrown? MLB flags games as "Live" during
+// warmup (status=Live, inning=1, no pitch). A game has started only once
+// there's real action (a ball/strike/out) or we're past the top of the 1st.
+// Shared by the scan (pregame: ML yes, props no) and the cashout loops
+// (NEVER cash out before the game starts). `g` is a /api/games/today row.
+function gameHasStarted(g) {
+    if (!g) return false;
+    const inn = parseInt(g.inning, 10) || 0;
+    if (inn < 1) return false;
+    const anyAction = (parseInt(g.outs, 10) > 0)
+                   || (parseInt(g.balls, 10) > 0)
+                   || (parseInt(g.strikes, 10) > 0);
+    if (inn === 1 && g.half === "top" && !anyAction) return false;
+    return true;
+}
+
+// game_pk → today's game row (for the cashout loops' pregame check).
+async function fetchGamesMap() {
+    try {
+        const res = await fetch("/api/games/today");
+        if (!res.ok) return new Map();
+        const d = await res.json();
+        const m = new Map();
+        for (const g of (d.games || [])) m.set(g.game_pk, g);
+        return m;
+    } catch {
+        return new Map();
+    }
+}
+
 async function scanOneGame(g) {
     // GAME-MUST-BE-LIVE GATE (2026-06-05). User direction: 'you also
     // now placed and cashed out a bet before the game started. Never
@@ -785,13 +815,15 @@ async function scanOneGame(g) {
     // pregame. Defensive double-check on the actual game-state
     // fields: at least one pitch must have been thrown, or at least
     // one PA must have happened, or the inning must be past 0.
+    // PREGAME HANDLING (2026-06-15). MLB flags games "Live" during warmup,
+    // before any pitch. We now ALLOW pregame MONEYLINES (a pregame ML is a
+    // normal bet) but still BLOCK pregame PLAYER PROPS — strikeout/hits props
+    // need the game underway, and a warmup prop fire was the original bug.
+    // (Cashouts never fire pregame — see the cashout loops.)
     const gInningChk = parseInt(g.inning, 10) || 0;
-    const anyAction = (parseInt(g.outs, 10) > 0)
-                   || (parseInt(g.balls, 10) > 0)
-                   || (parseInt(g.strikes, 10) > 0);
-    if (gInningChk < 1 || (gInningChk === 1 && g.half === "top" && !anyAction)) {
-        log("skip", `Pre-first-pitch — ${g.away}@${g.home} status=${g.status} inning=${gInningChk}: blocked`);
-        return;
+    const isPregame = !gameHasStarted(g);
+    if (isPregame) {
+        log("bot", `Pre-first-pitch — ${g.away}@${g.home} inning=${gInningChk}: moneylines allowed, props blocked`);
     }
     // Pull markets (for moneyline + player_prop Kalshi quotes),
     // model-props (player-level probabilities), and weather (for
@@ -875,7 +907,7 @@ async function scanOneGame(g) {
     //    Savant doesn't cover player props, so we run those through
     //    the same fire logic with savantStance = "no_data" (no
     //    threshold penalty applied).
-    if (_state.settings.bet_player_props && modelPropsRes && modelPropsRes.ok) {
+    if (_state.settings.bet_player_props && !isPregame && modelPropsRes && modelPropsRes.ok) {
         try {
             const mp = await modelPropsRes.json();
             let weather = null;
@@ -2922,10 +2954,15 @@ async function runCashoutCheck() {
     for (const f of fires) {
         if (f.ticker && !fireByTicker.has(f.ticker)) fireByTicker.set(f.ticker, f);
     }
+    const gamesMap = await fetchGamesMap();
 
     for (const p of mps) {
         const rawQty = (p.position || 0);
         if (rawQty === 0) continue;
+        // NEVER cash out before the game starts (warmup = status=Live, inning=1,
+        // no pitch). Block until first pitch; normal gates apply once underway.
+        const fireForGame = fireByTicker.get(p.ticker);
+        if (fireForGame?.game_pk && !gameHasStarted(gamesMap.get(fireForGame.game_pk))) continue;
         // Kalshi reports YES positions as POSITIVE quantity and NO
         // positions as NEGATIVE. We now support both: positive qty
         // → we hold YES, sell into YES bid; negative qty → we hold
@@ -3676,27 +3713,20 @@ async function runPracticeCashoutCheck() {
     const open = fires.filter((f) => !f.settled && f.ticker
         && (f.kind === "player_prop" || f.kind === "moneyline"));
     if (!open.length) return;
+    const gamesMap = await fetchGamesMap();
     let mutated = false;
     for (const fire of open) {
         const heldSide = fire.side || "yes";
         const contractsEarly = fire.contracts || 1;
         const entryEarly     = fire.price_cents || 0;
-        // PRE-GAME GUARD with MISTAKE-RETRACTION EXCEPTION. By default
-        // we don't cashout pregame — mark-to-market is noise, the
-        // empirical lookups use stale pregame state. EXCEPTION: if
-        // the fire would no longer pass our current buy gates (e.g.
-        // a K-prop YES at a threshold we'd now block, or a K-prop NO
-        // below the current floor), allow the pregame retraction.
-        // User direction (2026-06-06): 'we wont pregame cashout
-        // unless we realize we made a mistake right?'
-        let mistakeReason = null;
-        if (fire.game_pk) {
-            const gInfo = await getLiveGameState(fire.game_pk);
-            const inningNow = gInfo?.inning || 0;
-            if (inningNow < 1) {
-                mistakeReason = await wouldFailCurrentBuyGates(fire);
-                if (!mistakeReason) continue;
-            }
+        // NEVER CASH OUT BEFORE THE GAME STARTS (2026-06-15). Warmup games
+        // report status=Live, inning=1 with no pitch thrown; cashing out then
+        // is the exact bug we guard against. Block ALL cashouts (no pregame
+        // mistake-retraction) until first pitch — once the game is underway,
+        // every normal cashout gate below applies as usual.
+        const mistakeReason = null; // (kept null; pregame retraction removed)
+        if (fire.game_pk && !gameHasStarted(gamesMap.get(fire.game_pk))) {
+            continue;
         }
         // STEP 0: mathematically dead check. NO with threshold met,
         // or YES K-prop with pitcher pulled. These are flat losses —
