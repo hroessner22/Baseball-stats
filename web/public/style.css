@@ -4119,7 +4119,8 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 @keyframes spot-pop { 0% { r: 0; opacity: 0; } 60% { opacity: 1; } 100% { r: 11; opacity: 1; } }
 @keyframes core-pop { 0% { r: 0; } 55% { r: 9; } 100% { r: 4.5; } }
 
-/* Play card as a thin bar across the whole bottom of the field (single line). */
+/* Play card as a thin bar across the whole bottom of the field (single line).
+   Shows in both views and fades out ~10s after a play (see handlePlayBlurb). */
 .play-blurb {
     position: absolute; left: 3%; right: 3%; bottom: 12px;
     z-index: 6; text-align: center;
@@ -4127,10 +4128,22 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     border-radius: 10px; padding: 7px 16px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     font-size: 13px; line-height: 1.3;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: opacity 0.8s ease;
 }
-.field-pane.view-pitch .play-blurb { display: none; }
+.play-blurb.pb-faded { opacity: 0; pointer-events: none; }
 .pb-desc { font-weight: 600; color: #e8eef7; }
 .pb-meta { font-size: 11px; color: var(--accent-win); margin-left: 7px; letter-spacing: 0.02em; }
+
+/* Pitch-section game-state bar (score / inning / count / outs). */
+.ps-state {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    font: 600 13px 'Inter', sans-serif; color: var(--text); letter-spacing: 0.02em;
+}
+.ps-state b { font-weight: 800; }
+.ps-st-inn { color: var(--text-dim); text-transform: uppercase; font-size: 12px; }
+.ps-st-dot { color: var(--text-faint); }
+.ps-st-cnt { font-variant-numeric: tabular-nums; }
+.ps-st-outs { color: var(--text-dim); }
 .field-pane.play-pop .play-blurb { animation: blurb-pop 0.5s ease 0.7s both; }
 @keyframes blurb-pop {
     0% { transform: translateX(-50%) translateY(10px) scale(0.92); opacity: 0; }

@@ -4339,6 +4339,7 @@ async function refreshGame(id) {
         handlePlayAutoSwitch(g);
         handlePitchThrow(g);
         handleHotZones(g);
+        handlePlayBlurb(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -4366,6 +4367,7 @@ async function refreshGame(id) {
         handlePlayAutoSwitch(g);
         handlePitchThrow(g);
         handleHotZones(g);
+        handlePlayBlurb(g);
             });
             if (hasGameBets(id)) {
                 hydrateRailLiveData(id).then(() => {
@@ -4453,8 +4455,8 @@ function renderGame(g) {
                 data-watch
                 data-game-pk="${g.game_pk}"
                 data-live="${g.status === 'Live' ? '1' : '0'}"
-                title="Watch on MLB.tv — opens the feed and floats it over DIAMOND:CONTEXT."
-                aria-label="Watch on MLB.tv">▶ Watch</button>
+                title="Picture-in-Picture — opens the MLB.tv feed and floats it in a PiP window."
+                aria-label="Watch in picture-in-picture">▶ PiP</button>
       </div>
       ${mode === 'gamecast'
         ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
@@ -5047,9 +5049,11 @@ document.addEventListener("click", (e) => {
     const live = btn.getAttribute("data-live") === "1";
     if (window.DCWatch && document.documentElement.dataset.dcWatchExt === "1") {
         window.DCWatch.start(pk, live);
+        if (typeof flashWatchBtn === "function") flashWatchBtn(btn, "PiP…");
     } else {
         window.open(live ? `https://www.mlb.com/tv/g${pk}` : "https://www.mlb.com/tv",
                     "_blank", "noopener");
+        if (typeof flashWatchBtn === "function") flashWatchBtn(btn, "Opened MLB.tv ↗");
     }
 });
 
@@ -5951,8 +5955,23 @@ function renderPitchScene(g) {
            </div>`
         : "";
 
+    // Game-state bar — same score / inning / count / outs the Field view shows,
+    // so the Pitch section carries the situation too.
+    const stateBar = g.status === "Live" && g.inning
+        ? `<div class="ps-state">
+             <span class="ps-st-score">${escapeHTML(g.teams?.away?.abbr || "")} <b>${g.score?.away ?? 0}</b></span>
+             <span class="ps-st-inn">${arrowHalf(g.half)} ${ordinalSuffix(g.inning)}</span>
+             <span class="ps-st-score">${escapeHTML(g.teams?.home?.abbr || "")} <b>${g.score?.home ?? 0}</b></span>
+             <span class="ps-st-dot">·</span>
+             <span class="ps-st-cnt">${g.balls ?? 0}-${g.strikes ?? 0}</span>
+             <span class="ps-st-dot">·</span>
+             <span class="ps-st-outs">${g.outs ?? 0} out${g.outs === 1 ? "" : "s"}</span>
+           </div>`
+        : "";
+
     return `
       <div class="pitch-scene">
+        ${stateBar}
         <div class="ps-stage">
           <svg class="ps-scene" viewBox="0 116 ${W} 446" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
@@ -6195,6 +6214,28 @@ function renderPlayBlurb(g) {
     return `<div class="play-blurb">
               <span class="pb-desc">${escapeHTML(p.description)}</span>${bits ? `<span class="pb-meta">${escapeHTML(bits)}</span>` : ""}
             </div>`;
+}
+// Fade the play bar out ~10s after a play lands, and keep it faded across
+// re-renders until the next play (which brings it back).
+let _blurbKey = null, _blurbFaded = false, _blurbTimer = null;
+function handlePlayBlurb(g) {
+    if (!gameView) return;
+    const p = lastInningPlay(g);
+    const key = (p && p.description) ? `${g.game_pk}:${p.pa_index}` : null;
+    if (key !== _blurbKey) {
+        _blurbKey = key;
+        _blurbFaded = false;
+        if (_blurbTimer) clearTimeout(_blurbTimer);
+        if (key) _blurbTimer = setTimeout(() => {
+            _blurbFaded = true;
+            const e = gameView && gameView.querySelector(".play-blurb");
+            if (e) e.classList.add("pb-faded");
+        }, 10000);
+    }
+    if (_blurbFaded) {
+        const el = gameView.querySelector(".play-blurb");
+        if (el) el.classList.add("pb-faded");
+    }
 }
 // Auto-switch the view to follow the action:
 //   • a NEW ball in play  → snap to Field and play the flight animation
