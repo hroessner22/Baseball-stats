@@ -3448,7 +3448,46 @@ async function runCashoutCheck() {
             }
         }
 
-        if (!hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn && !hitEvCashout) continue;
+        // MONEYLINE SMART CASHOUT (2026-06-15). User: 'be smart about
+        // moneyline cashouts. We figured it out for player props.' A
+        // moneyline settles at 100¢ the moment our team wins, so the
+        // prop-style triggers above (absolute profit-take, tail-
+        // compression lock-in at 85¢, live-EV "only 3¢ left") were
+        // DUMPING near-locked winners into the spread — the WSH-up-7-3-
+        // in-the-7th case: sold at 92¢ when live win expectancy was
+        // ~96¢, forfeiting EV. The right move on a winning moneyline is
+        // to HOLD to settlement and collect the full payout at our true
+        // odds. We override every heuristic trigger for moneylines:
+        // sell ONLY when the market bid is OVERPAYING our live win
+        // expectancy (rare — the market is handing us more than the
+        // team is worth) AND we're locking a profit. Never salvage-sell
+        // a losing moneyline — that's the daily-loss limit's job, and
+        // the user's standing rule is 'NEVER EVER otherwise.'
+        let mlOverpaySell = false;
+        let mlCashoutDetail = "";
+        if (fire?.kind === "moneyline") {
+            const mlEmp  = await getEmpiricalMlPYes(fire);
+            const weCents = mlEmp != null ? mlEmp.p_yes_cents : null;
+            if (weCents != null) {
+                const ML_OVERPAY_CUSHION = 3;
+                if (yesBidCents > weCents + ML_OVERPAY_CUSHION && profitPerContract > 0) {
+                    mlOverpaySell = true;
+                    mlCashoutDetail = `bid ${yesBidCents}¢ > live WE ${weCents}¢ +${ML_OVERPAY_CUSHION}¢ — market overpaying, lock +${profitPerContract}¢/contract`;
+                } else {
+                    // Hold to settlement — our true odds meet or beat
+                    // the bid, so the full payout on a win is worth more
+                    // than selling into the spread now.
+                    if (hitAbsolute || hitEvCapture || hitLiveEv || hitLockIn) {
+                        log("hold", `ML hold-to-settle ${p.ticker} (${fire.bet_team || ""}): bid ${yesBidCents}¢ ≤ live WE ${weCents}¢ — selling would forfeit ${weCents - yesBidCents}¢/contract of EV, holding to settlement`);
+                    }
+                    continue;
+                }
+            }
+            // weCents == null → no live WE available; fall through to
+            // the heuristic gate below as a safety net.
+        }
+
+        if (!mlOverpaySell && !hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn && !hitEvCashout) continue;
 
         // CONVICTION VETO (2026-06-05). User direction: 'if we have
         // a bet that we actually do believe will hit and theres
@@ -3528,6 +3567,7 @@ async function runCashoutCheck() {
             if (hitDeadPosition) triggerParts.push(`+dead (${deadPositionDetail})`);
             if (hitLockIn)       triggerParts.push(`+lock (${lockInDetail})`);
             if (hitEvCashout)    triggerParts.push(`+ev-cashout (${evCashoutDetail})`);
+            if (mlOverpaySell)   triggerParts.push(`+ml-overpay (${mlCashoutDetail})`);
             const triggerTag = triggerParts.join(" / ");
             // Log the cash-out decision for EOD review — pairs with
             // the BUY scoreBet at fire time, so we can see whether
@@ -3919,6 +3959,30 @@ async function runPracticeCashoutCheck() {
                     lockReason = null;
                 }
             }
+        }
+        // MONEYLINE SMART CASHOUT (2026-06-15). User: 'be smart about
+        // moneyline cashouts. We figured it out for player props.' A
+        // moneyline settles at 100¢ when our team wins, so the prop-
+        // style tail-compression lock-in (bid>=85¢) was dumping winning
+        // MLs into the spread — the WSH-up-7-3-in-the-7th case. For
+        // moneylines, ignore that lock-in: hold to settlement unless
+        // the market bid OVERPAYS our live win expectancy AND we're
+        // locking a profit (never salvage a loser).
+        if (fire.kind === "moneyline") {
+            lockReason = null;  // ML never uses the prop tail-compression lock-in
+            try {
+                const mlEmp  = await getEmpiricalMlPYes(fire);
+                const weCents = mlEmp != null ? mlEmp.p_yes_cents : null;
+                if (weCents != null) {
+                    const ML_OVERPAY_CUSHION = 3;
+                    if (liveBidCents > weCents + ML_OVERPAY_CUSHION && profitPerContract > 0) {
+                        lockReason = `ML overpay — bid ${liveBidCents}¢ > live WE ${weCents}¢ +${ML_OVERPAY_CUSHION}¢, lock +${profitPerContract}¢/contract`;
+                    } else {
+                        log("hold", `[PRACTICE] ML hold-to-settle ${fire.ticker} (${fire.bet_team || ""}): bid ${liveBidCents}¢ ≤ live WE ${weCents}¢ — holding to settlement`);
+                    }
+                }
+                // weCents == null → leave lockReason as computed (fallback).
+            } catch {}
         }
         // EV-CASHOUT (2026-06-07) — hitter YES with limited remaining
         // PAs and Kalshi bid well above the model's hold value. Take
