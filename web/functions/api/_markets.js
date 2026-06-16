@@ -423,6 +423,50 @@ const KALSHI_SERIES = [
     { ticker: "KXMLBRFI",         type: "per_game_team" },    // run in 1st inning
 ];
 
+// Read the slate series' raw markets from the Supabase cache that the
+// kalshi-markets GitHub Action refreshes every ~5 min (src/kalshi_markets.py).
+// The Action fetches from a GitHub runner IP, which — unlike Cloudflare's
+// shared worker egress IP — Kalshi does NOT throttle (proven 2026-06-15: a
+// valid signature 200s from a normal IP but 429s from the worker). Returns
+// seriesResults [{s, mkts, ok}] in the same shape the fetch path produces, or
+// null if the cache is unavailable/empty so the caller can fall back.
+async function kalshiSeriesResultsFromCache(env, series) {
+    if (!env?.SUPABASE_URL || !env?.SUPABASE_ANON_KEY) return null;
+    const tickers = series.map((s) => s.ticker);
+    const url = `${env.SUPABASE_URL}/rest/v1/kalshi_series_cache` +
+        `?select=series_ticker,markets,fetched_at&series_ticker=in.(${tickers.join(",")})`;
+    let rows;
+    try {
+        const res = await fetch(url, {
+            headers: {
+                apikey:        env.SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+            },
+            // 30s edge cache: the Action only writes every 5 min, so reading
+            // more often than this is wasted — and it keeps Supabase load flat
+            // regardless of how many viewers poll the slate.
+            cf: { cacheTtl: 30, cacheEverything: true },
+        });
+        if (!res.ok) return null;
+        rows = await res.json();
+    } catch { return null; }
+    if (!Array.isArray(rows) || !rows.length) return null;
+    const byTicker = new Map(rows.map((r) => [r.series_ticker, r]));
+    // Require the moneyline (game) series to be present and non-empty —
+    // otherwise the cache isn't usable yet and we fall back to a live fetch.
+    const gameRow = byTicker.get("KXMLBGAME");
+    if (!Array.isArray(gameRow?.markets) || !gameRow.markets.length) return null;
+    return series.map((s) => {
+        const row = byTicker.get(s.ticker);
+        return {
+            s,
+            mkts: Array.isArray(row?.markets) ? row.markets : [],
+            ok: !!row,
+            error: row ? null : "not in cache",
+        };
+    });
+}
+
 export async function listKalshiMlbMarkets(opts = {}) {
     const all = [];
 
@@ -504,11 +548,17 @@ export async function listKalshiMlbMarkets(opts = {}) {
     };
     let seriesResults;
     if (opts.gameDayOnly) {
-        // Slate path: only 3 series, and we need a fast answer (health check).
-        // Fetch them in parallel — 3 requests is a small enough burst that the
-        // gap-spacing isn't needed, and parallel keeps worst-case latency at one
-        // 4s timeout instead of 3 stacked sequentially.
-        seriesResults = await Promise.all(series.map((s) => fetchSeries(s, true)));
+        // Slate path: prefer the Supabase cache (refreshed every ~5 min by the
+        // kalshi-markets GitHub Action from an un-throttled IP). The worker's
+        // own egress IP is hard-429'd by Kalshi, so a direct fetch here usually
+        // fails — the cache is the reliable source. Fall back to a direct
+        // fast-fail fetch only when the cache is unavailable/empty (e.g. the
+        // Action hasn't run yet), parallel so worst-case latency stays under
+        // the health check's 8s budget.
+        seriesResults = await kalshiSeriesResultsFromCache(opts.env, series);
+        if (!seriesResults) {
+            seriesResults = await Promise.all(series.map((s) => fetchSeries(s, true)));
+        }
     } else {
         // Kalshi's burst limit is tight — sequential with a spacing gap is the
         // only reliable way to land every series. Successful fetches are
@@ -1284,7 +1334,7 @@ export async function listAllMlbMarkets(env, opts = {}) {
     const gameDayOnly = !!opts.gameDayOnly;
     const ALL_ADAPTERS = [
         ["polymarket", listPolymarketMlbMarkets],
-        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly, gameDayOnly })],
+        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly, gameDayOnly, env })],
         ["manifold",   listManifoldMlbMarkets],
         ["odds_api",   () => listOddsApiMlbMarkets(env || {})],
         ["bovada",     listBovadaMlbMarkets],
