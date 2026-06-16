@@ -5875,20 +5875,6 @@ function renderPitchScene(g) {
         return `<line class="ps-grid" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`;
     };
 
-    // Batter: RHB on the left (camera view), LHB on the right; switch hitters
-    // take the box opposite the pitcher's hand. The figure wears the batting
-    // team's colors and shows the player's real MLB headshot as the face.
-    let side = (g.batter?.bats || "R").toUpperCase();
-    if (side === "S") side = (g.pitcher?.throws || "R").toUpperCase() === "L" ? "R" : "L";
-    const batterLeft = side === "R";
-    const battingAbbr = (g.half === "top" ? g.teams?.away?.abbr : g.teams?.home?.abbr) || "";
-    const jersey = MLB_TEAM_COLORS[battingAbbr.toUpperCase()] || "#1e2a44";
-    const cap = darken(jersey, 0.62);
-    const head = g.batter ? playerHeadshotSpot(g.batter.id, 120) : null;
-    const batter = g.batter
-        ? `<g transform="translate(${batterLeft ? 158 : 442} 452)${batterLeft ? "" : " scale(-1 1)"}">${batterFigure({ head, jersey, cap, id: g.batter.id })}</g>`
-        : "";
-
     const last = [...pitches].reverse().find((p) => p.sz_top != null && p.sz_bot != null);
     const zTop = last?.sz_top ?? 3.4, zBot = last?.sz_bot ?? 1.6;
     const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -5933,7 +5919,7 @@ function renderPitchScene(g) {
     return `
       <div class="pitch-scene">
         <div class="ps-stage">
-          <svg class="ps-scene" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <svg class="ps-scene" viewBox="0 116 ${W} 446" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
               <linearGradient id="ps-bg" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="#0a1a2c"/><stop offset="55%" stop-color="#0e2236"/><stop offset="100%" stop-color="#0c1c2c"/>
@@ -5950,13 +5936,6 @@ function renderPitchScene(g) {
             <rect x="0" y="0" width="${W}" height="${H}" fill="url(#ps-bg)"/>
             <ellipse cx="300" cy="470" rx="360" ry="150" fill="#19402a" opacity="0.45"/>
             <ellipse cx="300" cy="455" rx="220" ry="92" fill="#6b4a2c" opacity="0.40"/>
-
-            <!-- batter's boxes (perspective) -->
-            <polygon class="ps-box" points="150,408 222,408 210,452 132,452"/>
-            <polygon class="ps-box" points="450,408 378,408 390,452 468,452"/>
-
-            <!-- batter -->
-            ${batter}
 
             <!-- home plate in perspective (point toward viewer) -->
             <polygon class="ps-plate" points="243,406 357,406 375,430 300,450 225,430"/>
