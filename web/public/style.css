@@ -3925,36 +3925,31 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     stroke-width: 3;
 }
 
-/* Broadcast-style player labels INSIDE the SVG so the field is
-   informative on its own. Pitcher near the mound, batter at home
-   plate, count + outs chip in the corner. */
-.field .field-pitcher-name,
-.field .field-batter-name {
+/* Clean broadcast-style player name tags INSIDE the SVG — a subtle dark pill
+   so the field stays informative without big stroked text on the dirt.
+   Pitcher at the mound, batter in his box. */
+.field .field-nametag rect {
+    fill: rgba(8, 12, 20, 0.82);
+    stroke: rgba(255, 255, 255, 0.14);
+    stroke-width: 1;
+}
+.field .field-nametag .fnt-name {
     fill: #FFFFFF;
     font-family: 'Inter', sans-serif;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 700;
-    letter-spacing: 0.02em;
-    paint-order: stroke;
-    stroke: rgba(0, 0, 0, 0.6);
-    stroke-width: 4;
+    letter-spacing: 0.03em;
     text-transform: uppercase;
 }
-.field .field-pitcher-hand {
-    fill: rgba(255, 255, 255, 0.7);
+.field .field-nametag .fnt-sub {
+    fill: rgba(255, 255, 255, 0.62);
     font-family: 'Inter', sans-serif;
-    font-size: 10px;
+    font-size: 8.5px;
     font-weight: 600;
-    letter-spacing: 0.06em;
-    paint-order: stroke;
-    stroke: rgba(0, 0, 0, 0.6);
-    stroke-width: 3;
+    letter-spacing: 0.08em;
 }
-.field .field-batter-name {
-    font-size: 15px;
-    fill: #FCD34D;        /* yellow batter card */
-    stroke: rgba(0, 0, 0, 0.7);
-}
+.field .field-nametag.fnt-batter .fnt-name { fill: #FCD34D; }   /* yellow batter */
+.field .field-nametag.fnt-batter rect { stroke: rgba(252, 211, 77, 0.30); }
 
 /* Count + outs broadcast chip in the upper-right of the SVG. */
 .field .field-count-chip rect {
