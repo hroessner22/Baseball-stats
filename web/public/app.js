@@ -5502,39 +5502,8 @@ function fieldPane(g) {
       </g>
     `;
 
-    // Overlay labels on the SVG itself so the field is informative
-    // without needing the matchup rows below. Pitcher last name near
-    // the mound, batter last name at home plate. ESPN / MLB at-bat
-    // graphics convention.
-    const pitcherSurname = g.pitcher?.name ? lastName(g.pitcher.name) : "";
-    const batterSurname  = g.batter?.name  ? lastName(g.batter.name)  : "";
-    // Put the batter in the box for the hand he hits with. The field is drawn
-    // from behind home plate (3B/left-field on the left, 1B/right-field on the
-    // right), so a RIGHT-handed batter stands on the 3B side (LEFT box) and a
-    // LEFT-handed batter on the 1B side (RIGHT box). Switch hitters bat opposite
-    // the pitcher's throwing hand. Unknown hand → centered over the plate.
-    const _batsRaw = g.batter?.bats;
-    const _batsEff = _batsRaw === "S"
-        ? (g.pitcher?.throws === "L" ? "R" : "L")
-        : _batsRaw;
-    const batterX = _batsEff === "R" ? 206 : _batsEff === "L" ? 294 : 250;
-    const _batLabel = _batsRaw === "S" ? "SWITCH" : _batsRaw ? `${_batsRaw}HB` : "";
-
-    // Clean broadcast-style name tag: a subtle dark pill with the player's
-    // surname (+ a small hand sub-label). Replaces the big stroked names that
-    // floated on the dirt. Width is estimated from the text length.
-    const fieldNameTag = (x, y, name, sub, kind) => {
-        if (!name) return "";
-        const w = Math.max(40, Math.ceil(Math.max(name.length * 7.6,
-                                                   (sub || "").length * 5.6)) + 20);
-        const h = sub ? 29 : 21;
-        return `<g class="field-nametag fnt-${kind}" transform="translate(${x} ${y})">
-                  <rect x="${(-w / 2).toFixed(1)}" y="${(-h / 2).toFixed(1)}"
-                        width="${w}" height="${h}" rx="6"/>
-                  <text class="fnt-name" x="0" y="${sub ? -2 : 4.5}" text-anchor="middle">${escapeHTML(name)}</text>
-                  ${sub ? `<text class="fnt-sub" x="0" y="9" text-anchor="middle">${escapeHTML(sub)}</text>` : ""}
-                </g>`;
-    };
+    // (Player names are deliberately not drawn on the field — see below. The
+    // pitcher/batter matchup lives in the AT BAT / PITCHING rail cards.)
     const isLive = g.status === "Live";
     const stateBanner = !isLive
         ? `<div class="field-state-banner ${g.status?.toLowerCase()}">
@@ -5706,9 +5675,9 @@ function fieldPane(g) {
           <circle class="mound" cx="250" cy="355" r="22"/>
           <rect class="rubber" x="246" y="354" width="8" height="2.5"/>
 
-          <!-- L20: pitcher name tag at the mound -->
-          ${fieldNameTag(250, 392, pitcherSurname,
-              g.pitcher?.throws ? `${g.pitcher.throws}HP` : "", "pitcher")}
+          <!-- Player names intentionally NOT drawn on the field — a realistic
+               stadium graphic has no name bugs on the grass. The pitcher/batter
+               matchup is shown cleanly in the AT BAT / PITCHING rail cards. -->
 
           <!-- L21: bases -->
           <polygon class="base home"
@@ -5726,8 +5695,6 @@ function fieldPane(g) {
                   x="-7" y="-7" width="14" height="14"/>
           </g>
 
-          <!-- L22: batter name tag in his box (handedness), just above the plate -->
-          ${fieldNameTag(batterX, 442, batterSurname, _batLabel, "batter")}
 
           <!-- L23: runner names on occupied bases -->
           ${runnerLabel("first",  412, 326, "start")}
