@@ -4336,6 +4336,7 @@ async function refreshGame(id) {
         wireField3d();
         handlePlayAutoSwitch(g);
         handlePitchThrow(g);
+        handleHotZones(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -4362,6 +4363,7 @@ async function refreshGame(id) {
         wireField3d();
         handlePlayAutoSwitch(g);
         handlePitchThrow(g);
+        handleHotZones(g);
             });
             if (hasGameBets(id)) {
                 hydrateRailLiveData(id).then(() => {
@@ -5911,10 +5913,35 @@ function renderPitchScene(g) {
                       style="offset-path:path('M 300 96 L ${cx.toFixed(1)} ${cy.toFixed(1)}')"/>`;
     }
 
+    // Hot zones: fill each 3×3 cell with the batter's OPS-by-zone color from
+    // MLB (zones 1-9 = the strike zone). Pulled from cache; handleHotZones()
+    // fetches + paints on first sight. Zone n → row=⌊(n-1)/3⌋, col=(n-1)%3.
+    const hzc = _hotZones.get(g.batter?.id);
+    const hz = (hzc && hzc.zones) ? hzc.zones : null;
+    let cells = "";
+    for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 3; col++) {
+            const zone = row * 3 + col + 1;
+            const pts = [at(col / 3, row / 3), at((col + 1) / 3, row / 3),
+                         at((col + 1) / 3, (row + 1) / 3), at(col / 3, (row + 1) / 3)].map(P).join(" ");
+            const zd = hz?.[zone];
+            const tip = zd ? `data-tip="Zone ${zone} · OPS ${zd.value}"` : "";
+            cells += `<polygon class="ps-hz" data-zone="${zone}" ${tip} fill="${zd?.color || "transparent"}" points="${pts}"/>`;
+        }
+    }
+
     const headLine = lp
         ? (`${lp.velo ? `${lp.velo} mph ` : ""}${escapeHTML(lp.type || "")}`.trim() || "Pitch tracker")
         : (g.batter ? `${escapeHTML(g.batter.name)} at bat` : "Pitch tracker");
     const emptyHint = !pitches.length ? `<div class="ps-empty">Waiting for the first pitch…</div>` : "";
+    const legend = hz
+        ? `<div class="ps-legend">
+             <span class="ps-leg-label">OPS by zone${hzc.season ? ` · ${hzc.season}` : ""}</span>
+             <span class="ps-leg-scale"><em>Cold</em>
+               <i style="background:rgba(6,90,238,.7)"></i><i style="background:rgba(150,188,255,.7)"></i><i style="background:rgba(255,255,255,.7)"></i><i style="background:rgba(234,147,153,.7)"></i><i style="background:rgba(214,41,52,.7)"></i>
+               <em>Hot</em></span>
+           </div>`
+        : "";
 
     return `
       <div class="pitch-scene">
@@ -5946,6 +5973,7 @@ function renderPitchScene(g) {
             <polygon class="ps-zone-face2" points="${P(FZ.tl)} ${P(FZ.bl)} ${P(blb)} ${P(tlb)}"/>
             <polygon class="ps-zone-face2" points="${P(FZ.tr)} ${P(FZ.br)} ${P(brb)} ${P(trb)}"/>
             <polygon class="ps-zone" points="${P(FZ.tl)} ${P(FZ.tr)} ${P(FZ.br)} ${P(FZ.bl)}"/>
+            ${cells}
             ${ln(1 / 3, 0, 1 / 3, 1)}${ln(2 / 3, 0, 2 / 3, 1)}
             ${ln(0, 1 / 3, 1, 1 / 3)}${ln(0, 2 / 3, 1, 2 / 3)}
             ${dots}
@@ -5955,8 +5983,59 @@ function renderPitchScene(g) {
           </svg>
         </div>
         <div class="ps-head">${headLine}</div>
+        ${legend}
         ${emptyHint}
       </div>`;
+}
+
+// ── Hot zones: per-player OPS by strike-zone cell, colored like MLB ────────
+// MLB's Stats API hotColdZones stat gives each zone (1-9 = the 3×3 strike
+// zone, 11-14 outside) an OPS value, a temp, and the exact rgba color MLB
+// uses. We cache per player and paint the 3×3 cells.
+const _hotZones = new Map();           // playerId → {season, zones:{n:{color,value,temp}}} | "pending" | "none"
+function extractOpsZones(d) {
+    const out = {};
+    for (const s of d?.stats || []) for (const sp of s.splits || []) {
+        const st = sp.stat || {};
+        if (st.name === "onBasePlusSlugging") {
+            for (const z of st.zones || []) {
+                const n = String(parseInt(z.zone, 10));   // "01" → "1"
+                out[n] = { color: z.color, value: z.value, temp: z.temp };
+            }
+        }
+    }
+    return out;
+}
+async function fetchHotZones(playerId) {
+    const yr = new Date().getFullYear();
+    for (const season of [yr, yr - 1]) {
+        try {
+            const r = await fetch(`https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=hotColdZones&season=${season}&group=hitting`);
+            if (!r.ok) continue;
+            const zones = extractOpsZones(await r.json());
+            if (zones && Object.keys(zones).length) return { season, zones };
+        } catch { /* try next season */ }
+    }
+    return null;
+}
+function ensureHotZones(playerId) {
+    if (!playerId || _hotZones.has(playerId)) return;
+    _hotZones.set(playerId, "pending");
+    fetchHotZones(playerId).then((res) => {
+        _hotZones.set(playerId, res || "none");
+        if (res) paintHotZones(playerId);
+    }).catch(() => _hotZones.set(playerId, "none"));
+}
+function paintHotZones(playerId) {
+    const data = _hotZones.get(playerId);
+    if (!gameView || !data || data === "pending" || data === "none") return;
+    gameView.querySelectorAll(".ps-hz[data-zone]").forEach((el) => {
+        const zd = data.zones[el.getAttribute("data-zone")];
+        if (zd) { el.setAttribute("fill", zd.color); el.setAttribute("data-tip", `Zone ${el.getAttribute("data-zone")} · OPS ${zd.value}`); }
+    });
+}
+function handleHotZones(g) {
+    ensureHotZones(g?.batter?.id);
 }
 
 // The batter: a front-facing uniformed body (batting-team colors) with the

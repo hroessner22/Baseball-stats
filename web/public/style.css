@@ -4034,6 +4034,16 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .ps-zone { fill: rgba(70, 150, 240, 0.16); stroke: rgba(185, 218, 255, 0.95); stroke-width: 3; }
 .ps-grid { stroke: rgba(200, 226, 255, 0.45); stroke-width: 1.5; }
 .ps-num { font: 700 14px 'Inter', sans-serif; fill: #fff; pointer-events: none; }
+/* Hot zones: per-cell OPS color (MLB red→blue) painted on the 3×3 face. */
+.ps-hz { transition: fill 0.4s ease; cursor: help; }
+.ps-legend {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center;
+    font: 600 11px 'Inter', sans-serif; color: var(--text-dim); letter-spacing: 0.03em;
+}
+.ps-leg-label { text-transform: uppercase; }
+.ps-leg-scale { display: inline-flex; align-items: center; gap: 3px; }
+.ps-leg-scale em { font-style: normal; color: var(--text-faint); margin: 0 2px; }
+.ps-leg-scale i { width: 13px; height: 11px; border-radius: 2px; display: inline-block; }
 .ps-pitch { cursor: help; }
 .ps-ring { fill: none; stroke: #fff; stroke-width: 3; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7)); }
 .ps-incoming {
