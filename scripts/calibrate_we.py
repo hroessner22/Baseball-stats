@@ -175,6 +175,32 @@ def main():
     print(f"\npredicted prob range: {p.min():.3f} .. {p.max():.3f}  "
           f"(market pregame lines ~0.25..0.75 — extremes should be rare)")
 
+    # ---- PATTERN ANALYSIS: where is the model most reliable / discriminating?
+    # The bettable insight: high model confidence only helps if the model is
+    # actually right in that segment. Find segments where picking the model's
+    # favorite wins at a high rate (clears the ~52.4% vig breakeven with room).
+    Xa = np.array(X)
+    pick_win = np.where(p >= 0.5, y, 1 - y)        # did the model's favorite win?
+    conf = np.abs(p - 0.5)                          # margin of the pick
+    def seg(name, mask):
+        if mask.sum() < 40: return
+        wr = pick_win[mask].mean()
+        print(f"  {name:32} n={mask.sum():4d}  fav win% {wr:.3f}  "
+              f"avg conf {conf[mask].mean():.3f}")
+    print("\n=== PATTERN: model-favorite win-rate by segment (breakeven ~.524) ===")
+    seg("ALL", np.ones(len(p), bool))
+    for lo in [0.0,0.05,0.10,0.15]:
+        seg(f"|margin|>= {lo:.2f}", conf >= lo)
+    # by starter-quality gap (feature index 2 = starter rv diff)
+    spgap = np.abs(Xa[:,2])
+    seg("big starter-gap (top 25%)", spgap >= np.quantile(spgap,0.75))
+    seg("small starter-gap (bot 50%)", spgap <= np.quantile(spgap,0.50))
+    # by recent-form gap (index 4)
+    rfgap = np.abs(Xa[:,4])
+    seg("big recent-form gap (top 25%)", rfgap >= np.quantile(rfgap,0.75))
+    # high-confidence AND big starter gap (the candidate bet pattern)
+    seg("conf>=.10 & big starter-gap", (conf>=0.10)&(spgap>=np.quantile(spgap,0.75)))
+
     # ---- portable raw coefficients (fold scaler into the logistic) ----------
     sc = pipe.named_steps["standardscaler"]
     raw_coef = lr.coef_[0] / sc.scale_
