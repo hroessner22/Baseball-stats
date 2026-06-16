@@ -115,6 +115,23 @@ const teamView = document.getElementById("team-view");
 const PARK_PHOTOS = new Set();
 const PARK_3D = new Set();
 
+// "Field" (diagram) vs "Pitch" (strike zone) view of the game.
+function getFieldView() {
+    try { return localStorage.getItem("dc_field_view") === "pitch" ? "pitch" : "field"; }
+    catch { return "field"; }
+}
+// Toggle handler (delegated — survives re-renders). Flips the class instantly.
+if (typeof document !== "undefined") {
+    document.addEventListener("click", (e) => {
+        const btn = e.target.closest && e.target.closest("[data-fv]");
+        if (!btn) return;
+        const mode = btn.getAttribute("data-fv") === "pitch" ? "pitch" : "field";
+        try { localStorage.setItem("dc_field_view", mode); } catch {}
+        const pane = btn.closest(".field-pane");
+        if (pane) { pane.classList.remove("view-field", "view-pitch"); pane.classList.add("view-" + mode); }
+    });
+}
+
 // Bridge to the field3d.js module (loaded async). Calls before it's ready are
 // queued and flushed on load (see the tail of field3d.js).
 function field3dCall(fn, ...args) {
@@ -5577,10 +5594,21 @@ function fieldPane(g) {
     const has3d = PARK_3D.has(homeTri) && g.venue_id != null
                   && window.MLB_PARKS && window.MLB_PARKS[g.venue_id];
     const hasParkPhoto = !has3d && PARK_PHOTOS.has(homeTri);
+    // Two ways to watch: Field (the diagram) and Pitch (the strike zone). Both
+    // render; a class on .field-pane flips which shows (instant, no re-render).
+    const fvMode = getFieldView();
+    const pitchZone = renderStrikeZone(g.current_pitches);
     return `
-      <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""}" style="--we-intensity:${intensity}">
+      <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""} view-${fvMode}" style="--we-intensity:${intensity}">
         ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
         <div class="field-canvas">
+        <div class="field-view-toggle" role="tablist" aria-label="View">
+          <button type="button" class="fv-btn" data-fv="field" role="tab">Field</button>
+          <button type="button" class="fv-btn" data-fv="pitch" role="tab">Pitch</button>
+        </div>
+        <div class="pitch-view">
+          ${pitchZone || `<div class="pv-empty">No pitches this at-bat yet</div>`}
+        </div>
         ${has3d ? `<div class="field3d-mount" data-venue-id="${g.venue_id}"></div>` : ""}
         ${hasParkPhoto ? `<div class="park-backdrop" style="background-image:url('parks/${homeTri}.jpg')"></div>` : ""}
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">

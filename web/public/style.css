@@ -3982,6 +3982,35 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .field .field-nametag.fnt-batter .fnt-name { fill: #FCD34D; }   /* yellow batter */
 .field .field-nametag.fnt-batter rect { stroke: rgba(252, 211, 77, 0.30); }
 
+/* Field | Pitch view toggle (MLB.tv-style) + the two switchable views. */
+.field-canvas { position: relative; }
+.field-view-toggle {
+    position: absolute; top: 10px; right: 10px;
+    z-index: 6; display: inline-flex; gap: 2px; padding: 3px;
+    background: rgba(12, 18, 30, 0.82); border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px; backdrop-filter: blur(4px);
+}
+.fv-btn {
+    appearance: none; border: 0; cursor: pointer;
+    padding: 6px 16px; border-radius: 999px; background: transparent;
+    color: var(--text-dim); font: 600 13px 'Inter', sans-serif;
+    text-transform: uppercase; letter-spacing: 0.03em; transition: background 0.15s, color 0.15s;
+}
+.field-pane.view-field .fv-btn[data-fv="field"],
+.field-pane.view-pitch .fv-btn[data-fv="pitch"] { background: var(--accent-action); color: #fff; }
+/* Switch which view shows. */
+.field-pane.view-pitch .field { visibility: hidden; }
+.field-pane.view-field .pitch-view { display: none; }
+.pitch-view {
+    position: absolute; inset: 0; z-index: 4;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px;
+}
+/* Big, centered strike zone for the main Pitch view. */
+.pitch-view .strike-zone { transform: scale(1.7); transform-origin: center; }
+.pitch-view .sz-head { text-align: center; }
+.pv-empty { color: var(--text-faint); font-size: 13px; }
+
 /* Strike-zone plot (catcher's view) — current at-bat's pitches in the zone. */
 .strike-zone { margin: 8px 0 4px; }
 .sz-head {
