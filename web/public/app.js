@@ -5041,9 +5041,9 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     const pk = btn.getAttribute("data-game-pk");
     if (!pk) return;
-    // Same flow as the Watch widget: hand the game to the extension, which
-    // opens MLB.tv, auto-PiPs it, and centers it (theater layout). Falls back
-    // to opening MLB.tv if the extension isn't installed.
+    // Gamecast / board Watch → pure picture-in-picture (DCWatch.start now uses
+    // PiP mode, no theater/layout takeover). Theater is reserved for the bottom
+    // Watch tab. Falls back to opening MLB.tv if the extension isn't installed.
     const live = btn.getAttribute("data-live") === "1";
     if (window.DCWatch && document.documentElement.dataset.dcWatchExt === "1") {
         window.DCWatch.start(pk, live);

@@ -84,19 +84,23 @@
   //   just the field on its own screen.
   function watch(gamePk, away, home, watchUrl, mode) {
     if (!extInstalled()) { openSetup(); return; }
-    mode = mode === "fullscreen" ? "fullscreen" : "shift";
+    mode = mode === "fullscreen" ? "fullscreen"
+         : mode === "pip" ? "pip" : "shift";
     if (gamePk) {
       try { location.hash = "#game/" + gamePk; } catch {}
     }
-    setTheater(true, mode);
+    // "pip" hands straight off to the extension's auto-PiP with NO layout
+    // takeover (Gamecast / board Watch). "shift"/"fullscreen" change our page
+    // layout — only the bottom Watch tab uses theater (fullscreen).
+    if (mode !== "pip") setTheater(true, mode);
     const send = () => {
       window.postMessage(
-        { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl },
+        { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl, mode },
         "*"
       );
     };
     // Let the view/layout settle, then hand off to the extension.
-    setTimeout(send, 420);
+    setTimeout(send, mode === "pip" ? 60 : 420);
   }
 
   // The video box, dead simple:
@@ -315,11 +319,11 @@
   }
 
   // Handoff API:
-  //   start()   — in-game / board Watch → field-shift + manual PiP.
-  //   theater() — bottom Watch tab      → full-screen separate screen.
+  //   start()   — in-game / Gamecast / board Watch → pure PiP, no layout change.
+  //   theater() — bottom Watch tab                 → full-screen theater.
   window.DCWatch = {
     start(gamePk, live) {
-      watch(gamePk, null, null, live ? null : MLBN_URL, "shift");
+      watch(gamePk, null, null, live ? null : MLBN_URL, "pip");
     },
     theater(gamePk, watchUrl) {
       watch(gamePk, null, null, watchUrl, "fullscreen");
