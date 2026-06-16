@@ -84,6 +84,14 @@ export async function onRequest(context) {
         // Per-adapter outcome surface for ?debug=1 — silent failures
         // (Smarkets returning 0 etc.) become loud.
         ...(debug ? { _diagnostics: diagnostics } : {}),
+        // TEMP auth diagnostic: are the Kalshi service-key secrets visible
+        // to this function? (Values never exposed — only presence/length.)
+        ...(debug ? { _kalshi_auth: {
+            key_id_present: !!env.KALSHI_API_KEY_ID,
+            pem_present: !!env.KALSHI_PRIVATE_KEY,
+            pem_len: (env.KALSHI_PRIVATE_KEY || "").length,
+            pem_head: (env.KALSHI_PRIVATE_KEY || "").slice(0, 30),
+        } } : {}),
         fetched_at: new Date().toISOString(),
     }), {
         headers: {
