@@ -113,6 +113,26 @@ const teamView = document.getElementById("team-view");
 // Home-park tricodes we have a free photo for in public/parks/{TRI}.jpg.
 // Grows as images are added (sourced from free-licensed photos).
 const PARK_PHOTOS = new Set(["BOS"]);
+// Home-park tricodes we've built a 3D model for (field3d.js). Takes precedence
+// over the photo. Grows park-by-park.
+const PARK_3D = new Set(["BOS"]);
+
+// Bridge to the field3d.js module (loaded async). Calls before it's ready are
+// queued and flushed on load (see the tail of field3d.js).
+function field3dCall(fn, ...args) {
+    const F = window.Field3D;
+    if (F && F.ready) return F[fn] && F[fn](...args);
+    window.Field3D = window.Field3D || {};
+    (window.Field3D._q = window.Field3D._q || []).push([fn, args]);
+}
+// Mount the 3D scene into any .field3d-mount the game view just rendered.
+function wireField3d() {
+    if (!gameView) return;
+    const el = gameView.querySelector(".field3d-mount");
+    if (!el || el._field3d) return;
+    const park = window.MLB_PARKS && window.MLB_PARKS[el.getAttribute("data-venue-id")];
+    if (park) field3dCall("mount", el, { park });
+}
 const trackRecordView = document.getElementById("track-record-view");
 const howItWorksView  = document.getElementById("how-it-works-view");
 
@@ -4271,6 +4291,7 @@ async function refreshGame(id) {
         // Use the global safeSetHTML helper so every game-view swap
         // goes through the same scroll-preservation logic.
         safeSetHTML(gameView, renderGame(g));
+        wireField3d();
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -4294,6 +4315,7 @@ async function refreshGame(id) {
                 if (gameViewMode !== "live") return;
                 // Trigger a soft repaint so the new stat lines show.
                 safeSetHTML(gameView, renderGame(g));
+        wireField3d();
             });
             if (hasGameBets(id)) {
                 hydrateRailLiveData(id).then(() => {
@@ -5552,13 +5574,15 @@ function fieldPane(g) {
         : "";
     const betsRail = renderGameBetsCardRail(g);
     const railContent = matchupCompact + betsRail + inningStrip;
-    // Free park photo behind the field as immersive ambiance, when we have one
-    // for the home park. Add tricodes here as their image lands in public/parks/.
-    const hasParkPhoto = PARK_PHOTOS.has(homeTri);
+    // 3D model takes precedence over the photo backdrop for parks we've built.
+    const has3d = PARK_3D.has(homeTri) && g.venue_id != null
+                  && window.MLB_PARKS && window.MLB_PARKS[g.venue_id];
+    const hasParkPhoto = !has3d && PARK_PHOTOS.has(homeTri);
     return `
-      <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""}" style="--we-intensity:${intensity}">
+      <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""}" style="--we-intensity:${intensity}">
         ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
         <div class="field-canvas">
+        ${has3d ? `<div class="field3d-mount" data-venue-id="${g.venue_id}"></div>` : ""}
         ${hasParkPhoto ? `<div class="park-backdrop" style="background-image:url('parks/${homeTri}.jpg')"></div>` : ""}
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
           <defs>

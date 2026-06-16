@@ -3633,6 +3633,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
    behind the field as immersive ambiance (darkened so the field + data stay
    legible). The angled photo and the top-down diagram can't merge 1:1, so the
    photo is mood, the diagram is the data. .has-park-photo gates it. */
+/* 3D ballpark model (field3d.js) — the WebGL canvas sits over the field box;
+   the SVG still defines the size but is hidden beneath it. */
+.field-pane.has-3d .field-canvas { position: relative; }
+.field-pane.has-3d .field { visibility: hidden; }
+.field3d-mount {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #0b1220;
+}
 .field-pane.has-park-photo .field-canvas { position: relative; }
 .field-pane.has-park-photo .park-backdrop {
     position: absolute;
