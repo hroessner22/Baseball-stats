@@ -4006,49 +4006,52 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     display: flex; align-items: center; justify-content: center;
     flex-direction: column; padding: 12px;
 }
-/* Wide behind-the-plate scene for the main Pitch view. */
+/* MLB.tv "Batter"-cam: a real behind-the-plate photo with the zone overlaid. */
 .pitch-scene {
-    width: 100%; max-width: 560px;
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    width: 100%; max-width: 600px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
-.ps-head {
-    font: 700 13px 'Inter', sans-serif; letter-spacing: 0.04em;
-    color: var(--text); text-transform: uppercase;
+.ps-stage {
+    position: relative; width: 100%; aspect-ratio: 1600 / 1068;
+    border-radius: 14px; overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
 }
-.ps-svg {
-    width: 100%; height: auto; display: block;
-    border-radius: 12px; overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-}
-/* Batter silhouette standing in the box. */
-.sz-batter .bsil { fill: rgba(8, 12, 20, 0.86); stroke: rgba(255, 255, 255, 0.10); stroke-width: 0.6; }
-.sz-batter .bbat { fill: rgba(22, 28, 40, 0.96); }
-/* The newest pitch flying in from the mound to its spot. */
-.sz-incoming {
+.ps-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.ps-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ps-zone { fill: rgba(56, 135, 230, 0.20); stroke: rgba(170, 210, 255, 0.92); stroke-width: 0.5; }
+.ps-grid { stroke: rgba(195, 222, 255, 0.55); stroke-width: 0.3; }
+.ps-num { font: 700 2px 'Inter', sans-serif; fill: #fff; pointer-events: none; }
+.ps-pitch { cursor: help; }
+.ps-ring { fill: none; stroke: #fff; stroke-width: 0.5; filter: drop-shadow(0 0 1.2px rgba(0, 0, 0, 0.7)); }
+.ps-incoming {
     fill: #fff; opacity: 0; offset-distance: 0%;
-    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.9));
+    filter: drop-shadow(0 0 1.6px rgba(255, 255, 255, 0.95));
 }
-.pitch-scene.pitch-throw .sz-incoming { animation: sz-fly 0.5s ease-in forwards; }
-.pitch-scene.pitch-throw .sz-latest {
+.pitch-scene.pitch-throw .ps-incoming { animation: ps-fly 0.5s ease-in forwards; }
+.pitch-scene.pitch-throw .ps-latest {
     transform-box: fill-box; transform-origin: center;
-    animation: sz-dot-in 0.25s ease 0.42s both;
+    animation: ps-dot-in 0.25s ease 0.42s both;
 }
-@keyframes sz-fly {
-    0%   { offset-distance: 0%;   opacity: 0.25; r: 1.5; }
+@keyframes ps-fly {
+    0%   { offset-distance: 0%;   opacity: 0.25; r: 0.6; }
     25%  { opacity: 1; }
-    100% { offset-distance: 100%; opacity: 1; r: 6; }
+    100% { offset-distance: 100%; opacity: 1; r: 1.6; }
 }
-@keyframes sz-dot-in {
+@keyframes ps-dot-in {
     from { opacity: 0; transform: scale(0.2); }
     to   { opacity: 1; transform: scale(1); }
 }
-@media (prefers-reduced-motion: reduce) {
-    .pitch-scene.pitch-throw .sz-incoming,
-    .pitch-scene.pitch-throw .sz-latest { animation: none; }
-    .sz-incoming { opacity: 0; }
+.ps-head {
+    font: 700 13px 'Inter', sans-serif; letter-spacing: 0.04em;
+    color: var(--text); text-transform: uppercase; text-align: center;
 }
-.pitch-view .sz-head { text-align: center; }
+.ps-empty { font-size: 12px; color: var(--text-faint); }
+@media (prefers-reduced-motion: reduce) {
+    .pitch-scene.pitch-throw .ps-incoming,
+    .pitch-scene.pitch-throw .ps-latest { animation: none; }
+    .ps-incoming { opacity: 0; }
+}
 .pv-empty { color: var(--text-faint); font-size: 13px; }
 
 /* Ball-in-play: hit arc/landing on the field + result blurb (Field view only). */
