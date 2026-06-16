@@ -122,6 +122,13 @@ const DEFAULTS = {
     // edge gate (same threshold) + min_conviction (0.40) keep the
     // genuinely no-information fires out.
     edge_threshold_pp:     1,
+    // LARGE-MARGIN moneyline gate (2026-06-16, from the 3,201-game
+    // calibration). Only back the calibrated model's CONFIDENT favorite:
+    // our_p must be >= 0.5 + ml_confident_margin, and the edge vs Kalshi must
+    // clear ml_min_edge_pp. This is the moneyline discipline — coinflips were
+    // the bleed; confident picks (>=10pp margin) hit ~63%, >=15pp ~70%.
+    ml_confident_margin:   0.10,   // our_p >= 0.60 (or treat away side symmetrically)
+    ml_min_edge_pp:        4,      // edge vs market for ML (overrides the 1pp base)
     // 2026-06-03: lowered 7 → 5pp. Earlier the prop threshold was
     // padded high because the model was noisy (the Wenceel /
     // Gleyber pattern). Since then we've added: realistic-ceiling
@@ -490,6 +497,8 @@ function clampSettings(s) {
         enabled:                    !!s.enabled,
         unit_cents:                 clampInt(s.unit_cents, HARD_CAPS.unit_cents_min, HARD_CAPS.unit_cents_max),
         edge_threshold_pp:          clampInt(s.edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
+        ml_confident_margin:        clampFloat(s.ml_confident_margin, 0.0, 0.30),
+        ml_min_edge_pp:             clampInt(s.ml_min_edge_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
         player_prop_edge_threshold_pp: clampInt(s.player_prop_edge_threshold_pp, HARD_CAPS.edge_pp_min, HARD_CAPS.edge_pp_max),
         min_inning_for_moneyline:   clampInt(s.min_inning_for_moneyline, 1, 8),
         require_savant_agree:       !!s.require_savant_agree,
@@ -2293,7 +2302,25 @@ async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
     // WE-driven moneyline fires that ARE our strongest signal.
     // 2026-06-03 fix: single chokepoint — raw edge clears base
     // edge_threshold_pp, scoring framework handles Savant.
-    const effectiveThreshold = _state.settings.edge_threshold_pp;
+    // LARGE-MARGIN GATE (2026-06-16). Calibration on 3,201 games proved the
+    // only durable moneyline edge is in CONFIDENT picks: model-favorite win
+    // rate is 55% on coinflips (where we bled) but ~63% at >=10pp margin and
+    // ~70% at >=15pp. So only back the model's confident favorite — our_p must
+    // be >= 0.5 + ml_confident_margin — AND it must clear a real edge vs the
+    // Kalshi price (not the old wide-open 1pp). our_p here is the calibrated
+    // pitcher-aware model (game.win_expectancy, /api/game/{id} _we_model.js),
+    // not the old pitcher-blind WE. Coinflips and underdog sides are skipped.
+    const confMargin = _state.settings.ml_confident_margin;
+    if (our_p < 0.5 + confMargin) {
+        if (score) logScoredDecisionOnce(score, {
+            action: "skip", reason: "ml_not_confident",
+            our_p, needed: 0.5 + confMargin,
+        });
+        emitMlScan(false, "ml_not_confident");
+        return;
+    }
+    const effectiveThreshold = Math.max(
+        _state.settings.edge_threshold_pp, _state.settings.ml_min_edge_pp);
     if (edgePP < effectiveThreshold) {
         if (score) logScoredDecisionOnce(score, {
             action: "skip", reason: "edge_below_threshold",

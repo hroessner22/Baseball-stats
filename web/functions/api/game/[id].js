@@ -9,6 +9,7 @@ import { WE_TABLE } from "../games/_we_table.js";
 import { WE_TABLE_V2 } from "../games/_we_table_v2.js";
 import { DEMO_GAME } from "./_demo.js";
 import { fetchTeamStrength, teamStrengthAdjustment } from "../_team_strength.js";
+import { computeModelWE } from "../_we_model.js";
 
 const clip = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
@@ -133,13 +134,21 @@ export async function onRequest(context) {
     const awayId = data?.gameData?.teams?.away?.id;
     const season = data?.gameData?.game?.season ||
                    new Date().getUTCFullYear();
-    const [homeStr, awayStr] = await Promise.all([
+    // Calibrated pitcher-aware pregame WE (replaces the old pitcher-blind
+    // team-strength WE before first pitch — the Chase Burns fix). Computed in
+    // parallel with team strength; null when season data is too thin to trust.
+    const homeSP = data?.gameData?.probablePitchers?.home?.id || null;
+    const awaySP = data?.gameData?.probablePitchers?.away?.id || null;
+    const asOf = data?.gameData?.datetime?.officialDate ||
+                 new Date().toISOString().slice(0, 10);
+    const [homeStr, awayStr, modelWE] = await Promise.all([
         fetchTeamStrength(homeId, season),
         fetchTeamStrength(awayId, season),
+        computeModelWE({ homeId, awayId, homeSP, awaySP, season, asOf }).catch(() => null),
     ]);
     const teamAdj = teamStrengthAdjustment(homeStr, awayStr);
 
-    return new Response(JSON.stringify(buildGame(data, teamAdj)), {
+    return new Response(JSON.stringify(buildGame(data, teamAdj, modelWE)), {
         headers: {
             "content-type": "application/json",
             "cache-control": "public, max-age=10",
@@ -155,7 +164,7 @@ function jsonError(status, message) {
     });
 }
 
-function buildGame(d, teamAdj) {
+function buildGame(d, teamAdj, modelWE) {
     const gameData = d.gameData || {};
     const liveData = d.liveData || {};
     const linescore = liveData.linescore || {};
@@ -223,6 +232,18 @@ function buildGame(d, teamAdj) {
         stateWE = winExp;
     }
 
+    // PREGAME override: before the game produces real state (scheduled, or
+    // warming up at inning 1, 0-0), use the calibrated pitcher-aware model WE
+    // instead of the state-table+team-strength number — that's the Chase Burns
+    // fix (the old number was blind to the starting pitcher). Once the game has
+    // real state (any score or inning >= 2), the live state WE takes over.
+    const isPregame =
+        status !== "Live" ||
+        ((inning == null || inning <= 1) && homeScore === 0 && awayScore === 0);
+    if (isPregame && modelWE && modelWE.we_home != null) {
+        winExp = Math.max(0.01, Math.min(0.99, modelWE.we_home));
+    }
+
     // This-inning play-by-play strip — every completed PA in the
     // current half-inning, oldest first. Drives the "10TH SO FAR"
     // summary on the Live View so the user can see how the current
@@ -275,6 +296,11 @@ function buildGame(d, teamAdj) {
         // alongside so the UI can show "AZ 53% (+3pp from team form)".
         win_expectancy: winExp,
         state_we: stateWE,
+        // Calibrated pitcher-aware pregame model (drives win_expectancy before
+        // first pitch). model_confident = large-margin tier the bot may bet.
+        model_we_home: modelWE?.we_home ?? null,
+        model_confident: modelWE?.confident ?? null,
+        model_inputs: modelWE?.inputs ?? null,
         team_adjustment: teamAdj ? {
             pregame_we:           teamAdj.pregame_we,
             delta_from_baseline:  teamAdj.delta_from_baseline,
