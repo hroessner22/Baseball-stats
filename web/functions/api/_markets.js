@@ -471,20 +471,29 @@ export async function listKalshiMlbMarkets(opts = {}) {
     // 429 so each series lands while staying under the limit. Successful fetches
     // are edge-cached (cacheTtl) so steady-state stays well under the limit.
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const fetchSeries = async (s) => {
+    // fast=true → single attempt, short timeout, no 429 backoff. Used by the
+    // slate/health path (gameDayOnly), where a quick response under the health
+    // check's 8s budget matters more than grinding retries: the worker's shared
+    // Cloudflare egress IP is frequently 429'd by Kalshi, and retrying within one
+    // request against the same throttled IP mostly just burns wall-time. Series
+    // that DO land are edge-cached 300s, so accumulation happens across polls,
+    // not via in-request retries.
+    const fetchSeries = async (s, fast = false) => {
         const url = `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`;
-        for (let attempt = 0; attempt < 4; attempt++) {
+        const maxAttempts = fast ? 1 : 4;
+        const timeoutMs   = fast ? 4000 : 15000;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
                 // Cache each series 5 min at the edge: which markets EXIST changes
                 // slowly (live PRICES come from the orderbook, fetched fresh per
                 // fire), and Kalshi's tight rate limit means we can only land a
                 // couple series per request — a long cache lets all of them
                 // accumulate and stick instead of expiring and re-429'ing.
-                const data = await fetchJson(url, { cacheTtl: 300, timeoutMs: 15000 });
+                const data = await fetchJson(url, { cacheTtl: 300, timeoutMs });
                 return { s, mkts: Array.isArray(data?.markets) ? data.markets : [], ok: true };
             } catch (e) {
                 const msg = String(e?.message || e);
-                if (msg.includes("HTTP 429") && attempt < 3) {
+                if (!fast && msg.includes("HTTP 429") && attempt < maxAttempts - 1) {
                     await sleep(700 + Math.random() * 900); // jittered backoff
                     continue;
                 }
@@ -493,15 +502,24 @@ export async function listKalshiMlbMarkets(opts = {}) {
         }
         return { s, mkts: [], ok: false, error: "retry exhausted" };
     };
-    // Kalshi's burst limit is tight — sequential with a spacing gap is the only
-    // reliable way to land every series. Successful fetches are edge-cached
-    // (cacheTtl), so across the bot's scan cycle the cost is paid once per ~30s,
-    // not per request.
-    const seriesResults = [];
-    const KALSHI_GAP_MS = 550;
-    for (let i = 0; i < series.length; i++) {
-        seriesResults.push(await fetchSeries(series[i]));
-        if (i < series.length - 1) await sleep(KALSHI_GAP_MS);
+    let seriesResults;
+    if (opts.gameDayOnly) {
+        // Slate path: only 3 series, and we need a fast answer (health check).
+        // Fetch them in parallel — 3 requests is a small enough burst that the
+        // gap-spacing isn't needed, and parallel keeps worst-case latency at one
+        // 4s timeout instead of 3 stacked sequentially.
+        seriesResults = await Promise.all(series.map((s) => fetchSeries(s, true)));
+    } else {
+        // Kalshi's burst limit is tight — sequential with a spacing gap is the
+        // only reliable way to land every series. Successful fetches are
+        // edge-cached (cacheTtl), so across the bot's scan cycle the cost is paid
+        // once per ~30s, not per request.
+        seriesResults = [];
+        const KALSHI_GAP_MS = 550;
+        for (let i = 0; i < series.length; i++) {
+            seriesResults.push(await fetchSeries(series[i]));
+            if (i < series.length - 1) await sleep(KALSHI_GAP_MS);
+        }
     }
 
     for (const r of seriesResults) {
