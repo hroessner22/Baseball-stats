@@ -115,10 +115,15 @@ const teamView = document.getElementById("team-view");
 const PARK_PHOTOS = new Set();
 const PARK_3D = new Set();
 
-// "Field" (diagram) vs "Pitch" (strike zone) view of the game.
-function getFieldView() {
-    try { return localStorage.getItem("dc_field_view") === "pitch" ? "pitch" : "field"; }
-    catch { return "field"; }
+// "Field" (diagram) vs "Pitch" (strike zone) view of the game. With no saved
+// preference, live games open on Pitch (watch the count build) and everything
+// else on Field (the stadium / final).
+function getFieldView(isLive) {
+    try {
+        const v = localStorage.getItem("dc_field_view");
+        if (v === "pitch" || v === "field") return v;
+    } catch {}
+    return isLive ? "pitch" : "field";
 }
 // Toggle handler (delegated — survives re-renders). Flips the class instantly.
 if (typeof document !== "undefined") {
@@ -5596,9 +5601,12 @@ function fieldPane(g) {
     const has3d = PARK_3D.has(homeTri) && g.venue_id != null
                   && window.MLB_PARKS && window.MLB_PARKS[g.venue_id];
     const hasParkPhoto = !has3d && PARK_PHOTOS.has(homeTri);
-    // Two ways to watch: Field (the diagram) and Pitch (the strike zone). Both
-    // render; a class on .field-pane flips which shows (instant, no re-render).
-    const fvMode = getFieldView();
+    // Two ways to watch: Pitch (the strike zone — every pitch dropped where it
+    // crossed) and Field (the diagram — where a ball in play goes). Both render;
+    // a class on .field-pane flips which shows (instant, no re-render). Live
+    // games default to Pitch so you watch the count build; the auto-switcher
+    // snaps to Field on a ball in play and back to Pitch for the next batter.
+    const fvMode = getFieldView(isLive);
     const pitchZone = renderStrikeZone(g.current_pitches);
     return `
       <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""} view-${fvMode}" style="--we-intensity:${intensity}">
@@ -5894,8 +5902,9 @@ function renderHitOverlay(g) {
         : `M 250 455 Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)}`;
     return `<svg class="hit-overlay" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
               <path class="hit-arc" d="${d}"/>
-              <circle class="hit-spot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10"/>
+              <circle class="hit-spot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="11"/>
               <circle class="hit-core" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5"/>
+              <circle class="hit-ball" cx="0" cy="0" r="5" style="offset-path:path('${d}')"/>
             </svg>`;
 }
 function renderPlayBlurb(g) {
@@ -5912,21 +5921,45 @@ function renderPlayBlurb(g) {
               ${bits ? `<div class="pb-meta">${escapeHTML(bits)}</div>` : ""}
             </div>`;
 }
-// Auto-switch to the Field view the moment a NEW ball in play lands.
+// Auto-switch the view to follow the action:
+//   • a NEW ball in play  → snap to Field and play the flight animation
+//   • a NEW at-bat begins  → snap back to Pitch so you watch the next count
+// Both fire at most once per event so a manual toggle still sticks within
+// the same at-bat.
 let _lastBipKey = null;
+let _lastAbKey = null;
+function setFieldView(pane, mode) {
+    try { localStorage.setItem("dc_field_view", mode); } catch {}
+    pane.classList.remove("view-field", "view-pitch");
+    pane.classList.add("view-" + mode);
+}
 function handlePlayAutoSwitch(g) {
-    if (!gameView) return;
-    const p = lastInningPlay(g);
-    if (!playHit(p)) return;
-    const key = `${g.game_pk}:${p.pa_index}`;
-    if (key === _lastBipKey) return;        // already handled this BIP
-    _lastBipKey = key;
-    try { localStorage.setItem("dc_field_view", "field"); } catch {}
+    if (!gameView || g.status !== "Live") return;
     const pane = gameView.querySelector(".field-pane");
     if (!pane) return;
-    pane.classList.remove("view-pitch");
-    pane.classList.add("view-field", "play-pop");
-    setTimeout(() => pane.classList.remove("play-pop"), 2400);
+
+    // Ball in play → Field, with the flight/blurb animation.
+    const p = lastInningPlay(g);
+    if (playHit(p)) {
+        const bipKey = `${g.game_pk}:${p.pa_index}`;
+        if (bipKey !== _lastBipKey) {
+            _lastBipKey = bipKey;
+            setFieldView(pane, "field");
+            pane.classList.remove("play-pop");
+            void pane.offsetWidth;                 // restart the CSS animation
+            pane.classList.add("play-pop");
+            setTimeout(() => pane.classList.remove("play-pop"), 2600);
+            return;                                // don't also flip to Pitch
+        }
+    }
+
+    // New batter is up and seeing pitches → back to Pitch to watch the count.
+    const abKey = g.batter ? `${g.game_pk}:${g.inning}:${g.half}:${g.batter.id}` : null;
+    const havePitches = Array.isArray(g.current_pitches) && g.current_pitches.length > 0;
+    if (abKey && abKey !== _lastAbKey && havePitches && !pane.classList.contains("play-pop")) {
+        _lastAbKey = abKey;
+        setFieldView(pane, "pitch");
+    }
 }
 
 function renderThisInning(g) {

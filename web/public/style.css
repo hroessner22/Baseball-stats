@@ -3948,12 +3948,12 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .field .runner-name {
     fill: var(--text);
     font-family: 'Inter', sans-serif;
-    font-size: 10px;
+    font-size: 7.5px;
     font-weight: 550;
     letter-spacing: 0.02em;
     paint-order: stroke;
     stroke: var(--bg);
-    stroke-width: 3;
+    stroke-width: 2.2;
 }
 
 /* Clean broadcast-style player name tags INSIDE the SVG — a subtle dark pill
@@ -4020,6 +4020,31 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .hit-spot { fill: rgba(252, 211, 77, 0.26); }
 .hit-core { fill: #FCD34D; stroke: #fff; stroke-width: 1.5; }
+/* The ball itself — hidden at rest; only visible mid-flight during play-pop. */
+.hit-ball { fill: #fff; opacity: 0; offset-distance: 0%;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.95)); }
+
+/* On a fresh ball in play: the arc draws, the ball flies along it to the
+   landing spot, then the landing marker pops. After play-pop ends the arc +
+   marker persist as a static "where it went" overlay (ball stays hidden). */
+.field-pane.play-pop .hit-arc {
+    stroke-dasharray: 660; stroke-dashoffset: 660;
+    animation: hit-draw 0.9s cubic-bezier(0.4, 0.7, 0.3, 1) forwards;
+}
+.field-pane.play-pop .hit-ball {
+    animation: hit-fly 0.9s cubic-bezier(0.4, 0.7, 0.3, 1) forwards;
+}
+.field-pane.play-pop .hit-spot { animation: spot-pop 0.5s ease 0.82s both; }
+.field-pane.play-pop .hit-core { animation: core-pop 0.6s ease 0.82s both; }
+@keyframes hit-draw { to { stroke-dashoffset: 0; } }
+@keyframes hit-fly {
+    0%   { offset-distance: 0%;   opacity: 1; }
+    85%  { opacity: 1; }
+    100% { offset-distance: 100%; opacity: 0; }
+}
+@keyframes spot-pop { 0% { r: 0; opacity: 0; } 60% { opacity: 1; } 100% { r: 11; opacity: 1; } }
+@keyframes core-pop { 0% { r: 0; } 55% { r: 9; } 100% { r: 4.5; } }
+
 .play-blurb {
     position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
     z-index: 6; max-width: 88%; text-align: center;
@@ -4029,13 +4054,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .field-pane.view-pitch .play-blurb { display: none; }
 .pb-desc { font-size: 14px; font-weight: 600; color: #e8eef7; line-height: 1.35; }
 .pb-meta { font-size: 11px; color: var(--accent-win); margin-top: 3px; letter-spacing: 0.03em; }
-.field-pane.play-pop .play-blurb { animation: blurb-pop 0.42s ease; }
-.field-pane.play-pop .hit-core { animation: hit-pulse 0.7s ease 2; }
+.field-pane.play-pop .play-blurb { animation: blurb-pop 0.5s ease 0.7s both; }
 @keyframes blurb-pop {
     0% { transform: translateX(-50%) translateY(10px) scale(0.92); opacity: 0; }
     100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
 }
-@keyframes hit-pulse { 0%, 100% { r: 4.5; } 50% { r: 8.5; } }
+@media (prefers-reduced-motion: reduce) {
+    .field-pane.play-pop .hit-arc,
+    .field-pane.play-pop .hit-ball,
+    .field-pane.play-pop .hit-spot,
+    .field-pane.play-pop .hit-core,
+    .field-pane.play-pop .play-blurb { animation: none; }
+}
 
 /* Strike-zone plot (catcher's view) — current at-bat's pitches in the zone. */
 .strike-zone { margin: 8px 0 4px; }
@@ -4200,14 +4230,15 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     margin-bottom: 14px;
 }
 .field-narrative .matchup-pair-rail .player-row {
-    padding: 8px 10px;
-    font-size: 12px;
+    padding: 6px 9px;
+    font-size: 11px;
     gap: 8px;
 }
+.field-narrative .matchup-pair-rail .player-row strong { font-size: 12px; }
 .field-narrative .matchup-pair-rail .player-row .pr-avatar {
-    flex: 0 0 32px;
-    width: 30px;
-    height: 30px;
+    flex: 0 0 28px;
+    width: 26px;
+    height: 26px;
 }
 .field-narrative .matchup-pair-rail .player-row .label {
     font-size: 10px;
