@@ -7143,12 +7143,14 @@ button.md-game-outcome:active { transform: translateY(1px); }
     white-space: nowrap;
 }
 .md-game-out-name.is-marquee .md-name-scroll {
-    animation: md-name-marquee 5s ease-in-out infinite alternate;
+    /* Scroll to the end, hold, then SNAP back to the start (no scroll-back) —
+       the 100%->0% loop boundary is instant since it's not 'alternate'. */
+    animation: md-name-marquee 5.5s ease-in-out infinite;
     will-change: transform;
 }
 @keyframes md-name-marquee {
-    0%, 22%   { transform: translateX(0); }
-    78%, 100% { transform: translateX(var(--md-shift, 0px)); }
+    0%, 15%   { transform: translateX(0); }                       /* pause at start */
+    85%, 100% { transform: translateX(var(--md-shift, 0px)); }    /* scroll to end + hold, then reset */
 }
 @media (prefers-reduced-motion: reduce) {
     .md-game-out-name.is-marquee .md-name-scroll { animation: none; }
