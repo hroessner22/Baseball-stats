@@ -825,13 +825,13 @@ async function scanOneGame(g) {
     const gInningChk = parseInt(g.inning, 10) || 0;
     const isPregame = !gameHasStarted(g);
     if (isPregame) {
-        log("bot", `PREGAME — ML only · ${g.away}@${g.home} (inning ${gInningChk}, no first pitch yet) — moneylines scanned, player props blocked, no cashouts`);
+        log("bot", `PREGAME · ${g.away}@${g.home} (inning ${gInningChk}, no first pitch yet) — moneylines + props scanned (edge gates apply), no cashouts`);
     }
     // Pull markets (for moneyline + player_prop Kalshi quotes),
     // model-props (player-level probabilities), and weather (for
     // wind/temp adjustments on prop scoring) in parallel.
     const [marketsRes, modelPropsRes, weatherRes] = await Promise.all([
-        fetch(`/api/game/${g.game_pk}/markets`),
+        fetch(`/api/game/${g.game_pk}/markets?source=kalshi`),
         _state.settings.bet_player_props
             ? fetch(`/api/game/${g.game_pk}/model-props`).catch(() => null)
             : Promise.resolve(null),
@@ -911,7 +911,7 @@ async function scanOneGame(g) {
     //    Savant doesn't cover player props, so we run those through
     //    the same fire logic with savantStance = "no_data" (no
     //    threshold penalty applied).
-    if (_state.settings.bet_player_props && !isPregame && modelPropsRes && modelPropsRes.ok) {
+    if (_state.settings.bet_player_props && modelPropsRes && modelPropsRes.ok) {
         try {
             const mp = await modelPropsRes.json();
             let weather = null;
@@ -4662,7 +4662,7 @@ async function getEmpiricalMlPYes(fire) {
     if (!fire || fire.kind !== "moneyline" || !fire.game_pk || !fire.bet_team) return null;
     let d;
     try {
-        const res = await fetch(`/api/game/${fire.game_pk}/markets`);
+        const res = await fetch(`/api/game/${fire.game_pk}/markets?source=kalshi`);
         if (!res.ok) return null;
         d = await res.json();
     } catch { return null; }

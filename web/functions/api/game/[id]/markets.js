@@ -16,6 +16,7 @@
 
 import {
     listAllMlbMarkets,
+    listKalshiMlbMarkets,
     filterMarketsForGame,
     filterToLiveLineSources,
     groupByQuestion,
@@ -64,12 +65,20 @@ export async function onRequest(context) {
     //    shows on its game pages, so we get "Savant's WE" by hitting
     //    /api/v1/game/{pk}/winProbability and reading the last entry's
     //    homeTeamWinProbability (returned as a percent number, 0-100).
+    // Bot path: ?source=kalshi fetches ONLY Kalshi (the venue the bot actually
+    // bets). The full multi-book fan-out (Polymarket, Bovada, ...) blows the
+    // Cloudflare 50-subrequest budget and silently starves Kalshi's per-game
+    // prop series (KXMLBHR/KXMLBKS/KXMLBHIT/KXMLBTB), so the bot saw zero Kalshi
+    // props. Kalshi-only keeps every prop series and is far under budget.
+    const kalshiOnly = new URL(context.request.url).searchParams.get("source") === "kalshi";
     let allMarkets;
     let savantHomeWe = null;
     let savantSource = null;
     try {
         const [marketsRes, savantRes] = await Promise.allSettled([
-            listAllMlbMarkets(env, { perGameOnly: true }),
+            kalshiOnly
+                ? listKalshiMlbMarkets({ perGameOnly: true })
+                : listAllMlbMarkets(env, { perGameOnly: true }),
             fetchSavantWe(gameId),
         ]);
         if (marketsRes.status === "fulfilled") {
@@ -181,9 +190,24 @@ export async function onRequest(context) {
         return (a.source || "").localeCompare(b.source || "");
     });
 
+    // Diagnostic (?debug=1): count Kalshi player props surviving each stage so
+    // we can see exactly where they vanish (fetch/parse vs team/time filter vs
+    // live-source/tricode filter).
+    const _debug = new URL(context.request.url).searchParams.get("debug")
+        ? {
+            kalshi_only: kalshiOnly,
+            raw_kalshi_pp: (allMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop").length,
+            raw_kalshi_pp_with_tricodes: (allMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop" && m.home_tricode && m.away_tricode).length,
+            after_teamtime_filter: (allGameMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop").length,
+            final_kalshi_pp: (gameMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop").length,
+            sample_raw_tickers: (allMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop").slice(0, 3).map((m) => ({ id: m.raw_market_id, home: m.home_tricode, away: m.away_tricode, start: m.start_time })),
+        }
+        : undefined;
+
     return jsonResponse({
         game_pk: parseInt(gameId, 10),
         available: true,
+        _debug,
         teams: {
             home: { abbr: homeAbbr, tricode: teamTricode(homeAbbr) },
             away: { abbr: awayAbbr, tricode: teamTricode(awayAbbr) },

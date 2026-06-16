@@ -423,7 +423,7 @@ const KALSHI_SERIES = [
     { ticker: "KXMLBRFI",         type: "per_game_team" },    // run in 1st inning
 ];
 
-async function listKalshiMlbMarkets(opts = {}) {
+export async function listKalshiMlbMarkets(opts = {}) {
     const all = [];
 
     // perGameOnly: when the caller is the per-game endpoint, skip every
@@ -450,7 +450,11 @@ async function listKalshiMlbMarkets(opts = {}) {
     const seriesResults = await Promise.allSettled(series.map((s) =>
         fetchJson(
             `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`,
-            { cacheTtl: 30 },
+            // Per-game player-prop series return 300-400 markets (all games) —
+            // far bigger than the moneyline series, and they were timing out at
+            // the default 6s from the worker, silently dropping every Kalshi
+            // prop. Give the Kalshi series fetches more headroom.
+            { cacheTtl: 30, timeoutMs: 15000 },
         ).then((data) => ({ s, mkts: Array.isArray(data?.markets) ? data.markets : [] }))
     ));
 
