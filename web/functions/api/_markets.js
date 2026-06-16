@@ -434,7 +434,14 @@ export async function listKalshiMlbMarkets(opts = {}) {
     // sportsbook adapters. 2026-06-12: without this trim, the per-game
     // endpoint silently lost KXMLBHIT / KXMLBHR / KXMLBKS / KXMLBTB
     // / KXMLBHRR fetches to the connection pool, killing every prop fire.
-    const series = opts.perGameOnly
+    const series = opts.botOnly
+        // Bot path: only what the bot bets — moneylines + player props. Skipping
+        // the team-prop series (spread/total/F5/RFI) halves the request count,
+        // which keeps us under Kalshi's burst rate limit so the prop series
+        // actually land instead of 429'ing.
+        ? KALSHI_SERIES.filter((s) =>
+            s.type === "game" || s.type === "per_game_player")
+        : opts.perGameOnly
         ? KALSHI_SERIES.filter((s) =>
             s.type === "game" ||
             s.type === "per_game_player" ||
@@ -447,20 +454,52 @@ export async function listKalshiMlbMarkets(opts = {}) {
     // wall-time past the per-worker budget, so later series (HIT, TB,
     // SPREAD, TOTAL, F5...) silently never landed. With Promise.allSettled
     // the slowest fetch sets total latency instead of the sum.
-    const seriesResults = await Promise.allSettled(series.map((s) =>
-        fetchJson(
-            `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`,
-            // Per-game player-prop series return 300-400 markets (all games) —
-            // far bigger than the moneyline series, and they were timing out at
-            // the default 6s from the worker, silently dropping every Kalshi
-            // prop. Give the Kalshi series fetches more headroom.
-            { cacheTtl: 30, timeoutMs: 15000 },
-        ).then((data) => ({ s, mkts: Array.isArray(data?.markets) ? data.markets : [] }))
-    ));
+    // Kalshi rate-limits request bursts: firing all ~13 series in parallel let
+    // the first (KXMLBGAME) through and 429'd EVERY other series, silently
+    // dropping all props. Fetch with small concurrency + a jittered retry on
+    // 429 so each series lands while staying under the limit. Successful fetches
+    // are edge-cached (cacheTtl) so steady-state stays well under the limit.
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const fetchSeries = async (s) => {
+        const url = `${KALSHI_BASE}/markets?series_ticker=${s.ticker}&status=open&limit=400`;
+        for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+                // Cache each series 5 min at the edge: which markets EXIST changes
+                // slowly (live PRICES come from the orderbook, fetched fresh per
+                // fire), and Kalshi's tight rate limit means we can only land a
+                // couple series per request — a long cache lets all of them
+                // accumulate and stick instead of expiring and re-429'ing.
+                const data = await fetchJson(url, { cacheTtl: 300, timeoutMs: 15000 });
+                return { s, mkts: Array.isArray(data?.markets) ? data.markets : [], ok: true };
+            } catch (e) {
+                const msg = String(e?.message || e);
+                if (msg.includes("HTTP 429") && attempt < 3) {
+                    await sleep(700 + Math.random() * 900); // jittered backoff
+                    continue;
+                }
+                return { s, mkts: [], ok: false, error: msg };
+            }
+        }
+        return { s, mkts: [], ok: false, error: "retry exhausted" };
+    };
+    // Kalshi's burst limit is tight — sequential with a spacing gap is the only
+    // reliable way to land every series. Successful fetches are edge-cached
+    // (cacheTtl), so across the bot's scan cycle the cost is paid once per ~30s,
+    // not per request.
+    const seriesResults = [];
+    const KALSHI_GAP_MS = 550;
+    for (let i = 0; i < series.length; i++) {
+        seriesResults.push(await fetchSeries(series[i]));
+        if (i < series.length - 1) await sleep(KALSHI_GAP_MS);
+    }
 
     for (const r of seriesResults) {
-        if (r.status !== "fulfilled") continue;
-        const { s, mkts } = r.value;
+        const { s, mkts, ok, error } = r;
+        // Optional per-series diagnostics (?debug=1) — see exactly which Kalshi
+        // series fetches succeed/fail and why.
+        if (Array.isArray(opts.diag)) {
+            opts.diag.push({ ticker: s.ticker, ok: !!ok, count: mkts.length, error: error || null });
+        }
         try {
             if (s.type === "game") {
                 all.push(...foldKalshiGameMarkets(mkts));

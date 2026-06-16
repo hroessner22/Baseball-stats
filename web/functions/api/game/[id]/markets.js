@@ -71,13 +71,15 @@ export async function onRequest(context) {
     // prop series (KXMLBHR/KXMLBKS/KXMLBHIT/KXMLBTB), so the bot saw zero Kalshi
     // props. Kalshi-only keeps every prop series and is far under budget.
     const kalshiOnly = new URL(context.request.url).searchParams.get("source") === "kalshi";
+    const wantDebug = !!new URL(context.request.url).searchParams.get("debug");
+    const kalshiDiag = wantDebug ? [] : undefined;
     let allMarkets;
     let savantHomeWe = null;
     let savantSource = null;
     try {
         const [marketsRes, savantRes] = await Promise.allSettled([
             kalshiOnly
-                ? listKalshiMlbMarkets({ perGameOnly: true })
+                ? listKalshiMlbMarkets({ perGameOnly: true, botOnly: true, diag: kalshiDiag })
                 : listAllMlbMarkets(env, { perGameOnly: true }),
             fetchSavantWe(gameId),
         ]);
@@ -193,9 +195,10 @@ export async function onRequest(context) {
     // Diagnostic (?debug=1): count Kalshi player props surviving each stage so
     // we can see exactly where they vanish (fetch/parse vs team/time filter vs
     // live-source/tricode filter).
-    const _debug = new URL(context.request.url).searchParams.get("debug")
+    const _debug = wantDebug
         ? {
             kalshi_only: kalshiOnly,
+            kalshi_series_diag: kalshiDiag,
             raw_kalshi_pp: (allMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop").length,
             raw_kalshi_pp_with_tricodes: (allMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop" && m.home_tricode && m.away_tricode).length,
             after_teamtime_filter: (allGameMarkets || []).filter((m) => m.source === "kalshi" && m.question_type === "player_prop").length,
