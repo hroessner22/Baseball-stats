@@ -12267,17 +12267,19 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 
 .watch-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--tile-w), 1fr));
-    gap: 12px;
+    /* Pack more games per row (was --tile-w ≈ 2 wide) so the full slate
+       fits on one screen — same density as the other sections. */
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 10px;
 }
 .watch-card {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 12px;
+    padding: 10px;
 }
 .watch-card.is-watchable { cursor: pointer; transition: border-color .15s, background .15s; }
 .watch-card.is-watchable:hover { border-color: var(--accent-live, #e8554e); background: var(--surface-2); }
@@ -12299,13 +12301,13 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
 .watch-btn {
     margin-top: auto;
     width: 100%;
-    padding: 9px;
+    padding: 7px;
     border: 0;
     border-radius: 6px;
     background: var(--accent-action);
     color: #fff;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     cursor: pointer;
     transition: filter 0.15s ease, opacity 0.15s ease;
 }
