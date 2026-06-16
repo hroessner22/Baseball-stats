@@ -1,0 +1,44 @@
+name: Deploy to Cloudflare Pages
+
+# Replaces the dashboard GitHub→Pages integration, which stopped firing
+# (every push between 5fe2e42 and 6b0b6df never deployed; production sat
+# on stale code). This deploys deterministically on every push to main,
+# the same way `wrangler pages deploy` does locally.
+#
+# Requires one repo secret:
+#   CLOUDFLARE_API_TOKEN — a token with the "Cloudflare Pages: Edit"
+#   permission (Account scope). Create at
+#   https://dash.cloudflare.com/profile/api-tokens (use the "Edit
+#   Cloudflare Pages" template) and add under repo Settings → Secrets
+#   and variables → Actions.
+# The account id is public (it's in the dashboard URL) so it's inlined.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: read
+
+# Never run two deploys at once; cancel an in-flight one if a newer push
+# lands so production always converges on the latest commit.
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ff80f95677946c61847cd70182fbcebe
+          # Run from web/ so the adjacent functions/ dir is bundled
+          # alongside the public/ static assets (same as the local
+          # `wrangler pages deploy ./public` invocation).
+          workingDirectory: web
+          command: pages deploy public --project-name=diamond-context --branch=main --commit-dirty=true
