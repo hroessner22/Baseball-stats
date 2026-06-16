@@ -1278,6 +1278,7 @@ async function refreshMarketsDashboard() {
         const prevScroll = marketsView.scrollTop;
         marketsView.innerHTML = renderMarketsDashboard(data);
         marketsView.scrollTop = prevScroll;
+        applyOddsMarquee();
         hydrateKalshiBookCells();
         bindMarketsSubToggle();
         // The dashboard render replaces the entire innerHTML which
@@ -1317,6 +1318,26 @@ async function refreshMarketsDashboard() {
 // fast retry when the markets endpoint comes back from a failure.
 if (typeof window !== "undefined") {
     window.refreshMarketsDashboard = refreshMarketsDashboard;
+}
+
+// Marquee odds labels that are too long for their box (e.g. "Over 8.5 runs"
+// clipped to "Over 8.5 ru") so the full text scrolls into view. Only touches
+// labels that actually overflow; wraps their content in a .md-name-scroll span
+// and sets the scroll distance. Re-runs after each dashboard render.
+function applyOddsMarquee() {
+    if (!marketsView) return;
+    marketsView.querySelectorAll(".md-game-out-name").forEach((el) => {
+        // Already processed (re-render makes fresh nodes, so this is per-render).
+        if (el.querySelector(".md-name-scroll")) return;
+        if (el.scrollWidth <= el.clientWidth + 1) return;   // fits — leave it
+        const inner = document.createElement("span");
+        inner.className = "md-name-scroll";
+        while (el.firstChild) inner.appendChild(el.firstChild);
+        el.appendChild(inner);
+        const shift = el.clientWidth - inner.scrollWidth;   // negative px
+        el.style.setProperty("--md-shift", `${shift}px`);
+        el.classList.add("is-marquee");
+    });
 }
 
 // Render the EDGES sub-view inside the Markets chrome. Same

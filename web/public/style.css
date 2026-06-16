@@ -7131,6 +7131,28 @@ button.md-game-outcome:active { transform: translateY(1px); }
 }
 .md-game-outcome.is-fav .md-game-out-name { font-weight: 600; }
 .md-game-outcome.is-fav .md-game-out-am { color: var(--accent-win); }
+/* Auto-scroll (marquee) for odds labels too long for the box, so the full
+   text (e.g. "Over 8.5 runs") is readable. applyOddsMarquee() in app.js wraps
+   the content and adds .is-marquee + the --md-shift distance only when the
+   label actually overflows. Ping-pong (alternate) returns it to the start. */
+.md-game-out-name.is-marquee { text-overflow: clip; }
+.md-name-scroll {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.md-game-out-name.is-marquee .md-name-scroll {
+    animation: md-name-marquee 5s ease-in-out infinite alternate;
+    will-change: transform;
+}
+@keyframes md-name-marquee {
+    0%, 22%   { transform: translateX(0); }
+    78%, 100% { transform: translateX(var(--md-shift, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .md-game-out-name.is-marquee .md-name-scroll { animation: none; }
+}
 .md-game-out-name {
     color: var(--text);
     overflow: hidden;
