@@ -12172,14 +12172,14 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
    The MLB.tv launcher. Cards mirror the Board's tile look but end in a
    Watch button instead of being a link to the game view. */
 .watch-view {
-    /* Same as .game-view — fill the space between header and bottom nav and
-       scroll internally, so the nav stays reachable and content isn't clipped. */
+    /* Fill the space between header and bottom nav and scroll internally.
+       Full width (like .leaders-view) — no centered 1100px column — so the
+       whole slate spreads across the screen instead of leaving big empty
+       margins. (Theater mode overlays this area separately when watching.) */
     flex: 1;
     overflow-y: auto;
     min-height: 0;
-    padding: 16px 16px 100px;
-    max-width: 1100px;
-    margin: 0 auto;
+    padding: 16px 24px 100px;
 }
 .watch-head {
     margin-bottom: 16px;
@@ -12269,8 +12269,8 @@ body:has(#game-view:not([hidden])) .active-bets-strip { display: none !important
     display: grid;
     /* Pack more games per row (was --tile-w ≈ 2 wide) so the full slate
        fits on one screen — same density as the other sections. */
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+    gap: 12px;
 }
 .watch-card {
     display: flex;
