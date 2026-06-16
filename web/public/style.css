@@ -4110,15 +4110,17 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 @keyframes spot-pop { 0% { r: 0; opacity: 0; } 60% { opacity: 1; } 100% { r: 11; opacity: 1; } }
 @keyframes core-pop { 0% { r: 0; } 55% { r: 9; } 100% { r: 4.5; } }
 
+/* Small rounded play card sitting low on the field (not too high). */
 .play-blurb {
-    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
-    z-index: 6; max-width: 88%; text-align: center;
-    background: rgba(12, 18, 30, 0.93); border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 10px; padding: 9px 16px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    position: absolute; bottom: 58px; left: 50%; transform: translateX(-50%);
+    z-index: 6; max-width: 64%; text-align: center;
+    background: rgba(10, 15, 24, 0.90); border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px; padding: 5px 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    font-size: 12px; line-height: 1.3;
 }
 .field-pane.view-pitch .play-blurb { display: none; }
-.pb-desc { font-size: 14px; font-weight: 600; color: #e8eef7; line-height: 1.35; }
-.pb-meta { font-size: 11px; color: var(--accent-win); margin-top: 3px; letter-spacing: 0.03em; }
+.pb-desc { font-weight: 600; color: #e8eef7; }
+.pb-meta { font-size: 11px; color: var(--accent-win); margin-left: 7px; letter-spacing: 0.02em; }
 .field-pane.play-pop .play-blurb { animation: blurb-pop 0.5s ease 0.7s both; }
 @keyframes blurb-pop {
     0% { transform: translateX(-50%) translateY(10px) scale(0.92); opacity: 0; }
@@ -4236,15 +4238,6 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 999px;
-}
-.situation { white-space: nowrap; max-width: 94%; }
-.situation .sit-play { font-weight: 650; color: var(--text); }
-.situation .sit-play .sit-meta { color: var(--accent-win); font-weight: 550; font-size: 0.92em; }
-/* Brief highlight when a new play lands (no thick popup — it updates in line). */
-.field-pane.play-pop .situation .sit-play { animation: sit-play-flash 1.1s ease; }
-@keyframes sit-play-flash {
-    0% { color: #FCD34D; }
-    100% { color: var(--text); }
 }
 .situation .dot { color: var(--text-dim); }
 .situation .state-label {
