@@ -522,8 +522,24 @@ async function kalshiAuthHeaders(env, method, url) {
 // secret values). Used by /api/markets?debug=1 to see why auth isn't taking.
 export async function kalshiAuthDiag(env) {
     kalshiAuthHeaders._lastError = null;
-    const h = await kalshiAuthHeaders(env, "GET", `${KALSHI_BASE}/markets`);
-    return { header_keys: Object.keys(h), error: kalshiAuthHeaders._lastError || null };
+    const url = `${KALSHI_BASE}/markets?series_ticker=KXMLBGAME&status=open&limit=5`;
+    const h = await kalshiAuthHeaders(env, "GET", url);
+    const out = { header_keys: Object.keys(h), error: kalshiAuthHeaders._lastError || null };
+    // Live authenticated fetch through the SAME helper the series fetch uses
+    // (cf cache on), then a cache-busted one (cf cache effectively bypassed
+    // via a unique query param) to isolate whether the edge cache is serving
+    // a stale unauthenticated 429.
+    try {
+        const d = await fetchJson(url, { cacheTtl: 300, timeoutMs: 8000, headers: h });
+        out.cached_fetch = { ok: true, count: (d?.markets || []).length };
+    } catch (e) { out.cached_fetch = { ok: false, error: String(e?.message || e) }; }
+    try {
+        const bust = `${url}&_cb=${Date.now()}`;
+        const h2 = await kalshiAuthHeaders(env, "GET", bust);
+        const d = await fetchJson(bust, { cacheTtl: 0, timeoutMs: 8000, headers: h2 });
+        out.fresh_fetch = { ok: true, count: (d?.markets || []).length };
+    } catch (e) { out.fresh_fetch = { ok: false, error: String(e?.message || e) }; }
+    return out;
 }
 
 export async function listKalshiMlbMarkets(opts = {}) {
