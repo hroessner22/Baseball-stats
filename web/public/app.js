@@ -5799,7 +5799,6 @@ function fieldPane(g) {
           ${countChip}
         </svg>
         ${renderHitOverlay(g)}
-        ${renderPlayBlurb(g)}
         ${flavorChips && flavorChips.length
             ? `<div class="field-park-chips">
                  ${flavorChips.map((c) =>
@@ -6393,6 +6392,19 @@ function paOutcomeClass(eventType) {
 }
 
 function situationStrip(g) {
+    // The latest play's description rides at the front of this bottom line and
+    // updates in place each play (no separate popup card).
+    const play = lastInningPlay(g);
+    let playSeg = "";
+    if (play?.description) {
+        const hit = playHit(play);
+        const bits = hit ? [
+            hit.exit_velo ? `${hit.exit_velo} mph` : null,
+            hit.distance ? `${hit.distance} ft` : null,
+            hit.launch_angle != null ? `${hit.launch_angle}°` : null,
+        ].filter(Boolean).join(" · ") : "";
+        playSeg = `<span class="sit-play">${escapeHTML(play.description)}${bits ? ` <span class="sit-meta">${escapeHTML(bits)}</span>` : ""}</span><span class="dot">·</span>`;
+    }
     if (g.status === "Live" && g.inning) {
         // Spell out the half (Top / Bottom) so the ▲/▼ symbol isn't
         // the only signal, and label bases as "runner on Xth" instead
@@ -6406,6 +6418,7 @@ function situationStrip(g) {
         const outsLabel  = g.outs === 1 ? "1 out" : `${g.outs} outs`;
         return `
           <div class="situation" title="Top of inning (▲) means away team batting; Bottom (▼) means home team batting">
+            ${playSeg}
             <span class="inning">${arrowHalf(g.half)} ${halfWord} ${ordinalSuffix(g.inning).toLowerCase()}</span>
             <span class="dot">·</span>
             <span class="outs">${outsLabel}</span>
@@ -6416,7 +6429,7 @@ function situationStrip(g) {
           </div>
         `;
     }
-    return `<div class="situation"><span class="state-label">${(g.detail || g.status).toUpperCase()}</span></div>`;
+    return `<div class="situation">${playSeg}<span class="state-label">${(g.detail || g.status).toUpperCase()}</span></div>`;
 }
 
 function matchupRow(label, name, hand, mlbam, statLine) {
