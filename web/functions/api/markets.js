@@ -33,6 +33,16 @@ export async function onRequest(context) {
     const scope = url.searchParams.get("scope");
     const sourceFilter = url.searchParams.get("source");
 
+    // TEMP isolated auth test: ?authtest=1 runs ONLY the signed Kalshi probe
+    // (no slate fan-out), so the worker fires a single request at a time —
+    // distinguishes a burst rate-limit from a hard per-IP block.
+    if (url.searchParams.get("authtest")) {
+        const diag = await kalshiAuthDiag(env);
+        return new Response(JSON.stringify({ authtest: diag, at: new Date().toISOString() }), {
+            headers: { "content-type": "application/json", "cache-control": "no-store" },
+        });
+    }
+
     let markets;
     let initialDiagnostics = null;
     try {
