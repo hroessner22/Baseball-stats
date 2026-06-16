@@ -1320,6 +1320,54 @@ if (typeof window !== "undefined") {
     window.refreshMarketsDashboard = refreshMarketsDashboard;
 }
 
+// ── Explain-on-hover tooltips ───────────────────────────────────────
+// Any element with a data-tip attribute shows a clean floating tooltip on
+// hover (or tap) with the explanation. Delegated on document so it works for
+// dynamically re-rendered content (the team-strength card, etc.) without
+// re-wiring. Reusable — add data-tip="..." to any stat label.
+(function initTips() {
+    if (typeof document === "undefined") return;
+    let tip = null;
+    const ensure = () => {
+        if (!tip) {
+            tip = document.createElement("div");
+            tip.className = "dc-tip";
+            tip.setAttribute("role", "tooltip");
+            document.body.appendChild(tip);
+        }
+        return tip;
+    };
+    const show = (target) => {
+        const text = target.getAttribute("data-tip");
+        if (!text) return;
+        const el = ensure();
+        el.textContent = text;
+        el.classList.add("visible");
+        const r = target.getBoundingClientRect();
+        const t = el.getBoundingClientRect();
+        let top = r.top - t.height - 8;
+        if (top < 8) top = r.bottom + 8;                       // flip below if no room
+        let left = r.left + r.width / 2 - t.width / 2;         // center on the target
+        left = Math.max(8, Math.min(left, window.innerWidth - t.width - 8));
+        el.style.top = `${Math.round(top)}px`;
+        el.style.left = `${Math.round(left)}px`;
+    };
+    const hide = () => { if (tip) tip.classList.remove("visible"); };
+    document.addEventListener("mouseover", (e) => {
+        const t = e.target.closest && e.target.closest("[data-tip]");
+        if (t) show(t); else if (!(e.target.closest && e.target.closest(".dc-tip"))) hide();
+    });
+    document.addEventListener("mouseout", (e) => {
+        if (e.target.closest && e.target.closest("[data-tip]")) hide();
+    });
+    // Touch / click: show briefly so mobile users can read it too.
+    document.addEventListener("click", (e) => {
+        const t = e.target.closest && e.target.closest("[data-tip]");
+        if (t) { show(t); clearTimeout(show._t); show._t = setTimeout(hide, 3500); }
+    });
+    window.addEventListener("scroll", hide, true);
+})();
+
 // Marquee odds labels that are too long for their box (e.g. "Over 8.5 runs"
 // clipped to "Over 8.5 ru") so the full text scrolls into view. Only touches
 // labels that actually overflow; wraps their content in a .md-name-scroll span
@@ -9188,29 +9236,29 @@ function renderTeamStrength(g) {
             <div class="ts-side-head">
               <span class="ts-abbr">${abbr}</span>
               <span class="ts-record">${s.season_w}-${s.season_l}</span>
-              ${s.streak ? `<span class="ts-streak ${streakClass(s.streak)}">${s.streak}</span>` : ""}
+              ${s.streak ? `<span class="ts-streak ${streakClass(s.streak)}" data-tip="Current streak — consecutive wins (W) or losses (L) heading into today.">${s.streak}</span>` : ""}
             </div>
             <div class="ts-rows">
               <div class="ts-row">
-                <span class="ts-key">SEASON</span>
+                <span class="ts-key" data-tip="Season winning percentage — actual wins ÷ games played so far this year.">SEASON</span>
                 <span class="ts-val">${fmtAvg(s.season_pct)}</span>
               </div>
               <div class="ts-row">
-                <span class="ts-key" title="Pythagorean: RS²/(RS²+RA²) — luck-adjusted true talent">PYTH</span>
+                <span class="ts-key" data-tip="Pythagorean win% — expected winning percentage from runs scored vs. allowed: RS² ÷ (RS² + RA²). Strips out luck in close and blowout games to show a team's true talent. Above their actual record = they've been unlucky; below = lucky.">PYTH</span>
                 <span class="ts-val">${fmtAvg(s.pyth_pct)}</span>
               </div>
               ${l30.pct != null ? `
                 <div class="ts-row">
-                  <span class="ts-key">L30</span>
+                  <span class="ts-key" data-tip="Record over the last 30 games — recent form, less noisy than L10.">L30</span>
                   <span class="ts-val">${l30.w}-${l30.l} <span class="ts-pct">(${fmtAvg(l30.pct)})</span></span>
                 </div>` : ""}
               ${l10.pct != null ? `
                 <div class="ts-row">
-                  <span class="ts-key">L10</span>
+                  <span class="ts-key" data-tip="Record over the last 10 games — how hot or cold the team is right now.">L10</span>
                   <span class="ts-val">${l10.w}-${l10.l} <span class="ts-pct">(${fmtAvg(l10.pct)})</span></span>
                 </div>` : ""}
               <div class="ts-row ts-row-bold">
-                <span class="ts-key">COMBINED</span>
+                <span class="ts-key" data-tip="Our blended team-strength rating — mixes season, Pythagorean, and recent (L30/L10) form into one number. This is what shifts the win expectancy off the 'average teams' baseline.">COMBINED</span>
                 <span class="ts-val">${fmtAvg(s.combined_pct)}</span>
               </div>
             </div>

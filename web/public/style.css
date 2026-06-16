@@ -3951,6 +3951,32 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .field .field-nametag.fnt-batter .fnt-name { fill: #FCD34D; }   /* yellow batter */
 .field .field-nametag.fnt-batter rect { stroke: rgba(252, 211, 77, 0.30); }
 
+/* Explain-on-hover tooltip (any element with data-tip). See initTips(). */
+.dc-tip {
+    position: fixed;
+    z-index: 9999;
+    max-width: 268px;
+    padding: 9px 12px;
+    background: rgba(12, 18, 30, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    color: #e8eef7;
+    font-size: 12.5px;
+    line-height: 1.42;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(3px);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.dc-tip.visible { opacity: 1; transform: translateY(0); }
+/* Signal that a stat label is explainable. */
+[data-tip] { cursor: help; }
+.ts-key[data-tip] {
+    border-bottom: 1px dotted rgba(255, 255, 255, 0.28);
+    padding-bottom: 1px;
+}
+
 /* Count + outs broadcast chip in the upper-right of the SVG. */
 .field .field-count-chip rect {
     fill: rgba(11, 18, 32, 0.85);
