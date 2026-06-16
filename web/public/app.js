@@ -5797,8 +5797,14 @@ function fieldPane(g) {
 
           <!-- L24: count + outs broadcast chip -->
           ${countChip}
+
+          <!-- L25: pitcher (at the mound) + batter (at the plate) name tags -->
+          ${g.pitcher ? `<text class="field-name fn-pitcher" x="250" y="332" text-anchor="middle">${escapeHTML(g.pitcher.name)}</text>` : ""}
+          ${g.batter ? `<text class="field-name fn-batter" x="250" y="490" text-anchor="middle">${escapeHTML(g.batter.name)}</text>` : ""}
+
+          <!-- L26: ball-in-play spray line + landing (shares field coords) -->
+          ${renderHitOverlay(g)}
         </svg>
-        ${renderHitOverlay(g)}
         ${renderPlayBlurb(g)}
         ${flavorChips && flavorChips.length
             ? `<div class="field-park-chips">
@@ -6139,33 +6145,39 @@ function playHit(p) {
     }
     return null;
 }
-// Statcast hit-chart coords (home ≈ 125.42, 198.27; +x right, lower y deeper)
-// → the field SVG (home 250,455). K is a rough scale; calibrate on live hits.
+// Statcast hit-chart coords (home ≈ 125.42, 198.27; +x toward 1B/RF, smaller y
+// = deeper) → the field SVG (home 250,455, CF straight up). We work in spray
+// angle + distance so the ball always points the right way and stays on the
+// field, then scale distance to the field (shorter toward the foul lines).
 function hitToSvg(hit) {
-    const K = 1.7;
-    const dx = (Number(hit.coord_x) - 125.42) * K;
-    const dy = (198.27 - Number(hit.coord_y)) * K;   // + = deeper
+    const dx = Number(hit.coord_x) - 125.42;
+    const dy = 198.27 - Number(hit.coord_y);            // deeper = positive
+    const ang = Math.atan2(dx, Math.max(dy, 0.001));    // 0 = CF, + = right (1B)
+    const angDeg = Math.max(-48, Math.min(48, ang * 180 / Math.PI));
+    const dist = Math.hypot(dx, dy);
+    const d01 = Math.max(0, Math.min(1, dist / 175));   // ~175 hc units ≈ wall
+    const rMax = 365 - Math.abs(angDeg) / 48 * 95;      // CF deepest, lines shorter
+    const r = 50 + d01 * (rMax - 50);
+    const a = angDeg * Math.PI / 180;
     return {
-        x: Math.max(55, Math.min(445, 250 + dx)),
-        y: Math.max(150, Math.min(452, 455 - dy)),
+        x: Math.max(55, Math.min(445, 250 + Math.sin(a) * r)),
+        y: Math.max(95, Math.min(450, 455 - Math.cos(a) * r)),
     };
 }
+// Drawn INSIDE the field <svg> so it shares the field's coordinate system
+// (home at 250,455) and stays aligned with the bases. Straight spray line +
+// landing marker, like a Statcast spray chart.
 function renderHitOverlay(g) {
     const hit = playHit(lastInningPlay(g));
-    if (!hit) return "";
+    if (!hit || hit.coord_x == null) return "";
     const { x, y } = hitToSvg(hit);
-    const ground = String(hit.trajectory || "").includes("ground");
-    const cx = (250 + x) / 2;
-    const cy = ground ? (455 + y) / 2 : Math.min(y, 455) - 95;     // arc up for fly balls
-    const d = ground
-        ? `M 250 455 L ${x.toFixed(1)} ${y.toFixed(1)}`
-        : `M 250 455 Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    return `<svg class="hit-overlay" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    const d = `M 250 455 L ${x.toFixed(1)} ${y.toFixed(1)}`;
+    return `<g class="hit-fx">
               <path class="hit-arc" d="${d}"/>
               <circle class="hit-spot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="11"/>
               <circle class="hit-core" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5"/>
               <circle class="hit-ball" cx="0" cy="0" r="5" style="offset-path:path('${d}')"/>
-            </svg>`;
+            </g>`;
 }
 function renderPlayBlurb(g) {
     const p = lastInningPlay(g);

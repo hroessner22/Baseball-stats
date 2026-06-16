@@ -4076,9 +4076,18 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .pv-empty { color: var(--text-faint); font-size: 13px; }
 
-/* Ball-in-play: hit arc/landing on the field + result blurb (Field view only). */
-.hit-overlay { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
-.field-pane.view-pitch .hit-overlay { display: none; }
+/* Pitcher (at the mound) + batter (at the plate) name tags on the field —
+   small, with a dark outline so they read over grass/dirt without a pill. */
+.field .field-name {
+    font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.01em; paint-order: stroke;
+    stroke: rgba(8, 12, 20, 0.92); stroke-width: 3.2; stroke-linejoin: round;
+}
+.field .fn-pitcher { fill: #e8eef7; }
+.field .fn-batter { fill: #FCD34D; }
+
+/* Ball-in-play: hit spray line + landing marker, drawn inside the field SVG. */
+.hit-fx { pointer-events: none; }
 .hit-arc {
     fill: none; stroke: #FCD34D; stroke-width: 3; stroke-linecap: round;
     opacity: 0.92; filter: drop-shadow(0 0 4px rgba(252, 211, 77, 0.5));
