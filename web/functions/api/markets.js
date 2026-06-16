@@ -18,6 +18,7 @@
 import {
     listAllMlbMarkets,
     groupByQuestion,
+    kalshiAuthDiag,
 } from "./_markets.js";
 
 const CACHE_SECONDS = 10;   // rapid updates per user feedback
@@ -91,6 +92,7 @@ export async function onRequest(context) {
             pem_present: !!env.KALSHI_PRIVATE_KEY,
             pem_len: (env.KALSHI_PRIVATE_KEY || "").length,
             pem_head: (env.KALSHI_PRIVATE_KEY || "").slice(0, 30),
+            sign_attempt: await kalshiAuthDiag(env),
         } } : {}),
         fetched_at: new Date().toISOString(),
     }), {

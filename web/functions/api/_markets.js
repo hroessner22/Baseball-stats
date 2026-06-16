@@ -512,9 +512,18 @@ async function kalshiAuthHeaders(env, method, url) {
             "KALSHI-ACCESS-SIGNATURE": _bytesToB64(new Uint8Array(sig)),
             "KALSHI-ACCESS-TIMESTAMP": timestamp,
         };
-    } catch {
+    } catch (e) {
+        kalshiAuthHeaders._lastError = String(e?.message || e);
         return {};   // bad key → degrade to unauthenticated, don't break markets
     }
+}
+
+// TEMP diagnostic: run the signer once and report keys + any error (no
+// secret values). Used by /api/markets?debug=1 to see why auth isn't taking.
+export async function kalshiAuthDiag(env) {
+    kalshiAuthHeaders._lastError = null;
+    const h = await kalshiAuthHeaders(env, "GET", `${KALSHI_BASE}/markets`);
+    return { header_keys: Object.keys(h), error: kalshiAuthHeaders._lastError || null };
 }
 
 export async function listKalshiMlbMarkets(opts = {}) {
