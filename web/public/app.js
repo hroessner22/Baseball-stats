@@ -5460,6 +5460,16 @@ function fieldPane(g) {
     // graphics convention.
     const pitcherSurname = g.pitcher?.name ? lastName(g.pitcher.name) : "";
     const batterSurname  = g.batter?.name  ? lastName(g.batter.name)  : "";
+    // Put the batter in the box for the hand he hits with. The field is drawn
+    // from behind home plate (3B/left-field on the left, 1B/right-field on the
+    // right), so a RIGHT-handed batter stands on the 3B side (LEFT box) and a
+    // LEFT-handed batter on the 1B side (RIGHT box). Switch hitters bat opposite
+    // the pitcher's throwing hand. Unknown hand → centered over the plate.
+    const _batsRaw = g.batter?.bats;
+    const _batsEff = _batsRaw === "S"
+        ? (g.pitcher?.throws === "L" ? "R" : "L")
+        : _batsRaw;
+    const batterX = _batsEff === "R" ? 206 : _batsEff === "L" ? 294 : 250;
     const isLive = g.status === "Live";
     const stateBanner = !isLive
         ? `<div class="field-state-banner ${g.status?.toLowerCase()}">
@@ -5656,7 +5666,7 @@ function fieldPane(g) {
                looking detached). y=448 sits it at the plate, integrated into
                the field and mirroring the pitcher at the mound. -->
           ${batterSurname
-              ? `<text class="field-batter-name" x="250" y="448" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
+              ? `<text class="field-batter-name" x="${batterX}" y="448" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
               : ""}
 
           <!-- L23: runner names on occupied bases -->
