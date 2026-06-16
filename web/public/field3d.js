@@ -37,20 +37,21 @@ function wallPoints(park) {
 
 function buildScene(park) {
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b1220);
-    scene.fog = new THREE.Fog(0x0b1220, 600, 1400);
+    scene.background = new THREE.Color(0x16233a);
+    scene.fog = new THREE.Fog(0x16233a, 900, 2000);
 
-    // ---- lighting (dusk ballpark) ----
-    scene.add(new THREE.HemisphereLight(0x9fb6d6, 0x202a1c, 0.85));
-    const sun = new THREE.DirectionalLight(0xfff2d6, 1.05);
+    // ---- lighting (bright, well-lit park so the grass reads green) ----
+    scene.add(new THREE.AmbientLight(0xffffff, 0.32));
+    scene.add(new THREE.HemisphereLight(0xd2e4fb, 0x53632f, 1.15));
+    const sun = new THREE.DirectionalLight(0xfff4dd, 1.55);
     sun.position.set(-220, 380, 120);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     Object.assign(sun.shadow.camera, { left: -500, right: 500, top: 500, bottom: -500, near: 1, far: 1400 });
     scene.add(sun);
 
-    const grassMat = new THREE.MeshStandardMaterial({ color: 0x3f7a30, roughness: 0.95 });
-    const grassDark = new THREE.MeshStandardMaterial({ color: 0x356a28, roughness: 0.95 });
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0x59a83f, roughness: 0.95 });
+    const grassDark = new THREE.MeshStandardMaterial({ color: 0x4d9636, roughness: 0.95 });
     const dirtMat = new THREE.MeshStandardMaterial({ color: 0xa9763f, roughness: 1 });
     const concreteMat = new THREE.MeshStandardMaterial({ color: 0x2a3140, roughness: 1 });
 
@@ -174,10 +175,11 @@ function mountOne(container, opts) {
     Object.assign(renderer.domElement.style, { width: "100%", height: "100%", display: "block" });
 
     const scene = buildScene(park);
-    const camera = new THREE.PerspectiveCamera(46, 1, 1, 3000);
-    // Behind home plate, elevated, looking out toward center field.
-    camera.position.set(0, 78, -118);
-    camera.lookAt(0, 10, 230);
+    const camera = new THREE.PerspectiveCamera(52, 1, 1, 4000);
+    // High and well behind home plate so the WHOLE field is in frame — the
+    // classic high-home broadcast overview.
+    camera.position.set(0, 340, -205);
+    camera.lookAt(0, 0, 185);
 
     let raf = 0;
     const resize = () => {
