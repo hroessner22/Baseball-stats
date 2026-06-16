@@ -5827,53 +5827,47 @@ function trimLeadingBatterName(desc, fullName) {
 // zone as a 3x3 grid with each pitch dropped at its real (pX, pZ) location,
 // colored by outcome. Like the MLB.tv "Batter" overlay. Empty until pitch
 // coordinates are present (live games with Statcast tracking).
-// ── Main "Pitch" view: a rendered behind-the-plate scene ──────────────────
-// A low, head-on broadcast camera behind the plate: the field recedes to a
-// horizon, home plate sits big in the foreground, the batter stands in on the
-// correct side, and a translucent strike zone faces the camera over the plate.
-// Pitches plot in the zone (newest = white ring); the new pitch flies in from
-// the mound (see handlePitchThrow). Fully drawn — no photo.
+// ── Main "Pitch" view: the modern MLB Gameday pitch graphic ───────────────
+// Clean neutral background, home plate in perspective, a 3D strike-zone box
+// facing the camera, the batter standing in on the correct side, and numbered
+// pitches plotted on the zone face (newest = white ring; new pitch flies in).
 function renderPitchScene(g) {
     const pitches = (g.current_pitches || []).filter((p) => p && p.px != null && p.pz != null);
-    const W = 1000, H = 680, VPX = 500, HORIZON = 232, BOTTOM = 680;
+    const W = 600, H = 560;
 
-    // Mowing stripes: bands fanning out from the vanishing point.
-    let stripes = "";
-    for (let i = -4; i <= 8; i++) {
-        const x0 = i * 150, x1 = (i + 1) * 150;
-        const tx0 = VPX + (x0 - VPX) * 0.06, tx1 = VPX + (x1 - VPX) * 0.06;
-        stripes += `<polygon class="${i % 2 === 0 ? "ps-grass-a" : "ps-grass-b"}" points="${x0},${BOTTOM} ${x1},${BOTTOM} ${tx1.toFixed(1)},${HORIZON} ${tx0.toFixed(1)},${HORIZON}"/>`;
-    }
-
-    // Batter stands in the box opposite the zone center: RHB on the left (camera
-    // view), LHB on the right; switch hitters take the box opposite the pitcher.
-    let side = (g.batter?.bats || "R").toUpperCase();
-    if (side === "S") side = (g.pitcher?.throws || "R").toUpperCase() === "L" ? "R" : "L";
-    const batterLeft = side === "R";
-    const batter = g.batter
-        ? `<g transform="translate(${batterLeft ? 372 : 628} 612)${batterLeft ? "" : " scale(-1 1)"}">${batterFigure()}</g>`
-        : "";
-
-    // Strike-zone quad facing the camera over the plate (slight perspective).
-    const Z = { tl: [446, 438], tr: [554, 436], br: [558, 578], bl: [442, 580] };
+    // Strike-zone front face (faces the camera) + a back face receding toward a
+    // vanishing point above, so the zone reads as a clean 3D box.
+    const FZ = { tl: [225, 208], tr: [375, 208], br: [375, 398], bl: [225, 398] };
+    const VP = [300, 120], DEP = 0.17;
+    const back = (c) => [c[0] + (VP[0] - c[0]) * DEP, c[1] + (VP[1] - c[1]) * DEP];
+    const tlb = back(FZ.tl), trb = back(FZ.tr), brb = back(FZ.br), blb = back(FZ.bl);
+    const P = (a) => `${a[0].toFixed(1)},${a[1].toFixed(1)}`;
     const lerp = (a, b, t) => a + (b - a) * t;
     const at = (u, v) => {
-        const tx = lerp(Z.tl[0], Z.tr[0], u), ty = lerp(Z.tl[1], Z.tr[1], u);
-        const bx = lerp(Z.bl[0], Z.br[0], u), by = lerp(Z.bl[1], Z.br[1], u);
+        const tx = lerp(FZ.tl[0], FZ.tr[0], u), ty = lerp(FZ.tl[1], FZ.tr[1], u);
+        const bx = lerp(FZ.bl[0], FZ.br[0], u), by = lerp(FZ.bl[1], FZ.br[1], u);
         return [lerp(tx, bx, v), lerp(ty, by, v)];
     };
-    const pt = (u, v) => { const p = at(u, v); return `${p[0].toFixed(1)} ${p[1].toFixed(1)}`; };
     const ln = (u1, v1, u2, v2) => {
         const a = at(u1, v1), b = at(u2, v2);
         return `<line class="ps-grid" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`;
     };
 
+    // Batter: RHB on the left (camera view), LHB on the right; switch hitters
+    // take the box opposite the pitcher's hand.
+    let side = (g.batter?.bats || "R").toUpperCase();
+    if (side === "S") side = (g.pitcher?.throws || "R").toUpperCase() === "L" ? "R" : "L";
+    const batterLeft = side === "R";
+    const batter = g.batter
+        ? `<g transform="translate(${batterLeft ? 158 : 442} 452)${batterLeft ? "" : " scale(-1 1)"}">${batterFigure()}</g>`
+        : "";
+
     const last = [...pitches].reverse().find((p) => p.sz_top != null && p.sz_bot != null);
     const zTop = last?.sz_top ?? 3.4, zBot = last?.sz_bot ?? 1.6;
     const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
     const uv = (p) => [
-        clamp((Number(p.px) + 0.708) / 1.416, -0.35, 1.35),
-        clamp((zTop - Number(p.pz)) / (zTop - zBot), -0.35, 1.35),
+        clamp((Number(p.px) + 0.708) / 1.416, -0.4, 1.4),
+        clamp((zTop - Number(p.pz)) / (zTop - zBot), -0.4, 1.4),
     ];
 
     const dots = pitches.map((p, i) => {
@@ -5884,12 +5878,13 @@ function renderPitchScene(g) {
         const tip = `#${p.number || i + 1} ${escapeHTMLAttr(p.type || "")}${p.velo ? ` · ${p.velo} mph` : ""} — ${escapeHTMLAttr(p.result || "")}`;
         if (isLast) {
             return `<g class="ps-pitch ps-latest" data-tip="${tip}">
-                      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="14" class="ps-ring"/>
-                      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="8" fill="${c}"/>
+                      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="16" class="ps-ring"/>
+                      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="10" fill="${c}"/>
+                      <text x="${cx.toFixed(1)}" y="${(cy + 4).toFixed(1)}" text-anchor="middle" class="ps-num">${p.number || i + 1}</text>
                     </g>`;
         }
         return `<g class="ps-pitch" data-tip="${tip}">
-                  <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="10" fill="${c}" stroke="rgba(0,0,0,.5)" stroke-width="1.5"/>
+                  <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="12" fill="${c}" stroke="rgba(0,0,0,.5)" stroke-width="1.5"/>
                   <text x="${cx.toFixed(1)}" y="${(cy + 4).toFixed(1)}" text-anchor="middle" class="ps-num">${p.number || i + 1}</text>
                 </g>`;
     }).join("");
@@ -5900,7 +5895,7 @@ function renderPitchScene(g) {
         const [u, v] = uv(lp);
         const [cx, cy] = at(u, v);
         incoming = `<circle class="ps-incoming" cx="0" cy="0" r="9"
-                      style="offset-path:path('M 500 250 L ${cx.toFixed(1)} ${cy.toFixed(1)}')"/>`;
+                      style="offset-path:path('M 300 96 L ${cx.toFixed(1)} ${cy.toFixed(1)}')"/>`;
     }
 
     const headLine = lp
@@ -5913,64 +5908,38 @@ function renderPitchScene(g) {
         <div class="ps-stage">
           <svg class="ps-scene" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
-              <linearGradient id="ps-sky" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#0d1830"/><stop offset="100%" stop-color="#27425e"/>
+              <linearGradient id="ps-bg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#0a1a2c"/><stop offset="55%" stop-color="#0e2236"/><stop offset="100%" stop-color="#0c1c2c"/>
               </linearGradient>
-              <linearGradient id="ps-grad-grass" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#3f7e39"/><stop offset="100%" stop-color="#2e6128"/>
-              </linearGradient>
-              <radialGradient id="ps-dirt" cx="0.5" cy="0.85" r="0.75">
-                <stop offset="0%" stop-color="#b98049"/><stop offset="100%" stop-color="#8a5c33"/>
-              </radialGradient>
               <linearGradient id="ps-batbody" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#2a3852"/><stop offset="100%" stop-color="#0d1320"/>
+                <stop offset="0%" stop-color="#2b3a54"/><stop offset="100%" stop-color="#0c1320"/>
               </linearGradient>
-              <radialGradient id="ps-vig" cx="0.5" cy="0.55" r="0.75">
-                <stop offset="60%" stop-color="rgba(0,0,0,0)"/><stop offset="100%" stop-color="rgba(0,0,0,0.5)"/>
+              <radialGradient id="ps-vig" cx="0.5" cy="0.5" r="0.72">
+                <stop offset="62%" stop-color="rgba(0,0,0,0)"/><stop offset="100%" stop-color="rgba(0,0,0,0.45)"/>
               </radialGradient>
-              <pattern id="ps-crowd" width="16" height="11" patternUnits="userSpaceOnUse">
-                <circle cx="3" cy="3" r="1.6" fill="#5b6478"/><circle cx="11" cy="8" r="1.6" fill="#727b90"/>
-              </pattern>
-              <filter id="ps-soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3"/></filter>
             </defs>
 
-            <!-- sky + stands -->
-            <rect x="0" y="0" width="${W}" height="${HORIZON + 4}" fill="url(#ps-sky)"/>
-            <rect x="0" y="120" width="${W}" height="116" fill="url(#ps-crowd)" opacity="0.5" filter="url(#ps-soft)"/>
-            <ellipse cx="150" cy="70" rx="60" ry="22" fill="#fff6d8" opacity="0.18" filter="url(#ps-soft)"/>
-            <ellipse cx="850" cy="70" rx="60" ry="22" fill="#fff6d8" opacity="0.18" filter="url(#ps-soft)"/>
-            <!-- outfield wall -->
-            <rect x="0" y="222" width="${W}" height="14" fill="#15401f"/>
-            <rect x="0" y="222" width="${W}" height="3" fill="#d8c45a" opacity="0.7"/>
-
-            <!-- grass + mowing stripes -->
-            <rect x="0" y="${HORIZON}" width="${W}" height="${H - HORIZON}" fill="#367033"/>
-            ${stripes}
-
-            <!-- foreground infield dirt + mound -->
-            <ellipse cx="500" cy="664" rx="430" ry="180" fill="url(#ps-dirt)"/>
-            <ellipse cx="500" cy="256" rx="66" ry="18" fill="#a06a3c"/>
-            <rect x="492" y="252" width="16" height="4" rx="1.5" fill="#f0f0f0" opacity="0.85"/>
-            <g transform="translate(500 236)"><ellipse cx="0" cy="20" rx="11" ry="3" fill="rgba(0,0,0,.3)"/>
-              <line x1="0" y1="18" x2="0" y2="2" stroke="#16202e" stroke-width="7" stroke-linecap="round"/>
-              <circle cx="0" cy="-2" r="5" fill="#16202e"/></g>
-
-            <!-- foul lines -->
-            <line x1="478" y1="610" x2="150" y2="250" stroke="#f3f3f3" stroke-width="3" opacity="0.7"/>
-            <line x1="522" y1="610" x2="850" y2="250" stroke="#f3f3f3" stroke-width="3" opacity="0.7"/>
+            <!-- clean background + faint field grounding -->
+            <rect x="0" y="0" width="${W}" height="${H}" fill="url(#ps-bg)"/>
+            <ellipse cx="300" cy="470" rx="360" ry="150" fill="#19402a" opacity="0.45"/>
+            <ellipse cx="300" cy="455" rx="220" ry="92" fill="#6b4a2c" opacity="0.40"/>
 
             <!-- batter's boxes (perspective) -->
-            <polygon class="ps-box" points="388,598 452,598 446,650 372,650"/>
-            <polygon class="ps-box" points="548,598 612,598 628,650 554,650"/>
+            <polygon class="ps-box" points="150,408 222,408 210,452 132,452"/>
+            <polygon class="ps-box" points="450,408 378,408 390,452 468,452"/>
 
             <!-- batter -->
             ${batter}
 
-            <!-- home plate -->
-            <polygon class="ps-plate" points="452,612 548,612 556,630 500,650 444,630"/>
+            <!-- home plate in perspective (point toward viewer) -->
+            <polygon class="ps-plate" points="243,406 357,406 375,430 300,450 225,430"/>
 
-            <!-- strike zone facing the camera -->
-            <polygon class="ps-zone" points="${pt(0, 0)}, ${pt(1, 0)}, ${pt(1, 1)}, ${pt(0, 1)}"/>
+            <!-- strike-zone 3D box: back outline, top + side faces, front grid -->
+            <polygon class="ps-zone-back" points="${P(tlb)} ${P(trb)} ${P(brb)} ${P(blb)}"/>
+            <polygon class="ps-zone-face2" points="${P(FZ.tl)} ${P(FZ.tr)} ${P(trb)} ${P(tlb)}"/>
+            <polygon class="ps-zone-face2" points="${P(FZ.tl)} ${P(FZ.bl)} ${P(blb)} ${P(tlb)}"/>
+            <polygon class="ps-zone-face2" points="${P(FZ.tr)} ${P(FZ.br)} ${P(brb)} ${P(trb)}"/>
+            <polygon class="ps-zone" points="${P(FZ.tl)} ${P(FZ.tr)} ${P(FZ.br)} ${P(FZ.bl)}"/>
             ${ln(1 / 3, 0, 1 / 3, 1)}${ln(2 / 3, 0, 2 / 3, 1)}
             ${ln(0, 1 / 3, 1, 1 / 3)}${ln(0, 2 / 3, 1, 2 / 3)}
             ${dots}
@@ -5988,16 +5957,16 @@ function renderPitchScene(g) {
 // facing right (toward the zone). Mirror the parent <g> for the right-hand box.
 function batterFigure() {
     return `
-      <ellipse class="bz-shadow" cx="2" cy="2" rx="44" ry="11"/>
-      <line class="bz-leg" x1="-3" y1="-118" x2="-22" y2="-2"/>
-      <polyline class="bz-leg" points="9,-118 17,-62 27,-2"/>
-      <line class="bz-torso" x1="3" y1="-120" x2="13" y2="-196"/>
-      <ellipse class="bz-fill" cx="13" cy="-198" rx="21" ry="13"/>
-      <polyline class="bz-arm" points="7,-196 23,-210 32,-217"/>
-      <polyline class="bz-arm" points="21,-193 30,-208 33,-216"/>
-      <line class="bz-bat" x1="33" y1="-216" x2="-2" y2="-292"/>
-      <circle class="bz-fill" cx="20" cy="-226" r="16"/>
-      <path class="bz-helmet" d="M 7 -231 q 13 -11 26 -2 l 1 6 q -14 -8 -26 1 Z"/>`;
+      <ellipse class="bz-shadow" cx="0" cy="2" rx="40" ry="10"/>
+      <line class="bz-leg" x1="-2" y1="-96" x2="-20" y2="-2"/>
+      <polyline class="bz-leg" points="10,-96 18,-50 26,-2"/>
+      <line class="bz-torso" x1="3" y1="-98" x2="11" y2="-158"/>
+      <ellipse class="bz-fill" cx="12" cy="-160" rx="20" ry="12"/>
+      <polyline class="bz-arm" points="6,-158 18,-174 28,-182"/>
+      <polyline class="bz-arm" points="19,-155 26,-172 30,-181"/>
+      <line class="bz-bat" x1="30" y1="-181" x2="2" y2="-238"/>
+      <circle class="bz-fill" cx="14" cy="-186" r="15"/>
+      <path class="bz-helmet" d="M 1 -190 q 13 -11 27 -2 l 1 6 q -14 -8 -27 1 Z"/>`;
 }
 
 const SZ_COLOR = {
