@@ -3629,6 +3629,15 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     }
 }
 
+/* 3D broadcast-camera tilt (first cut, 2026-06-16). Perspective on the canvas
+   + rotateX on the field SVG so it recedes from home plate (front) to the
+   outfield (back) for real depth. Next passes: lift the scorebug/park-name out
+   as upright overlays, add wall height + ground shadow. Tune the angle here. */
+.field-pane .field-canvas { perspective: 1400px; perspective-origin: 50% 22%; }
+.field-pane .field-canvas .field {
+    transform: rotateX(24deg);
+    transform-origin: 50% 56%;
+}
 .field {
     width: 100%;
     /* User feedback 2026-06-02: 'make the field proportionately
