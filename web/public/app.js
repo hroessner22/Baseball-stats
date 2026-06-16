@@ -5827,37 +5827,50 @@ function trimLeadingBatterName(desc, fullName) {
 // zone as a 3x3 grid with each pitch dropped at its real (pX, pZ) location,
 // colored by outcome. Like the MLB.tv "Batter" overlay. Empty until pitch
 // coordinates are present (live games with Statcast tracking).
-// ── Main "Pitch" view: MLB.tv "Batter"-cam look ───────────────────────────
-// A real behind-the-plate photo with a translucent strike zone laid over the
-// plate in perspective, every pitch this at-bat plotted where it crossed
-// (newest as a white ring), and the new pitch flying in (see handlePitchThrow).
-// Backdrop: Unsplash photo (free for commercial use, no attribution required).
+// ── Main "Pitch" view: a rendered behind-the-plate scene ──────────────────
+// A low, head-on broadcast camera behind the plate: the field recedes to a
+// horizon, home plate sits big in the foreground, the batter stands in on the
+// correct side, and a translucent strike zone faces the camera over the plate.
+// Pitches plot in the zone (newest = white ring); the new pitch flies in from
+// the mound (see handlePitchThrow). Fully drawn — no photo.
 function renderPitchScene(g) {
     const pitches = (g.current_pitches || []).filter((p) => p && p.px != null && p.pz != null);
-    // Overlay space matches the photo's 3:2 aspect so circles stay round.
-    const W = 100, H = 66.75;
-    // Strike-zone quad hand-placed over the plate in pitch-bg.jpg — corners
-    // TL, TR, BR, BL in overlay units. Nudge these to reposition the box.
-    const Z = { tl: [38.6, 22.6], tr: [50.2, 22.3], br: [51.6, 40.4], bl: [37.2, 40.8] };
+    const W = 1000, H = 680, VPX = 500, HORIZON = 232, BOTTOM = 680;
+
+    // Mowing stripes: bands fanning out from the vanishing point.
+    let stripes = "";
+    for (let i = -4; i <= 8; i++) {
+        const x0 = i * 150, x1 = (i + 1) * 150;
+        const tx0 = VPX + (x0 - VPX) * 0.06, tx1 = VPX + (x1 - VPX) * 0.06;
+        stripes += `<polygon class="${i % 2 === 0 ? "ps-grass-a" : "ps-grass-b"}" points="${x0},${BOTTOM} ${x1},${BOTTOM} ${tx1.toFixed(1)},${HORIZON} ${tx0.toFixed(1)},${HORIZON}"/>`;
+    }
+
+    // Batter stands in the box opposite the zone center: RHB on the left (camera
+    // view), LHB on the right; switch hitters take the box opposite the pitcher.
+    let side = (g.batter?.bats || "R").toUpperCase();
+    if (side === "S") side = (g.pitcher?.throws || "R").toUpperCase() === "L" ? "R" : "L";
+    const batterLeft = side === "R";
+    const batter = g.batter
+        ? `<g transform="translate(${batterLeft ? 372 : 628} 612)${batterLeft ? "" : " scale(-1 1)"}">${batterFigure()}</g>`
+        : "";
+
+    // Strike-zone quad facing the camera over the plate (slight perspective).
+    const Z = { tl: [446, 438], tr: [554, 436], br: [558, 578], bl: [442, 580] };
     const lerp = (a, b, t) => a + (b - a) * t;
-    // Bilinear map of zone-space (u,v)∈[0,1]² into the quad.
     const at = (u, v) => {
         const tx = lerp(Z.tl[0], Z.tr[0], u), ty = lerp(Z.tl[1], Z.tr[1], u);
         const bx = lerp(Z.bl[0], Z.br[0], u), by = lerp(Z.bl[1], Z.br[1], u);
         return [lerp(tx, bx, v), lerp(ty, by, v)];
     };
-    const pt = (u, v) => { const p = at(u, v); return `${p[0].toFixed(2)} ${p[1].toFixed(2)}`; };
+    const pt = (u, v) => { const p = at(u, v); return `${p[0].toFixed(1)} ${p[1].toFixed(1)}`; };
     const ln = (u1, v1, u2, v2) => {
         const a = at(u1, v1), b = at(u2, v2);
-        return `<line class="ps-grid" x1="${a[0].toFixed(2)}" y1="${a[1].toFixed(2)}" x2="${b[0].toFixed(2)}" y2="${b[1].toFixed(2)}"/>`;
+        return `<line class="ps-grid" x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}"/>`;
     };
 
-    // Strike-zone top/bottom (ft) from the latest pitch, else league average.
     const last = [...pitches].reverse().find((p) => p.sz_top != null && p.sz_bot != null);
     const zTop = last?.sz_top ?? 3.4, zBot = last?.sz_bot ?? 1.6;
     const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
-    // Pitch (px,pz) → zone-space: u across the 17" plate (±0.708 ft), v from
-    // the top (0) to the bottom (1) of the zone. Slight overflow allowed.
     const uv = (p) => [
         clamp((Number(p.px) + 0.708) / 1.416, -0.35, 1.35),
         clamp((zTop - Number(p.pz)) / (zTop - zBot), -0.35, 1.35),
@@ -5871,24 +5884,23 @@ function renderPitchScene(g) {
         const tip = `#${p.number || i + 1} ${escapeHTMLAttr(p.type || "")}${p.velo ? ` · ${p.velo} mph` : ""} — ${escapeHTMLAttr(p.result || "")}`;
         if (isLast) {
             return `<g class="ps-pitch ps-latest" data-tip="${tip}">
-                      <circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="2.4" class="ps-ring"/>
-                      <circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="1.4" fill="${c}"/>
+                      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="14" class="ps-ring"/>
+                      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="8" fill="${c}"/>
                     </g>`;
         }
         return `<g class="ps-pitch" data-tip="${tip}">
-                  <circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="1.7" fill="${c}" stroke="rgba(0,0,0,.45)" stroke-width="0.3"/>
-                  <text x="${cx.toFixed(2)}" y="${(cy + 0.6).toFixed(2)}" text-anchor="middle" class="ps-num">${p.number || i + 1}</text>
+                  <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="10" fill="${c}" stroke="rgba(0,0,0,.5)" stroke-width="1.5"/>
+                  <text x="${cx.toFixed(1)}" y="${(cy + 4).toFixed(1)}" text-anchor="middle" class="ps-num">${p.number || i + 1}</text>
                 </g>`;
     }).join("");
 
-    // Newest pitch flies from the release point (up the field) to its spot.
     const lp = pitches[pitches.length - 1];
     let incoming = "";
     if (lp) {
         const [u, v] = uv(lp);
         const [cx, cy] = at(u, v);
-        incoming = `<circle class="ps-incoming" cx="0" cy="0" r="1.6"
-                      style="offset-path:path('M 56 3 L ${cx.toFixed(2)} ${cy.toFixed(2)}')"/>`;
+        incoming = `<circle class="ps-incoming" cx="0" cy="0" r="9"
+                      style="offset-path:path('M 500 250 L ${cx.toFixed(1)} ${cy.toFixed(1)}')"/>`;
     }
 
     const headLine = lp
@@ -5899,18 +5911,93 @@ function renderPitchScene(g) {
     return `
       <div class="pitch-scene">
         <div class="ps-stage">
-          <img class="ps-bg" src="assets/pitch-bg.jpg" alt="" loading="lazy"/>
-          <svg class="ps-overlay" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <svg class="ps-scene" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <defs>
+              <linearGradient id="ps-sky" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#0d1830"/><stop offset="100%" stop-color="#27425e"/>
+              </linearGradient>
+              <linearGradient id="ps-grad-grass" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#3f7e39"/><stop offset="100%" stop-color="#2e6128"/>
+              </linearGradient>
+              <radialGradient id="ps-dirt" cx="0.5" cy="0.85" r="0.75">
+                <stop offset="0%" stop-color="#b98049"/><stop offset="100%" stop-color="#8a5c33"/>
+              </radialGradient>
+              <linearGradient id="ps-batbody" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#2a3852"/><stop offset="100%" stop-color="#0d1320"/>
+              </linearGradient>
+              <radialGradient id="ps-vig" cx="0.5" cy="0.55" r="0.75">
+                <stop offset="60%" stop-color="rgba(0,0,0,0)"/><stop offset="100%" stop-color="rgba(0,0,0,0.5)"/>
+              </radialGradient>
+              <pattern id="ps-crowd" width="16" height="11" patternUnits="userSpaceOnUse">
+                <circle cx="3" cy="3" r="1.6" fill="#5b6478"/><circle cx="11" cy="8" r="1.6" fill="#727b90"/>
+              </pattern>
+              <filter id="ps-soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3"/></filter>
+            </defs>
+
+            <!-- sky + stands -->
+            <rect x="0" y="0" width="${W}" height="${HORIZON + 4}" fill="url(#ps-sky)"/>
+            <rect x="0" y="120" width="${W}" height="116" fill="url(#ps-crowd)" opacity="0.5" filter="url(#ps-soft)"/>
+            <ellipse cx="150" cy="70" rx="60" ry="22" fill="#fff6d8" opacity="0.18" filter="url(#ps-soft)"/>
+            <ellipse cx="850" cy="70" rx="60" ry="22" fill="#fff6d8" opacity="0.18" filter="url(#ps-soft)"/>
+            <!-- outfield wall -->
+            <rect x="0" y="222" width="${W}" height="14" fill="#15401f"/>
+            <rect x="0" y="222" width="${W}" height="3" fill="#d8c45a" opacity="0.7"/>
+
+            <!-- grass + mowing stripes -->
+            <rect x="0" y="${HORIZON}" width="${W}" height="${H - HORIZON}" fill="#367033"/>
+            ${stripes}
+
+            <!-- foreground infield dirt + mound -->
+            <ellipse cx="500" cy="664" rx="430" ry="180" fill="url(#ps-dirt)"/>
+            <ellipse cx="500" cy="256" rx="66" ry="18" fill="#a06a3c"/>
+            <rect x="492" y="252" width="16" height="4" rx="1.5" fill="#f0f0f0" opacity="0.85"/>
+            <g transform="translate(500 236)"><ellipse cx="0" cy="20" rx="11" ry="3" fill="rgba(0,0,0,.3)"/>
+              <line x1="0" y1="18" x2="0" y2="2" stroke="#16202e" stroke-width="7" stroke-linecap="round"/>
+              <circle cx="0" cy="-2" r="5" fill="#16202e"/></g>
+
+            <!-- foul lines -->
+            <line x1="478" y1="610" x2="150" y2="250" stroke="#f3f3f3" stroke-width="3" opacity="0.7"/>
+            <line x1="522" y1="610" x2="850" y2="250" stroke="#f3f3f3" stroke-width="3" opacity="0.7"/>
+
+            <!-- batter's boxes (perspective) -->
+            <polygon class="ps-box" points="388,598 452,598 446,650 372,650"/>
+            <polygon class="ps-box" points="548,598 612,598 628,650 554,650"/>
+
+            <!-- batter -->
+            ${batter}
+
+            <!-- home plate -->
+            <polygon class="ps-plate" points="452,612 548,612 556,630 500,650 444,630"/>
+
+            <!-- strike zone facing the camera -->
             <polygon class="ps-zone" points="${pt(0, 0)}, ${pt(1, 0)}, ${pt(1, 1)}, ${pt(0, 1)}"/>
             ${ln(1 / 3, 0, 1 / 3, 1)}${ln(2 / 3, 0, 2 / 3, 1)}
             ${ln(0, 1 / 3, 1, 1 / 3)}${ln(0, 2 / 3, 1, 2 / 3)}
             ${dots}
             ${incoming}
+
+            <rect x="0" y="0" width="${W}" height="${H}" fill="url(#ps-vig)" pointer-events="none"/>
           </svg>
         </div>
         <div class="ps-head">${headLine}</div>
         ${emptyHint}
       </div>`;
+}
+
+// A clean batter silhouette in a hitting stance, feet at the local origin,
+// facing right (toward the zone). Mirror the parent <g> for the right-hand box.
+function batterFigure() {
+    return `
+      <ellipse class="bz-shadow" cx="2" cy="2" rx="44" ry="11"/>
+      <line class="bz-leg" x1="-3" y1="-118" x2="-22" y2="-2"/>
+      <polyline class="bz-leg" points="9,-118 17,-62 27,-2"/>
+      <line class="bz-torso" x1="3" y1="-120" x2="13" y2="-196"/>
+      <ellipse class="bz-fill" cx="13" cy="-198" rx="21" ry="13"/>
+      <polyline class="bz-arm" points="7,-196 23,-210 32,-217"/>
+      <polyline class="bz-arm" points="21,-193 30,-208 33,-216"/>
+      <line class="bz-bat" x1="33" y1="-216" x2="-2" y2="-292"/>
+      <circle class="bz-fill" cx="20" cy="-226" r="16"/>
+      <path class="bz-helmet" d="M 7 -231 q 13 -11 26 -2 l 1 6 q -14 -8 -26 1 Z"/>`;
 }
 
 const SZ_COLOR = {
