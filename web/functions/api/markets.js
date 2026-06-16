@@ -18,7 +18,6 @@
 import {
     listAllMlbMarkets,
     groupByQuestion,
-    kalshiAuthDiag,
 } from "./_markets.js";
 
 const CACHE_SECONDS = 10;   // rapid updates per user feedback
@@ -32,16 +31,6 @@ export async function onRequest(context) {
     const url = new URL(context.request.url);
     const scope = url.searchParams.get("scope");
     const sourceFilter = url.searchParams.get("source");
-
-    // TEMP isolated auth test: ?authtest=1 runs ONLY the signed Kalshi probe
-    // (no slate fan-out), so the worker fires a single request at a time —
-    // distinguishes a burst rate-limit from a hard per-IP block.
-    if (url.searchParams.get("authtest")) {
-        const diag = await kalshiAuthDiag(env);
-        return new Response(JSON.stringify({ authtest: diag, at: new Date().toISOString() }), {
-            headers: { "content-type": "application/json", "cache-control": "no-store" },
-        });
-    }
 
     let markets;
     let initialDiagnostics = null;
@@ -95,15 +84,6 @@ export async function onRequest(context) {
         // Per-adapter outcome surface for ?debug=1 — silent failures
         // (Smarkets returning 0 etc.) become loud.
         ...(debug ? { _diagnostics: diagnostics } : {}),
-        // TEMP auth diagnostic: are the Kalshi service-key secrets visible
-        // to this function? (Values never exposed — only presence/length.)
-        ...(debug ? { _kalshi_auth: {
-            key_id_present: !!env.KALSHI_API_KEY_ID,
-            pem_present: !!env.KALSHI_PRIVATE_KEY,
-            pem_len: (env.KALSHI_PRIVATE_KEY || "").length,
-            pem_head: (env.KALSHI_PRIVATE_KEY || "").slice(0, 30),
-            sign_attempt: await kalshiAuthDiag(env),
-        } } : {}),
         fetched_at: new Date().toISOString(),
     }), {
         headers: {

@@ -423,125 +423,6 @@ const KALSHI_SERIES = [
     { ticker: "KXMLBRFI",         type: "per_game_team" },    // run in 1st inning
 ];
 
-// ── Server-side Kalshi request signing ──────────────────────────────
-//
-// Kalshi rate-limits UNAUTHENTICATED requests per source IP. The worker's
-// egress IP is a shared Cloudflare address that gets 429'd hard, which is
-// why server-side market-list fetches kept coming back empty. AUTHENTICATED
-// requests are limited per API key instead, so signing the worker's Kalshi
-// calls with a service key lifts the throttle for every visitor (not just
-// users who've connected their own Kalshi account).
-//
-// Signing mirrors the browser client (public/kalshi.js): RSA-PSS(SHA-256,
-// saltLength 32) over `timestamp + METHOD + path` (path WITHOUT query), sent
-// as KALSHI-ACCESS-{KEY,SIGNATURE,TIMESTAMP} headers. Set via worker secrets:
-//   KALSHI_API_KEY_ID   — the key id (UUID)
-//   KALSHI_PRIVATE_KEY  — the unencrypted PEM (PKCS#1 or PKCS#8)
-// When either is absent we fall back to unauthenticated fetches (current
-// behavior), so this is safe to ship before the secrets exist.
-let _kalshiKeyCache = { pem: null, key: null };
-
-function _derLength(tag, len) {
-    if (len < 0x80) return new Uint8Array([tag, len]);
-    if (len < 0x100) return new Uint8Array([tag, 0x81, len]);
-    if (len < 0x10000) return new Uint8Array([tag, 0x82, (len >> 8) & 0xff, len & 0xff]);
-    throw new Error("PEM payload too large to encode");
-}
-function _wrapPkcs1AsPkcs8(pkcs1Bytes) {
-    const ALGO_ID = new Uint8Array([
-        0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D,
-        0x01, 0x01, 0x01, 0x05, 0x00,
-    ]);
-    const VERSION = new Uint8Array([0x02, 0x01, 0x00]);
-    const octetHeader = _derLength(0x04, pkcs1Bytes.length);
-    const innerLen = VERSION.length + ALGO_ID.length + octetHeader.length + pkcs1Bytes.length;
-    const outerHeader = _derLength(0x30, innerLen);
-    const out = new Uint8Array(outerHeader.length + innerLen);
-    let off = 0;
-    out.set(outerHeader, off); off += outerHeader.length;
-    out.set(VERSION, off);     off += VERSION.length;
-    out.set(ALGO_ID, off);     off += ALGO_ID.length;
-    out.set(octetHeader, off); off += octetHeader.length;
-    out.set(pkcs1Bytes, off);
-    return out;
-}
-function _b64ToBytes(b64) {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-}
-function _bytesToB64(bytes) {
-    let bin = "";
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    return btoa(bin);
-}
-async function _importKalshiKey(pem) {
-    if (_kalshiKeyCache.pem === pem && _kalshiKeyCache.key) return _kalshiKeyCache.key;
-    const isPkcs1 = /BEGIN RSA PRIVATE KEY/.test(pem);
-    const cleaned = pem
-        .replace(/-----BEGIN [A-Z ]+-----/g, "")
-        .replace(/-----END [A-Z ]+-----/g, "")
-        .replace(/\s+/g, "");
-    const inner = _b64ToBytes(cleaned);
-    const pkcs8 = isPkcs1 ? _wrapPkcs1AsPkcs8(inner) : inner;
-    const key = await crypto.subtle.importKey(
-        "pkcs8", pkcs8.buffer,
-        { name: "RSA-PSS", hash: "SHA-256" }, false, ["sign"],
-    );
-    _kalshiKeyCache = { pem, key };
-    return key;
-}
-// Returns the 3 signed headers for a Kalshi request, or {} if no service
-// key is configured / signing fails (caller then fetches unauthenticated).
-async function kalshiAuthHeaders(env, method, url) {
-    const keyId = env?.KALSHI_API_KEY_ID;
-    const pem   = env?.KALSHI_PRIVATE_KEY;
-    if (!keyId || !pem) return {};
-    try {
-        const key = await _importKalshiKey(pem);
-        const signPath = new URL(url).pathname;   // path only, no query
-        const timestamp = Date.now().toString();
-        const msg = timestamp + String(method).toUpperCase() + signPath;
-        const sig = await crypto.subtle.sign(
-            { name: "RSA-PSS", saltLength: 32 },
-            key, new TextEncoder().encode(msg),
-        );
-        return {
-            "KALSHI-ACCESS-KEY":       keyId,
-            "KALSHI-ACCESS-SIGNATURE": _bytesToB64(new Uint8Array(sig)),
-            "KALSHI-ACCESS-TIMESTAMP": timestamp,
-        };
-    } catch (e) {
-        kalshiAuthHeaders._lastError = String(e?.message || e);
-        return {};   // bad key → degrade to unauthenticated, don't break markets
-    }
-}
-
-// TEMP diagnostic: run the signer once and report keys + any error (no
-// secret values). Used by /api/markets?debug=1 to see why auth isn't taking.
-export async function kalshiAuthDiag(env) {
-    kalshiAuthHeaders._lastError = null;
-    const url = `${KALSHI_BASE}/markets?series_ticker=KXMLBGAME&status=open&limit=5`;
-    const h = await kalshiAuthHeaders(env, "GET", url);
-    const out = { header_keys: Object.keys(h), error: kalshiAuthHeaders._lastError || null };
-    // Live authenticated fetch through the SAME helper the series fetch uses
-    // (cf cache on), then a cache-busted one (cf cache effectively bypassed
-    // via a unique query param) to isolate whether the edge cache is serving
-    // a stale unauthenticated 429.
-    try {
-        const d = await fetchJson(url, { cacheTtl: 300, timeoutMs: 8000, headers: h });
-        out.cached_fetch = { ok: true, count: (d?.markets || []).length };
-    } catch (e) { out.cached_fetch = { ok: false, error: String(e?.message || e) }; }
-    try {
-        const bust = `${url}&_cb=${Date.now()}`;
-        const h2 = await kalshiAuthHeaders(env, "GET", bust);
-        const d = await fetchJson(bust, { cacheTtl: 0, timeoutMs: 8000, headers: h2 });
-        out.fresh_fetch = { ok: true, count: (d?.markets || []).length };
-    } catch (e) { out.fresh_fetch = { ok: false, error: String(e?.message || e) }; }
-    return out;
-}
-
 export async function listKalshiMlbMarkets(opts = {}) {
     const all = [];
 
@@ -603,17 +484,12 @@ export async function listKalshiMlbMarkets(opts = {}) {
         const timeoutMs   = fast ? 4000 : 15000;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
-                // Sign with the service key (when configured) so this fetch hits
-                // Kalshi's per-key rate limit instead of the throttled per-IP
-                // one. Signed fresh per attempt so the timestamp stays valid
-                // across retry backoffs. {} when no key → unauthenticated.
-                const authHeaders = await kalshiAuthHeaders(opts.env, "GET", url);
                 // Cache each series 5 min at the edge: which markets EXIST changes
                 // slowly (live PRICES come from the orderbook, fetched fresh per
                 // fire), and Kalshi's tight rate limit means we can only land a
                 // couple series per request — a long cache lets all of them
                 // accumulate and stick instead of expiring and re-429'ing.
-                const data = await fetchJson(url, { cacheTtl: 300, timeoutMs, headers: authHeaders });
+                const data = await fetchJson(url, { cacheTtl: 300, timeoutMs });
                 return { s, mkts: Array.isArray(data?.markets) ? data.markets : [], ok: true };
             } catch (e) {
                 const msg = String(e?.message || e);
@@ -1408,7 +1284,7 @@ export async function listAllMlbMarkets(env, opts = {}) {
     const gameDayOnly = !!opts.gameDayOnly;
     const ALL_ADAPTERS = [
         ["polymarket", listPolymarketMlbMarkets],
-        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly, gameDayOnly, env })],
+        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly, gameDayOnly })],
         ["manifold",   listManifoldMlbMarkets],
         ["odds_api",   () => listOddsApiMlbMarkets(env || {})],
         ["bovada",     listBovadaMlbMarkets],
