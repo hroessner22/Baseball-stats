@@ -110,12 +110,10 @@ const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
 const watchView = document.getElementById("watch-view");
 const teamView = document.getElementById("team-view");
-// Home-park tricodes we have a free photo for in public/parks/{TRI}.jpg.
-// Grows as images are added (sourced from free-licensed photos).
-const PARK_PHOTOS = new Set(["BOS"]);
-// Home-park tricodes we've built a 3D model for (field3d.js). Takes precedence
-// over the photo. Grows park-by-park.
-const PARK_3D = new Set(["BOS"]);
+// Park photo backdrop + 3D model are disabled (back to the flat field). Re-add
+// tricodes here to re-enable; the engine code (field3d.js) stays dormant.
+const PARK_PHOTOS = new Set();
+const PARK_3D = new Set();
 
 // Bridge to the field3d.js module (loaded async). Calls before it's ready are
 // queued and flushed on load (see the tail of field3d.js).
@@ -5782,6 +5780,51 @@ function trimLeadingBatterName(desc, fullName) {
 // current half-inning. CURRENT batter (in progress) shown at the
 // top, then completed PAs newest-first below. Per user direction:
 // 'put the batter who's hitting now at the top.'
+// Strike-zone plot (catcher's view) for the current at-bat — the rulebook
+// zone as a 3x3 grid with each pitch dropped at its real (pX, pZ) location,
+// colored by outcome. Like the MLB.tv "Batter" overlay. Empty until pitch
+// coordinates are present (live games with Statcast tracking).
+const SZ_COLOR = {
+    C: "#ef4444", S: "#dc2626", W: "#dc2626", T: "#dc2626",  // called / swinging strike
+    B: "#3b82f6", "*B": "#3b82f6",                             // ball
+    F: "#f59e0b", "L": "#f59e0b", "O": "#f59e0b",             // foul
+    X: "#22c55e", D: "#22c55e", E: "#22c55e",                  // in play
+};
+function renderStrikeZone(pitches) {
+    const pts = (pitches || []).filter((p) => p && p.px != null && p.pz != null);
+    if (!pts.length) return "";
+    const W = 156, H = 198, padX = 16, padY = 14;
+    const XMIN = -1.8, XMAX = 1.8, ZMIN = 0.3, ZMAX = 4.5;
+    const sx = (x) => padX + ((x - XMIN) / (XMAX - XMIN)) * (W - 2 * padX);
+    const sy = (z) => H - padY - ((z - ZMIN) / (ZMAX - ZMIN)) * (H - 2 * padY);
+    const last = [...pts].reverse().find((p) => p.sz_top != null && p.sz_bot != null);
+    const zTop = last?.sz_top ?? 3.4, zBot = last?.sz_bot ?? 1.6;
+    const bx = sx(-0.708), bw = sx(0.708) - sx(-0.708), by = sy(zTop), bh = sy(zBot) - sy(zTop);
+    const g1x = bx + bw / 3, g2x = bx + 2 * bw / 3, g1y = by + bh / 3, g2y = by + 2 * bh / 3;
+    const dots = pts.map((p, i) => {
+        const isLast = i === pts.length - 1;
+        const c = SZ_COLOR[p.result_code] || "#cbd5e1";
+        const cx = sx(p.px).toFixed(1), cy = sy(p.pz).toFixed(1);
+        return `<g class="sz-pitch" data-tip="#${p.number || i + 1} ${escapeHTMLAttr(p.type || "")}${p.velo ? ` · ${p.velo} mph` : ""} — ${escapeHTMLAttr(p.result || "")}">
+                  <circle cx="${cx}" cy="${cy}" r="${isLast ? 8.5 : 7}" fill="${c}"
+                          stroke="${isLast ? "#fff" : "rgba(0,0,0,.45)"}" stroke-width="${isLast ? 2 : 1}"/>
+                  <text x="${cx}" y="${(parseFloat(cy) + 3).toFixed(1)}" text-anchor="middle" class="sz-num">${p.number || i + 1}</text>
+                </g>`;
+    }).join("");
+    return `
+      <div class="strike-zone">
+        <div class="sz-head">Strike zone · catcher's view</div>
+        <svg viewBox="0 0 ${W} ${H}" class="sz-svg" preserveAspectRatio="xMidYMid meet">
+          <rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" class="sz-box"/>
+          <line x1="${g1x.toFixed(1)}" y1="${by.toFixed(1)}" x2="${g1x.toFixed(1)}" y2="${(by + bh).toFixed(1)}" class="sz-grid"/>
+          <line x1="${g2x.toFixed(1)}" y1="${by.toFixed(1)}" x2="${g2x.toFixed(1)}" y2="${(by + bh).toFixed(1)}" class="sz-grid"/>
+          <line x1="${bx.toFixed(1)}" y1="${g1y.toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${g1y.toFixed(1)}" class="sz-grid"/>
+          <line x1="${bx.toFixed(1)}" y1="${g2y.toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${g2y.toFixed(1)}" class="sz-grid"/>
+          ${dots}
+        </svg>
+      </div>`;
+}
+
 function renderThisInning(g) {
     // Render the section whenever we're Live AND have any of: an
     // in-progress at-bat (current batter), pitches thrown this PA,
@@ -5860,6 +5903,7 @@ function renderThisInning(g) {
     const currentPitchesHtml = (g.current_pitches && g.current_pitches.length)
         ? `<div class="ti-pitches">
              <div class="ti-pitches-head">Pitches (${g.current_pitches.length})</div>
+             ${renderStrikeZone(g.current_pitches)}
              ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).join("")}
            </div>`
         : "";

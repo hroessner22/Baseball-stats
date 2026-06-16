@@ -354,6 +354,14 @@ function shapePitchEvent(e) {
         count_after: e.count
             ? { balls: e.count.balls, strikes: e.count.strikes }
             : null,
+        // Pitch LOCATION for the strike-zone plot. pX = horizontal feet from
+        // the center of the plate (+ = catcher's right / RHB inside), pZ =
+        // height in feet. sz_top/sz_bot = this batter's zone edges (ft).
+        px:     e.pitchData?.coordinates?.pX != null ? Math.round(e.pitchData.coordinates.pX * 100) / 100 : null,
+        pz:     e.pitchData?.coordinates?.pZ != null ? Math.round(e.pitchData.coordinates.pZ * 100) / 100 : null,
+        sz_top: e.pitchData?.strikeZoneTop != null ? Math.round(e.pitchData.strikeZoneTop * 100) / 100 : null,
+        sz_bot: e.pitchData?.strikeZoneBottom != null ? Math.round(e.pitchData.strikeZoneBottom * 100) / 100 : null,
+        zone:   e.pitchData?.zone ?? null,
         // Statcast hit data — exit velo (mph), distance (ft), launch
         // angle (deg), trajectory ('fly_ball', 'ground_ball', etc).
         hit: hd ? {
