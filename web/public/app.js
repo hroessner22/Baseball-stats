@@ -5148,6 +5148,7 @@ function renderPABlock(play, prediction, teams) {
           </section>
           <section class="pa-pitches">
             <div class="pa-section-head">Pitches (${play.pitches.length})</div>
+            ${renderStrikeZone(play.pitches)}
             ${pitchesBlock}
           </section>
         </div>
@@ -5870,6 +5871,7 @@ function renderThisInning(g) {
         const rowCls = hasPitches ? "ti-row ti-row-clickable" : "ti-row";
         const pitchesHtml = isOpen && hasPitches
             ? `<div class="ti-row-pitches">
+                 ${renderStrikeZone(p.pitches)}
                  ${p.pitches.map((pp, i) => renderPitchRow(pp, i)).join("")}
                </div>`
             : "";
