@@ -110,6 +110,9 @@ const playerView = document.getElementById("player-view");
 const marketsView = document.getElementById("markets-view");
 const watchView = document.getElementById("watch-view");
 const teamView = document.getElementById("team-view");
+// Home-park tricodes we have a free photo for in public/parks/{TRI}.jpg.
+// Grows as images are added (sourced from free-licensed photos).
+const PARK_PHOTOS = new Set(["BOS"]);
 const trackRecordView = document.getElementById("track-record-view");
 const howItWorksView  = document.getElementById("how-it-works-view");
 
@@ -5549,10 +5552,14 @@ function fieldPane(g) {
         : "";
     const betsRail = renderGameBetsCardRail(g);
     const railContent = matchupCompact + betsRail + inningStrip;
+    // Free park photo behind the field as immersive ambiance, when we have one
+    // for the home park. Add tricodes here as their image lands in public/parks/.
+    const hasParkPhoto = PARK_PHOTOS.has(homeTri);
     return `
-      <div class="field-pane ${railContent ? "has-narrative" : ""}" style="--we-intensity:${intensity}">
+      <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""}" style="--we-intensity:${intensity}">
         ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
         <div class="field-canvas">
+        ${hasParkPhoto ? `<div class="park-backdrop" style="background-image:url('parks/${homeTri}.jpg')"></div>` : ""}
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
           <defs>
             <radialGradient id="grass-radial" cx="0.5" cy="0.92" r="0.9">

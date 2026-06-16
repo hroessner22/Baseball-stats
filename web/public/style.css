@@ -3629,15 +3629,25 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     }
 }
 
-/* 3D broadcast-camera tilt (first cut, 2026-06-16). Perspective on the canvas
-   + rotateX on the field SVG so it recedes from home plate (front) to the
-   outfield (back) for real depth. Next passes: lift the scorebug/park-name out
-   as upright overlays, add wall height + ground shadow. Tune the angle here. */
-.field-pane .field-canvas { perspective: 1400px; perspective-origin: 50% 22%; }
-.field-pane .field-canvas .field {
-    transform: rotateX(24deg);
-    transform-origin: 50% 56%;
+/* Per-park photo backdrop: when we have a free photo of the home park, it sits
+   behind the field as immersive ambiance (darkened so the field + data stay
+   legible). The angled photo and the top-down diagram can't merge 1:1, so the
+   photo is mood, the diagram is the data. .has-park-photo gates it. */
+.field-pane.has-park-photo .field-canvas { position: relative; }
+.field-pane.has-park-photo .park-backdrop {
+    position: absolute;
+    inset: -8px;
+    background-size: cover;
+    background-position: center;
+    border-radius: calc(var(--radius) + 8px);
+    filter: brightness(0.42) saturate(1.05);
+    z-index: 0;
+    pointer-events: none;
 }
+.field-pane.has-park-photo .field-canvas > *:not(.park-backdrop) { position: relative; z-index: 1; }
+/* Let the photo breathe through the field's own stadium bowl + seating. */
+.field-pane.has-park-photo .field .stadium-bowl { opacity: 0.30; }
+.field-pane.has-park-photo .field .seating { opacity: 0.45; }
 .field {
     width: 100%;
     /* User feedback 2026-06-02: 'make the field proportionately
