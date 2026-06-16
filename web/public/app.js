@@ -5586,10 +5586,10 @@ function fieldPane(g) {
         <div class="field-canvas">
         <svg class="field" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet">
           <defs>
-            <radialGradient id="grass-radial" cx="0.5" cy="0.92" r="0.85">
-              <stop offset="0%"   stop-color="#4A7A35"/>
-              <stop offset="60%"  stop-color="#3F6B2A"/>
-              <stop offset="100%" stop-color="#355A23"/>
+            <radialGradient id="grass-radial" cx="0.5" cy="0.92" r="0.9">
+              <stop offset="0%"   stop-color="#56893E"/>
+              <stop offset="45%"  stop-color="#467730"/>
+              <stop offset="100%" stop-color="#315320"/>
             </radialGradient>
             <!-- Stadium "concrete bowl" backdrop. Radial gradient from
                  a hint of grass at home plate out to dark blue-grey
@@ -5643,11 +5643,13 @@ function fieldPane(g) {
                centered on home plate, clipped to fair territory so
                they look like real outfield mowing stripes. -->
           <g class="grass-stripes" clip-path="url(#fair-clip)">
-            <circle cx="250" cy="460" r="80"  />
-            <circle cx="250" cy="460" r="140" />
-            <circle cx="250" cy="460" r="200" />
-            <circle cx="250" cy="460" r="260" />
-            <circle cx="250" cy="460" r="320" />
+            <circle class="stripe-light" cx="250" cy="460" r="90"  />
+            <circle class="stripe-dark"  cx="250" cy="460" r="130" />
+            <circle class="stripe-light" cx="250" cy="460" r="170" />
+            <circle class="stripe-dark"  cx="250" cy="460" r="210" />
+            <circle class="stripe-light" cx="250" cy="460" r="250" />
+            <circle class="stripe-dark"  cx="250" cy="460" r="290" />
+            <circle class="stripe-light" cx="250" cy="460" r="330" />
           </g>
 
           <!-- L8: warning track (dirt ring inset 12 ft inside the wall) -->

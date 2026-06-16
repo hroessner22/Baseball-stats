@@ -3668,7 +3668,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 }
 .field .stadium-lower {
     fill: #2B3450;
-    stroke: rgba(255, 255, 255, 0.08);
+    stroke: rgba(255, 255, 255, 0.04);
     stroke-width: 0.5;
 }
 
@@ -3685,16 +3685,16 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     stroke-width: 1;
 }
 
-/* Outfield mowing pattern — alternating slightly-darker concentric
-   arcs centered on home plate. Five circle strokes spaced ~60 SVG
-   units apart, clipped to the fair-territory wall path so they
-   ONLY show as bands in the grass. */
+/* Outfield mowing pattern — realistic alternating light/dark concentric
+   stripes centered on home plate (abutting 40px bands at low opacity), clipped
+   to fair territory. Subtle, not the old single heavy black ribbing. */
 .field .grass-stripes circle {
     fill: none;
-    stroke: rgba(0, 0, 0, 0.09);
-    stroke-width: 28;
+    stroke-width: 40;
     pointer-events: none;
 }
+.field .grass-stripes .stripe-dark  { stroke: rgba(0, 0, 0, 0.055); }
+.field .grass-stripes .stripe-light { stroke: rgba(255, 255, 255, 0.038); }
 .field .warning-track {
     fill: var(--dirt-dark);
 }
