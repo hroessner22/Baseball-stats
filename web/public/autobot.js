@@ -818,10 +818,12 @@ async function scanOneGame(g) {
     // fields: at least one pitch must have been thrown, or at least
     // one PA must have happened, or the inning must be past 0.
     // PREGAME HANDLING (2026-06-15). MLB flags games "Live" during warmup,
-    // before any pitch. We now ALLOW pregame MONEYLINES (a pregame ML is a
-    // normal bet) but still BLOCK pregame PLAYER PROPS — strikeout/hits props
-    // need the game underway, and a warmup prop fire was the original bug.
-    // (Cashouts never fire pregame — see the cashout loops.)
+    // before any pitch. We now ALLOW both pregame MONEYLINES and pregame
+    // PLAYER PROPS — a pregame ML is a normal bet, and pregame props are
+    // priced off season-baseline ladders with the same edge gates applied,
+    // so a thin "warmup" market just won't clear the gate. (The original
+    // warmup-prop bug was an ungated fire; the edge gates are the fix.)
+    // Cashouts still never fire pregame — see the cashout loops.
     const gInningChk = parseInt(g.inning, 10) || 0;
     const isPregame = !gameHasStarted(g);
     if (isPregame) {
