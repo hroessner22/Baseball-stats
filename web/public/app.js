@@ -115,6 +115,28 @@ const teamView = document.getElementById("team-view");
 const PARK_PHOTOS = new Set();
 const PARK_3D = new Set();
 
+// Team primary colors (by MLB abbreviation) for the Pitch-view batter's
+// uniform. Cap/helmet is a darkened shade (see darken()).
+const MLB_TEAM_COLORS = {
+    ARI: "#A71930", ATL: "#CE1141", BAL: "#DF4601", BOS: "#BD3039",
+    CHC: "#0E3386", CWS: "#27251F", CHW: "#27251F", CIN: "#C6011F",
+    CLE: "#0C2340", COL: "#33006F", DET: "#0C2340", HOU: "#002D62",
+    KC: "#004687", KCR: "#004687", LAA: "#BA0021", LAD: "#005A9C",
+    MIA: "#00A3E0", MIL: "#12284B", MIN: "#002B5C", NYM: "#002D72",
+    NYY: "#0C2340", OAK: "#003831", ATH: "#003831", PHI: "#E81828",
+    PIT: "#27251F", SD: "#2F241D", SDP: "#2F241D", SF: "#FD5A1E",
+    SFG: "#FD5A1E", SEA: "#0C2C56", STL: "#C41E3A", TB: "#092C5C",
+    TBR: "#092C5C", TEX: "#003278", TOR: "#134A8E", WSH: "#AB0003", WAS: "#AB0003",
+};
+function darken(hex, f) {
+    const n = parseInt(String(hex).replace("#", ""), 16);
+    if (Number.isNaN(n)) return "#0b1320";
+    const r = Math.round(((n >> 16) & 255) * f);
+    const g = Math.round(((n >> 8) & 255) * f);
+    const b = Math.round((n & 255) * f);
+    return `rgb(${r},${g},${b})`;
+}
+
 // "Field" (diagram) vs "Pitch" (strike zone) view of the game. With no saved
 // preference, live games open on Pitch (watch the count build) and everything
 // else on Field (the stadium / final).
@@ -5854,12 +5876,17 @@ function renderPitchScene(g) {
     };
 
     // Batter: RHB on the left (camera view), LHB on the right; switch hitters
-    // take the box opposite the pitcher's hand.
+    // take the box opposite the pitcher's hand. The figure wears the batting
+    // team's colors and shows the player's real MLB headshot as the face.
     let side = (g.batter?.bats || "R").toUpperCase();
     if (side === "S") side = (g.pitcher?.throws || "R").toUpperCase() === "L" ? "R" : "L";
     const batterLeft = side === "R";
+    const battingAbbr = (g.half === "top" ? g.teams?.away?.abbr : g.teams?.home?.abbr) || "";
+    const jersey = MLB_TEAM_COLORS[battingAbbr.toUpperCase()] || "#1e2a44";
+    const cap = darken(jersey, 0.62);
+    const head = g.batter ? playerHeadshotSpot(g.batter.id, 120) : null;
     const batter = g.batter
-        ? `<g transform="translate(${batterLeft ? 158 : 442} 452)${batterLeft ? "" : " scale(-1 1)"}">${batterFigure()}</g>`
+        ? `<g transform="translate(${batterLeft ? 158 : 442} 452)${batterLeft ? "" : " scale(-1 1)"}">${batterFigure({ head, jersey, cap, id: g.batter.id })}</g>`
         : "";
 
     const last = [...pitches].reverse().find((p) => p.sz_top != null && p.sz_bot != null);
@@ -5953,20 +5980,36 @@ function renderPitchScene(g) {
       </div>`;
 }
 
-// A clean batter silhouette in a hitting stance, feet at the local origin,
-// facing right (toward the zone). Mirror the parent <g> for the right-hand box.
-function batterFigure() {
+// The batter: a front-facing uniformed body (batting-team colors) with the
+// player's real MLB headshot as the face under a helmet. Feet at the local
+// origin; the parent <g> mirrors it for the right-hand box.
+function batterFigure({ head, jersey, cap, id }) {
+    const clip = `bh${id || 0}`;
     return `
-      <ellipse class="bz-shadow" cx="0" cy="2" rx="40" ry="10"/>
-      <line class="bz-leg" x1="-2" y1="-96" x2="-20" y2="-2"/>
-      <polyline class="bz-leg" points="10,-96 18,-50 26,-2"/>
-      <line class="bz-torso" x1="3" y1="-98" x2="11" y2="-158"/>
-      <ellipse class="bz-fill" cx="12" cy="-160" rx="20" ry="12"/>
-      <polyline class="bz-arm" points="6,-158 18,-174 28,-182"/>
-      <polyline class="bz-arm" points="19,-155 26,-172 30,-181"/>
-      <line class="bz-bat" x1="30" y1="-181" x2="2" y2="-238"/>
-      <circle class="bz-fill" cx="14" cy="-186" r="15"/>
-      <path class="bz-helmet" d="M 1 -190 q 13 -11 27 -2 l 1 6 q -14 -8 -27 1 Z"/>`;
+      <ellipse class="bz-shadow" cx="0" cy="2" rx="42" ry="10"/>
+      <!-- legs (pants) -->
+      <line class="bz-pants" x1="-9" y1="-90" x2="-23" y2="-2"/>
+      <polyline class="bz-pants" points="9,-90 15,-46 22,-2"/>
+      <!-- torso + shoulders (jersey) -->
+      <line class="bz-torso2" stroke="${jersey}" x1="0" y1="-92" x2="2" y2="-150"/>
+      <ellipse cx="1" cy="-150" rx="23" ry="13" fill="${jersey}"/>
+      <!-- arms raised to the bat (jersey sleeves) -->
+      <polyline class="bz-sleeve" stroke="${jersey}" points="-15,-149 -22,-167 -17,-181"/>
+      <polyline class="bz-sleeve" stroke="${jersey}" points="16,-149 0,-169 -13,-180"/>
+      <circle cx="-15" cy="-181" r="6" fill="#caa56f"/>
+      <line class="bz-bat" x1="-15" y1="-181" x2="-31" y2="-246"/>
+      <!-- neck -->
+      <rect x="-3" y="-166" width="9" height="14" fill="${jersey}"/>
+      <!-- head: the hitter's real MLB headshot -->
+      <clipPath id="${clip}"><circle cx="3" cy="-183" r="23"/></clipPath>
+      ${head
+        ? `<image href="${head}" x="-22" y="-209" width="50" height="50" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>`
+        : `<circle cx="3" cy="-183" r="23" fill="#1a2436"/>`}
+      <circle cx="3" cy="-183" r="23" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="1.5"/>
+      <!-- batting helmet over the top of the head -->
+      <path class="bz-helmet" d="M -21 -183 A 24 24 0 0 1 27 -183 Z" fill="${cap}"/>
+      <ellipse class="bz-helmet" cx="3" cy="-183" rx="25" ry="4.5" fill="${cap}"/>
+      <path class="bz-helmet" d="M -19 -183 q -8 1 -8 10 q 8 3 10 -2 Z" fill="${cap}"/>`;
 }
 
 const SZ_COLOR = {

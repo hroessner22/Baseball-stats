@@ -4020,14 +4020,14 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .ps-scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .ps-plate { fill: #eef1f4; stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.5; }
 .ps-box { fill: none; stroke: rgba(255, 255, 255, 0.30); stroke-width: 2; }
-/* Batter silhouette */
-.bz-shadow { fill: rgba(0, 0, 0, 0.30); }
-.bz-leg, .bz-torso, .bz-arm, .bz-bat { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.bz-leg { stroke: url(#ps-batbody); stroke-width: 18; }
-.bz-torso { stroke: url(#ps-batbody); stroke-width: 34; }
-.bz-arm { stroke: url(#ps-batbody); stroke-width: 11; }
-.bz-fill, .bz-helmet { fill: url(#ps-batbody); }
+/* Batter: uniformed body in team colors with the player's real headshot. */
+.bz-shadow { fill: rgba(0, 0, 0, 0.32); }
+.bz-pants, .bz-torso2, .bz-sleeve, .bz-bat { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.bz-pants { stroke: #d2d6db; stroke-width: 19; }
+.bz-torso2 { stroke-width: 37; }   /* stroke set inline (team jersey color) */
+.bz-sleeve { stroke-width: 11; }   /* stroke set inline (team jersey color) */
 .bz-bat { stroke: #c08a4e; stroke-width: 9; }
+.bz-helmet { stroke: rgba(0, 0, 0, 0.22); stroke-width: 1; }
 /* Strike-zone 3D box */
 .ps-zone-back { fill: none; stroke: rgba(150, 195, 255, 0.35); stroke-width: 1.5; }
 .ps-zone-face2 { fill: rgba(70, 150, 240, 0.10); stroke: rgba(150, 195, 255, 0.30); stroke-width: 1; }
