@@ -5651,9 +5651,12 @@ function fieldPane(g) {
                   x="-7" y="-7" width="14" height="14"/>
           </g>
 
-          <!-- L22: batter overlay at home plate -->
+          <!-- L22: batter overlay in the batter's box, just above home plate
+               (was y=492 — jammed below the plate against the 500px edge,
+               looking detached). y=448 sits it at the plate, integrated into
+               the field and mirroring the pitcher at the mound. -->
           ${batterSurname
-              ? `<text class="field-batter-name" x="250" y="492" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
+              ? `<text class="field-batter-name" x="250" y="448" text-anchor="middle">${escapeHTML(batterSurname)}</text>`
               : ""}
 
           <!-- L23: runner names on occupied bases -->
