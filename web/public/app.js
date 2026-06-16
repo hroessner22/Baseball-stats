@@ -4307,6 +4307,7 @@ async function refreshGame(id) {
         // goes through the same scroll-preservation logic.
         safeSetHTML(gameView, renderGame(g));
         wireField3d();
+        handlePlayAutoSwitch(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -4331,6 +4332,7 @@ async function refreshGame(id) {
                 // Trigger a soft repaint so the new stat lines show.
                 safeSetHTML(gameView, renderGame(g));
         wireField3d();
+        handlePlayAutoSwitch(g);
             });
             if (hasGameBets(id)) {
                 hydrateRailLiveData(id).then(() => {
@@ -5762,6 +5764,8 @@ function fieldPane(g) {
           <!-- L24: count + outs broadcast chip -->
           ${countChip}
         </svg>
+        ${renderHitOverlay(g)}
+        ${renderPlayBlurb(g)}
         ${flavorChips && flavorChips.length
             ? `<div class="field-park-chips">
                  ${flavorChips.map((c) =>
@@ -5852,6 +5856,77 @@ function renderStrikeZone(pitches) {
           ${dots}
         </svg>
       </div>`;
+}
+
+// ── Ball-in-play: hit marker on the field + result blurb + auto-switch ──
+// The most recent completed PA this inning, and its hit (if a ball in play).
+function lastInningPlay(g) {
+    const plays = g && g.this_inning;
+    return Array.isArray(plays) && plays.length ? plays[plays.length - 1] : null;
+}
+function playHit(p) {
+    const pitches = (p && p.pitches) || [];
+    for (let i = pitches.length - 1; i >= 0; i--) {
+        if (pitches[i].hit && pitches[i].hit.coord_x != null) return pitches[i].hit;
+    }
+    return null;
+}
+// Statcast hit-chart coords (home ≈ 125.42, 198.27; +x right, lower y deeper)
+// → the field SVG (home 250,455). K is a rough scale; calibrate on live hits.
+function hitToSvg(hit) {
+    const K = 1.7;
+    const dx = (Number(hit.coord_x) - 125.42) * K;
+    const dy = (198.27 - Number(hit.coord_y)) * K;   // + = deeper
+    return {
+        x: Math.max(55, Math.min(445, 250 + dx)),
+        y: Math.max(150, Math.min(452, 455 - dy)),
+    };
+}
+function renderHitOverlay(g) {
+    const hit = playHit(lastInningPlay(g));
+    if (!hit) return "";
+    const { x, y } = hitToSvg(hit);
+    const ground = String(hit.trajectory || "").includes("ground");
+    const cx = (250 + x) / 2;
+    const cy = ground ? (455 + y) / 2 : Math.min(y, 455) - 95;     // arc up for fly balls
+    const d = ground
+        ? `M 250 455 L ${x.toFixed(1)} ${y.toFixed(1)}`
+        : `M 250 455 Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    return `<svg class="hit-overlay" viewBox="0 0 500 500" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <path class="hit-arc" d="${d}"/>
+              <circle class="hit-spot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10"/>
+              <circle class="hit-core" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5"/>
+            </svg>`;
+}
+function renderPlayBlurb(g) {
+    const p = lastInningPlay(g);
+    if (!p || !p.description) return "";
+    const hit = playHit(p);
+    const bits = hit ? [
+        hit.exit_velo ? `${hit.exit_velo} mph` : null,
+        hit.distance ? `${hit.distance} ft` : null,
+        hit.launch_angle != null ? `${hit.launch_angle}°` : null,
+    ].filter(Boolean).join(" · ") : "";
+    return `<div class="play-blurb">
+              <div class="pb-desc">${escapeHTML(p.description)}</div>
+              ${bits ? `<div class="pb-meta">${escapeHTML(bits)}</div>` : ""}
+            </div>`;
+}
+// Auto-switch to the Field view the moment a NEW ball in play lands.
+let _lastBipKey = null;
+function handlePlayAutoSwitch(g) {
+    if (!gameView) return;
+    const p = lastInningPlay(g);
+    if (!playHit(p)) return;
+    const key = `${g.game_pk}:${p.pa_index}`;
+    if (key === _lastBipKey) return;        // already handled this BIP
+    _lastBipKey = key;
+    try { localStorage.setItem("dc_field_view", "field"); } catch {}
+    const pane = gameView.querySelector(".field-pane");
+    if (!pane) return;
+    pane.classList.remove("view-pitch");
+    pane.classList.add("view-field", "play-pop");
+    setTimeout(() => pane.classList.remove("play-pop"), 2400);
 }
 
 function renderThisInning(g) {

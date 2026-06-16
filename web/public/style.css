@@ -4011,6 +4011,32 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .pitch-view .sz-head { text-align: center; }
 .pv-empty { color: var(--text-faint); font-size: 13px; }
 
+/* Ball-in-play: hit arc/landing on the field + result blurb (Field view only). */
+.hit-overlay { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.field-pane.view-pitch .hit-overlay { display: none; }
+.hit-arc {
+    fill: none; stroke: #FCD34D; stroke-width: 3; stroke-linecap: round;
+    opacity: 0.92; filter: drop-shadow(0 0 4px rgba(252, 211, 77, 0.5));
+}
+.hit-spot { fill: rgba(252, 211, 77, 0.26); }
+.hit-core { fill: #FCD34D; stroke: #fff; stroke-width: 1.5; }
+.play-blurb {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 6; max-width: 88%; text-align: center;
+    background: rgba(12, 18, 30, 0.93); border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px; padding: 9px 16px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+.field-pane.view-pitch .play-blurb { display: none; }
+.pb-desc { font-size: 14px; font-weight: 600; color: #e8eef7; line-height: 1.35; }
+.pb-meta { font-size: 11px; color: var(--accent-win); margin-top: 3px; letter-spacing: 0.03em; }
+.field-pane.play-pop .play-blurb { animation: blurb-pop 0.42s ease; }
+.field-pane.play-pop .hit-core { animation: hit-pulse 0.7s ease 2; }
+@keyframes blurb-pop {
+    0% { transform: translateX(-50%) translateY(10px) scale(0.92); opacity: 0; }
+    100% { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+}
+@keyframes hit-pulse { 0%, 100% { r: 4.5; } 50% { r: 8.5; } }
+
 /* Strike-zone plot (catcher's view) — current at-bat's pitches in the zone. */
 .strike-zone { margin: 8px 0 4px; }
 .sz-head {
