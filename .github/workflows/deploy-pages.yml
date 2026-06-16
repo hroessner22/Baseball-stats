@@ -37,6 +37,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ff80f95677946c61847cd70182fbcebe
+          wranglerVersion: "4.93.1"   # pin so CI matches local + skips the npx auto-install prompt
           # Run from web/ so the adjacent functions/ dir is bundled
           # alongside the public/ static assets (same as the local
           # `wrangler pages deploy ./public` invocation).
