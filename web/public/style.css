@@ -4073,11 +4073,13 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     font-size: 10.5px; color: var(--text-dim);
     text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px;
 }
-.sz-svg { width: 156px; height: 198px; display: block; }
+.sz-svg { width: 156px; height: 204px; display: block; }
 .sz-box { fill: rgba(255, 255, 255, 0.045); stroke: rgba(255, 255, 255, 0.55); stroke-width: 1.6; }
 .sz-grid { stroke: rgba(255, 255, 255, 0.16); stroke-width: 1; }
+.sz-plate { fill: rgba(255, 255, 255, 0.9); stroke: rgba(0, 0, 0, 0.35); stroke-width: 0.8; }
 .sz-num { font: 700 9px 'Inter', sans-serif; fill: #fff; pointer-events: none; }
 .sz-pitch { cursor: help; }
+.sz-empty { text-align: center; font-size: 11px; color: var(--text-faint); margin-top: 6px; }
 
 /* Explain-on-hover tooltip (any element with data-tip). See initTips(). */
 .dc-tip {

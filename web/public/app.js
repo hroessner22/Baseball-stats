@@ -5607,7 +5607,7 @@ function fieldPane(g) {
     // games default to Pitch so you watch the count build; the auto-switcher
     // snaps to Field on a ball in play and back to Pitch for the next batter.
     const fvMode = getFieldView(isLive);
-    const pitchZone = renderStrikeZone(g.current_pitches);
+    const pitchZone = renderStrikeZone(g.current_pitches, { alwaysShow: true });
     return `
       <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""} view-${fvMode}" style="--we-intensity:${intensity}">
         ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
@@ -5831,9 +5831,11 @@ const SZ_COLOR = {
     F: "#f59e0b", "L": "#f59e0b", "O": "#f59e0b",             // foul
     X: "#22c55e", D: "#22c55e", E: "#22c55e",                  // in play
 };
-function renderStrikeZone(pitches) {
+function renderStrikeZone(pitches, opts) {
     const pts = (pitches || []).filter((p) => p && p.px != null && p.pz != null);
-    if (!pts.length) return "";
+    // The main Pitch view always shows the zone box (pitches drop in as they
+    // come). Inline uses (rail / PA detail) stay empty until there's data.
+    if (!pts.length && !opts?.alwaysShow) return "";
     const W = 156, H = 198, padX = 16, padY = 14;
     const XMIN = -1.8, XMAX = 1.8, ZMIN = 0.3, ZMAX = 4.5;
     const sx = (x) => padX + ((x - XMIN) / (XMAX - XMIN)) * (W - 2 * padX);
@@ -5852,17 +5854,30 @@ function renderStrikeZone(pitches) {
                   <text x="${cx}" y="${(parseFloat(cy) + 3).toFixed(1)}" text-anchor="middle" class="sz-num">${p.number || i + 1}</text>
                 </g>`;
     }).join("");
+    // Home plate, catcher's view: a white pentagon centered under the zone so
+    // the box reads as a real strike zone even before any pitch is plotted.
+    const plateY = H - 8, plateW = bw * 0.9, pcx = bx + bw / 2;
+    const plate = `M ${(pcx - plateW / 2).toFixed(1)} ${plateY} `
+        + `L ${(pcx + plateW / 2).toFixed(1)} ${plateY} `
+        + `L ${(pcx + plateW / 2).toFixed(1)} ${(plateY + 5).toFixed(1)} `
+        + `L ${pcx.toFixed(1)} ${(plateY + 11).toFixed(1)} `
+        + `L ${(pcx - plateW / 2).toFixed(1)} ${(plateY + 5).toFixed(1)} Z`;
+    const emptyHint = !pts.length
+        ? `<div class="sz-empty">Waiting for the first pitch…</div>`
+        : "";
     return `
       <div class="strike-zone">
         <div class="sz-head">Strike zone · catcher's view</div>
-        <svg viewBox="0 0 ${W} ${H}" class="sz-svg" preserveAspectRatio="xMidYMid meet">
+        <svg viewBox="0 0 ${W} ${H + 6}" class="sz-svg" preserveAspectRatio="xMidYMid meet">
           <rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" class="sz-box"/>
           <line x1="${g1x.toFixed(1)}" y1="${by.toFixed(1)}" x2="${g1x.toFixed(1)}" y2="${(by + bh).toFixed(1)}" class="sz-grid"/>
           <line x1="${g2x.toFixed(1)}" y1="${by.toFixed(1)}" x2="${g2x.toFixed(1)}" y2="${(by + bh).toFixed(1)}" class="sz-grid"/>
           <line x1="${bx.toFixed(1)}" y1="${g1y.toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${g1y.toFixed(1)}" class="sz-grid"/>
           <line x1="${bx.toFixed(1)}" y1="${g2y.toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${g2y.toFixed(1)}" class="sz-grid"/>
+          <path d="${plate}" class="sz-plate"/>
           ${dots}
         </svg>
+        ${emptyHint}
       </div>`;
 }
 
