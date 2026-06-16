@@ -1,0 +1,47 @@
+name: Kalshi slate markets cache
+
+# Fetches the Kalshi slate series (moneyline / spread / total) from a
+# GitHub runner IP — which, unlike Cloudflare's shared worker egress IP,
+# is NOT rate-limited by Kalshi — and upserts them into the Supabase
+# kalshi_series_cache table. The Cloudflare worker reads from that table
+# instead of hitting Kalshi directly. See src/kalshi_markets.py.
+on:
+  schedule:
+    # Every 5 minutes (the minimum GitHub allows). Slate STRUCTURE
+    # (which games/markets exist) changes slowly, so this is ample;
+    # live prices hydrate client-side from the orderbook regardless.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+# If a run is still going when the next 5-min tick fires, skip the new
+# one rather than stacking — the next tick will refresh anyway.
+concurrency:
+  group: kalshi-markets
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install --quiet certifi cryptography
+
+      - name: Fetch + cache Kalshi slate markets
+        env:
+          KALSHI_API_KEY_ID:    ${{ secrets.KALSHI_API_KEY_ID }}
+          KALSHI_PRIVATE_KEY:   ${{ secrets.KALSHI_PRIVATE_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -m src.kalshi_markets
