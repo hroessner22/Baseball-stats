@@ -357,6 +357,12 @@ function parsePitches(playEvents) {
             count_after: e.count
                 ? { balls: e.count.balls, strikes: e.count.strikes }
                 : null,
+            // Pitch location for the strike-zone plot (matches game/[id].js).
+            px:     e.pitchData?.coordinates?.pX != null ? Math.round(e.pitchData.coordinates.pX * 100) / 100 : null,
+            pz:     e.pitchData?.coordinates?.pZ != null ? Math.round(e.pitchData.coordinates.pZ * 100) / 100 : null,
+            sz_top: e.pitchData?.strikeZoneTop != null ? Math.round(e.pitchData.strikeZoneTop * 100) / 100 : null,
+            sz_bot: e.pitchData?.strikeZoneBottom != null ? Math.round(e.pitchData.strikeZoneBottom * 100) / 100 : null,
+            zone:   e.pitchData?.zone ?? null,
             // Statcast hit data — exit velo, distance, launch angle.
             // Matches the shape in shapePitchEvent() over in
             // game/[id].js so renderPitchRow() handles both.
