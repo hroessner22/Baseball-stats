@@ -137,25 +137,27 @@ function darken(hex, f) {
     return `rgb(${r},${g},${b})`;
 }
 
-// "Field" (diagram) vs "Pitch" (strike zone) view of the game. With no saved
-// preference, live games open on Pitch (watch the count build) and everything
-// else on Field (the stadium / final).
-function getFieldView(isLive) {
-    try {
-        const v = localStorage.getItem("dc_field_view");
-        if (v === "pitch" || v === "field") return v;
-    } catch {}
-    return isLive ? "pitch" : "field";
+// "Field" (diagram) vs "Pitch" (strike zone) view. A live game opens on Pitch
+// (watch the count build); non-live opens on Field. Once the user manually
+// picks a view it's PINNED, so the auto-switcher never resets it (e.g. they go
+// to Field and it stays there). State resets to the default when you open a
+// different game.
+let _viewMode = null, _viewPinned = false, _viewGamePk = null;
+function viewModeFor(g, isLive) {
+    const pk = g?.game_pk ?? null;
+    if (pk !== _viewGamePk) { _viewGamePk = pk; _viewMode = null; _viewPinned = false; }
+    return _viewMode || (isLive ? "pitch" : "field");
 }
-// Toggle handler (delegated — survives re-renders). Flips the class instantly.
+// Toggle handler (delegated — survives re-renders). Flips the class instantly
+// and pins the user's choice so auto-switching stops.
 if (typeof document !== "undefined") {
     document.addEventListener("click", (e) => {
         const btn = e.target.closest && e.target.closest("[data-fv]");
         if (!btn) return;
-        const mode = btn.getAttribute("data-fv") === "pitch" ? "pitch" : "field";
-        try { localStorage.setItem("dc_field_view", mode); } catch {}
+        _viewMode = btn.getAttribute("data-fv") === "pitch" ? "pitch" : "field";
+        _viewPinned = true;
         const pane = btn.closest(".field-pane");
-        if (pane) { pane.classList.remove("view-field", "view-pitch"); pane.classList.add("view-" + mode); }
+        if (pane) { pane.classList.remove("view-field", "view-pitch"); pane.classList.add("view-" + _viewMode); }
     });
 }
 
@@ -5632,7 +5634,7 @@ function fieldPane(g) {
     // a class on .field-pane flips which shows (instant, no re-render). Live
     // games default to Pitch so you watch the count build; the auto-switcher
     // snaps to Field on a ball in play and back to Pitch for the next batter.
-    const fvMode = getFieldView(isLive);
+    const fvMode = viewModeFor(g, isLive);
     const pitchScene = renderPitchScene(g);
     return `
       <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""} view-${fvMode}" style="--we-intensity:${intensity}">
@@ -6200,12 +6202,13 @@ function renderPlayBlurb(g) {
 let _lastBipKey = null;
 let _lastAbKey = null;
 function setFieldView(pane, mode) {
-    try { localStorage.setItem("dc_field_view", mode); } catch {}
+    _viewMode = mode;
     pane.classList.remove("view-field", "view-pitch");
     pane.classList.add("view-" + mode);
 }
 function handlePlayAutoSwitch(g) {
     if (!gameView || g.status !== "Live") return;
+    if (_viewPinned) return;                       // user picked a view — leave it
     const pane = gameView.querySelector(".field-pane");
     if (!pane) return;
 
