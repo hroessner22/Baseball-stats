@@ -79,7 +79,7 @@ export async function onRequest(context) {
     try {
         const [marketsRes, savantRes] = await Promise.allSettled([
             kalshiOnly
-                ? listKalshiMlbMarkets({ perGameOnly: true, botOnly: true, diag: kalshiDiag })
+                ? listKalshiMlbMarkets({ perGameOnly: true, botOnly: true, diag: kalshiDiag, env })
                 : listAllMlbMarkets(env, { perGameOnly: true }),
             fetchSavantWe(gameId),
         ]);
