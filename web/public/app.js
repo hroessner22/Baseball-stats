@@ -1272,7 +1272,12 @@ async function refreshMarketsDashboard() {
         }
         data._game_lookup = gameLookup;
         filterToKalshi(data);
+        // Preserve the user's scroll position across the 10s auto-refresh —
+        // replacing innerHTML resets marketsView.scrollTop to 0, which made the
+        // list jump back to the top mid-scroll. Capture before, restore after.
+        const prevScroll = marketsView.scrollTop;
         marketsView.innerHTML = renderMarketsDashboard(data);
+        marketsView.scrollTop = prevScroll;
         hydrateKalshiBookCells();
         bindMarketsSubToggle();
         // The dashboard render replaces the entire innerHTML which
