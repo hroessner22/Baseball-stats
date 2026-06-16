@@ -369,6 +369,8 @@ function shapePitchEvent(e) {
             distance:     hd.totalDistance != null ? Math.round(hd.totalDistance) : null,
             launch_angle: hd.launchAngle != null ? Math.round(hd.launchAngle) : null,
             trajectory:   hd.trajectory || null,
+            coord_x:      hd.coordinates?.coordX ?? null,
+            coord_y:      hd.coordinates?.coordY ?? null,
         } : null,
     };
 }
