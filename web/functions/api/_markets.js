@@ -434,7 +434,18 @@ export async function listKalshiMlbMarkets(opts = {}) {
     // sportsbook adapters. 2026-06-12: without this trim, the per-game
     // endpoint silently lost KXMLBHIT / KXMLBHR / KXMLBKS / KXMLBTB
     // / KXMLBHRR fetches to the connection pool, killing every prop fire.
-    const series = opts.botOnly
+    const series = opts.gameDayOnly
+        // Slate-dashboard path (/api/markets?scope=game_day). filterToGameDay
+        // keeps ONLY moneyline + spread + total, so fetch ONLY the three series
+        // that produce them. Fetching all ~53 series sequentially (550ms gap
+        // each) took ~29s — past the 8s health-check timeout, which is what
+        // pinned the 'Degraded: our_markets' banner permanently. Three series
+        // is ~1s.
+        ? KALSHI_SERIES.filter((s) =>
+            s.type === "game" ||
+            s.type === "per_game_spread" ||
+            s.type === "per_game_total")
+        : opts.botOnly
         // Bot path: only what the bot bets — moneylines + player props. Skipping
         // the team-prop series (spread/total/F5/RFI) halves the request count,
         // which keeps us under Kalshi's burst rate limit so the prop series
@@ -1248,9 +1259,14 @@ export async function listAllMlbMarkets(env, opts = {}) {
     // skip its season-futures series (saves ~20 subrequests, keeps the
     // per_game_player fetches inside the free-tier budget).
     const perGameOnly = !!opts.perGameOnly;
+    // gameDayOnly: the slate dashboard only renders moneyline/spread/total, so
+    // Kalshi fetches just those 3 series instead of all ~53 — see
+    // listKalshiMlbMarkets. Keeps /api/markets?scope=game_day under the health
+    // check's 8s budget.
+    const gameDayOnly = !!opts.gameDayOnly;
     const ALL_ADAPTERS = [
         ["polymarket", listPolymarketMlbMarkets],
-        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly })],
+        ["kalshi",     () => listKalshiMlbMarkets({ perGameOnly, gameDayOnly })],
         ["manifold",   listManifoldMlbMarkets],
         ["odds_api",   () => listOddsApiMlbMarkets(env || {})],
         ["bovada",     listBovadaMlbMarkets],

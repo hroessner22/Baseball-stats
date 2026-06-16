@@ -42,7 +42,13 @@ export async function onRequest(context) {
         // Cloudflare's subrequest/CPU budgets and 503s the endpoint.
         // This is the prevention half of the 'degraded our_markets'
         // fix; the recovery half lives in public/health.js.
-        markets = await listAllMlbMarkets(env, { source: sourceFilter || null });
+        // scope=game_day only renders moneyline/spread/total — tell the
+        // adapters (Kalshi especially) to skip the futures + per-game-prop
+        // series so the call stays fast and under the health check's budget.
+        markets = await listAllMlbMarkets(env, {
+            source: sourceFilter || null,
+            gameDayOnly: scope === "game_day",
+        });
         initialDiagnostics = markets._diagnostics || null;
     } catch (e) {
         return new Response(
