@@ -6147,23 +6147,25 @@ function playHit(p) {
     }
     return null;
 }
-// Statcast hit-chart coords (home ≈ 125.42, 198.27; +x toward 1B/RF, smaller y
-// = deeper) → the field SVG (home 250,455, CF straight up). We work in spray
-// angle + distance so the ball always points the right way and stays on the
-// field, then scale distance to the field (shorter toward the foul lines).
+// MLB Gameday hit coords → the field SVG. Home ≈ (125.42, 203.74); +x toward
+// 1B/RF, smaller y = deeper. Calibrated on real plays (CF flies ≈ coordY 80,
+// RF single (156,98), infield grounders ≈ coordY 150). We work in spray angle
+// + distance (≈2.3 ft/coord-unit), then map feet onto the (non-to-scale) field
+// diagram — the infield is exaggerated, the outfield compressed.
 function hitToSvg(hit) {
     const dx = Number(hit.coord_x) - 125.42;
-    const dy = 198.27 - Number(hit.coord_y);            // deeper = positive
+    const dy = 203.74 - Number(hit.coord_y);            // deeper = positive
     const ang = Math.atan2(dx, Math.max(dy, 0.001));    // 0 = CF, + = right (1B)
-    const angDeg = Math.max(-48, Math.min(48, ang * 180 / Math.PI));
-    const dist = Math.hypot(dx, dy);
-    const d01 = Math.max(0, Math.min(1, dist / 175));   // ~175 hc units ≈ wall
-    const rMax = 365 - Math.abs(angDeg) / 48 * 95;      // CF deepest, lines shorter
-    const r = 50 + d01 * (rMax - 50);
+    const angDeg = Math.max(-47, Math.min(47, ang * 180 / Math.PI));
+    const feet = Math.hypot(dx, dy) * 2.3;              // coord units → feet
+    // Feet → svg radius: home→2B (≈127 ft) drawn big, the outfield compressed.
+    let r = feet <= 127 ? feet * 2.0 : 254 + (feet - 127) * 0.46;
+    const rMax = 380 - Math.abs(angDeg) / 47 * 110;     // CF deepest, lines shortest
+    r = Math.min(r, rMax);
     const a = angDeg * Math.PI / 180;
     return {
         x: Math.max(55, Math.min(445, 250 + Math.sin(a) * r)),
-        y: Math.max(95, Math.min(450, 455 - Math.cos(a) * r)),
+        y: Math.max(80, Math.min(452, 455 - Math.cos(a) * r)),
     };
 }
 // Drawn INSIDE the field <svg> so it shares the field's coordinate system
