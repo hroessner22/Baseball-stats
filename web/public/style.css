@@ -4004,10 +4004,50 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
 .pitch-view {
     position: absolute; inset: 0; z-index: 4;
     display: flex; align-items: center; justify-content: center;
-    flex-direction: column; gap: 8px;
+    flex-direction: column; padding: 12px;
 }
-/* Big, centered strike zone for the main Pitch view. */
-.pitch-view .strike-zone { transform: scale(1.7); transform-origin: center; }
+/* Wide behind-the-plate scene for the main Pitch view. */
+.pitch-scene {
+    width: 100%; max-width: 560px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.ps-head {
+    font: 700 13px 'Inter', sans-serif; letter-spacing: 0.04em;
+    color: var(--text); text-transform: uppercase;
+}
+.ps-svg {
+    width: 100%; height: auto; display: block;
+    border-radius: 12px; overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+/* Batter silhouette standing in the box. */
+.sz-batter .bsil { fill: rgba(8, 12, 20, 0.86); stroke: rgba(255, 255, 255, 0.10); stroke-width: 0.6; }
+.sz-batter .bbat { fill: rgba(22, 28, 40, 0.96); }
+/* The newest pitch flying in from the mound to its spot. */
+.sz-incoming {
+    fill: #fff; opacity: 0; offset-distance: 0%;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.9));
+}
+.pitch-scene.pitch-throw .sz-incoming { animation: sz-fly 0.5s ease-in forwards; }
+.pitch-scene.pitch-throw .sz-latest {
+    transform-box: fill-box; transform-origin: center;
+    animation: sz-dot-in 0.25s ease 0.42s both;
+}
+@keyframes sz-fly {
+    0%   { offset-distance: 0%;   opacity: 0.25; r: 1.5; }
+    25%  { opacity: 1; }
+    100% { offset-distance: 100%; opacity: 1; r: 6; }
+}
+@keyframes sz-dot-in {
+    from { opacity: 0; transform: scale(0.2); }
+    to   { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pitch-scene.pitch-throw .sz-incoming,
+    .pitch-scene.pitch-throw .sz-latest { animation: none; }
+    .sz-incoming { opacity: 0; }
+}
 .pitch-view .sz-head { text-align: center; }
 .pv-empty { color: var(--text-faint); font-size: 13px; }
 

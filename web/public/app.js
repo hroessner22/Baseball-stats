@@ -4313,6 +4313,7 @@ async function refreshGame(id) {
         safeSetHTML(gameView, renderGame(g));
         wireField3d();
         handlePlayAutoSwitch(g);
+        handlePitchThrow(g);
         if (g.status === "Live" && g.batter?.id && g.pitcher?.id) {
             // Pass the live count so the matchup engine returns
             // count-aware rates (e.g. Judge on 3-0 vs Judge on 0-2 look
@@ -4338,6 +4339,7 @@ async function refreshGame(id) {
                 safeSetHTML(gameView, renderGame(g));
         wireField3d();
         handlePlayAutoSwitch(g);
+        handlePitchThrow(g);
             });
             if (hasGameBets(id)) {
                 hydrateRailLiveData(id).then(() => {
@@ -5607,7 +5609,7 @@ function fieldPane(g) {
     // games default to Pitch so you watch the count build; the auto-switcher
     // snaps to Field on a ball in play and back to Pitch for the next batter.
     const fvMode = getFieldView(isLive);
-    const pitchZone = renderStrikeZone(g.current_pitches, { alwaysShow: true });
+    const pitchScene = renderPitchScene(g);
     return `
       <div class="field-pane ${railContent ? "has-narrative" : ""} ${hasParkPhoto ? "has-park-photo" : ""} ${has3d ? "has-3d" : ""} view-${fvMode}" style="--we-intensity:${intensity}">
         ${railContent ? `<aside class="field-narrative">${railContent}</aside>` : ""}
@@ -5617,7 +5619,7 @@ function fieldPane(g) {
           <button type="button" class="fv-btn" data-fv="pitch" role="tab">Pitch</button>
         </div>
         <div class="pitch-view">
-          ${pitchZone || `<div class="pv-empty">No pitches this at-bat yet</div>`}
+          ${pitchScene}
         </div>
         ${has3d ? `<div class="field3d-mount" data-venue-id="${g.venue_id}"></div>` : ""}
         ${hasParkPhoto ? `<div class="park-backdrop" style="background-image:url('parks/${homeTri}.jpg')"></div>` : ""}
@@ -5825,6 +5827,113 @@ function trimLeadingBatterName(desc, fullName) {
 // zone as a 3x3 grid with each pitch dropped at its real (pX, pZ) location,
 // colored by outcome. Like the MLB.tv "Batter" overlay. Empty until pitch
 // coordinates are present (live games with Statcast tracking).
+// ── Main "Pitch" view: a behind-the-plate scene ───────────────────────────
+// A wide catcher's-POV scene — stylized ballpark backdrop, the strike zone
+// floating over the plate, the batter standing in on the correct side, and
+// every pitch this at-bat dropped where it crossed. The newest pitch flies in
+// from the mound to its spot (animation driven by handlePitchThrow()).
+function renderPitchScene(g) {
+    const pitches = (g.current_pitches || []).filter((p) => p && p.px != null && p.pz != null);
+    const W = 300, H = 250;
+    const PLATE_X = 150, GROUND = 212;          // plate center; ground line (z=0)
+    const K = 46;                               // px per foot (same both axes)
+    const sx = (ft) => PLATE_X + ft * K;
+    const sy = (z)  => GROUND - z * K;
+    const last = [...pitches].reverse().find((p) => p.sz_top != null && p.sz_bot != null);
+    const zTop = last?.sz_top ?? 3.4, zBot = last?.sz_bot ?? 1.6;
+    const bx = sx(-0.708), bw = sx(0.708) - sx(-0.708), by = sy(zTop), bh = sy(zBot) - sy(zTop);
+    const g1x = bx + bw / 3, g2x = bx + 2 * bw / 3, g1y = by + bh / 3, g2y = by + 2 * bh / 3;
+
+    // Which box does the batter stand in? Catcher's view: a right-handed
+    // hitter is on the LEFT of the zone, a lefty on the RIGHT. Switch hitters
+    // take the box opposite the pitcher's hand.
+    let side = (g.batter?.bats || "R").toUpperCase();
+    if (side === "S") side = (g.pitcher?.throws || "R").toUpperCase() === "L" ? "R" : "L";
+    const batterLeft = side === "R";            // RHB → left side of the zone
+    const batter = g.batter
+        ? batterSilhouette(batterLeft ? 76 : 224, GROUND, !batterLeft)
+        : "";
+
+    // Pitch dots, oldest first; the last one is the "current" pitch.
+    const dots = pitches.map((p, i) => {
+        const isLast = i === pitches.length - 1;
+        const c = SZ_COLOR[p.result_code] || "#cbd5e1";
+        const cx = sx(p.px).toFixed(1), cy = sy(p.pz).toFixed(1);
+        return `<g class="sz-pitch ${isLast ? "sz-latest" : ""}" data-tip="#${p.number || i + 1} ${escapeHTMLAttr(p.type || "")}${p.velo ? ` · ${p.velo} mph` : ""} — ${escapeHTMLAttr(p.result || "")}">
+                  <circle cx="${cx}" cy="${cy}" r="${isLast ? 7.5 : 6}" fill="${c}"
+                          stroke="${isLast ? "#fff" : "rgba(0,0,0,.45)"}" stroke-width="${isLast ? 2 : 1}"/>
+                  <text x="${cx}" y="${(parseFloat(cy) + 3).toFixed(1)}" text-anchor="middle" class="sz-num">${p.number || i + 1}</text>
+                </g>`;
+    }).join("");
+
+    // The newest pitch flies in from the pitcher's release point (top of the
+    // mound) to its plate location. offset-path traces the flight; the CSS
+    // animation runs only while .pitch-throw is on the scene root.
+    const lp = pitches[pitches.length - 1];
+    const incoming = lp
+        ? `<circle class="sz-incoming" cx="0" cy="0" r="6"
+                   style="offset-path:path('M ${PLATE_X} 60 L ${sx(lp.px).toFixed(1)} ${sy(lp.pz).toFixed(1)}')"/>`
+        : "";
+
+    const headLine = lp
+        ? `${lp.velo ? `${lp.velo} mph ` : ""}${escapeHTML(lp.type || "")}`.trim() || "Strike zone · catcher's view"
+        : "Strike zone · catcher's view";
+    const emptyHint = !pitches.length ? `<div class="sz-empty">Waiting for the first pitch…</div>` : "";
+
+    return `
+      <div class="pitch-scene">
+        <div class="ps-head">${escapeHTML(headLine)}</div>
+        <svg viewBox="0 0 ${W} ${H}" class="ps-svg" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <linearGradient id="ps-sky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#1b2942"/><stop offset="100%" stop-color="#243a26"/>
+            </linearGradient>
+            <linearGradient id="ps-grass" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#3f7a37"/><stop offset="100%" stop-color="#2c5a27"/>
+            </linearGradient>
+            <radialGradient id="ps-mound" cx="0.5" cy="0.4" r="0.7">
+              <stop offset="0%" stop-color="#c08a4e"/><stop offset="100%" stop-color="#9c6c3a"/>
+            </radialGradient>
+          </defs>
+          <!-- backdrop: stands, grass, mound, foreground dirt -->
+          <rect x="0" y="0" width="${W}" height="86" fill="url(#ps-sky)"/>
+          <rect x="0" y="70" width="${W}" height="6" fill="#16321a"/>
+          <rect x="0" y="76" width="${W}" height="${H - 76}" fill="url(#ps-grass)"/>
+          <ellipse cx="${PLATE_X}" cy="74" rx="60" ry="15" fill="url(#ps-mound)"/>
+          <rect x="${PLATE_X - 6}" y="71" width="12" height="3" rx="1" fill="#f2f2f2" opacity="0.9"/>
+          <ellipse cx="${PLATE_X}" cy="${GROUND + 8}" rx="120" ry="40" fill="#9c6c3a" opacity="0.85"/>
+          ${batter}
+          <!-- strike zone -->
+          <rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" class="sz-box"/>
+          <line x1="${g1x.toFixed(1)}" y1="${by.toFixed(1)}" x2="${g1x.toFixed(1)}" y2="${(by + bh).toFixed(1)}" class="sz-grid"/>
+          <line x1="${g2x.toFixed(1)}" y1="${by.toFixed(1)}" x2="${g2x.toFixed(1)}" y2="${(by + bh).toFixed(1)}" class="sz-grid"/>
+          <line x1="${bx.toFixed(1)}" y1="${g1y.toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${g1y.toFixed(1)}" class="sz-grid"/>
+          <line x1="${bx.toFixed(1)}" y1="${g2y.toFixed(1)}" x2="${(bx + bw).toFixed(1)}" y2="${g2y.toFixed(1)}" class="sz-grid"/>
+          <!-- home plate (catcher's view) -->
+          <path d="M ${(PLATE_X - 22)} ${GROUND} L ${(PLATE_X + 22)} ${GROUND} L ${(PLATE_X + 22)} ${GROUND + 6} L ${PLATE_X} ${GROUND + 14} L ${(PLATE_X - 22)} ${GROUND + 6} Z" class="sz-plate"/>
+          ${dots}
+          ${incoming}
+        </svg>
+        ${emptyHint}
+      </div>`;
+}
+
+// A clean dark batter silhouette in a hitting stance, feet at (cx, ground).
+// Drawn facing right; pass mirror=true to flip for the right-hand box.
+function batterSilhouette(cx, ground, mirror) {
+    const t = mirror ? `translate(${cx} ${ground}) scale(-1 1)` : `translate(${cx} ${ground})`;
+    return `
+      <g class="sz-batter" transform="${t}">
+        <rect class="bsil" x="-13" y="-46" width="9" height="48" rx="4.5" transform="rotate(9 -8 -22)"/>
+        <rect class="bsil" x="3"   y="-46" width="9" height="48" rx="4.5" transform="rotate(-7 8 -22)"/>
+        <rect class="bsil" x="-11" y="-86" width="23" height="46" rx="10"/>
+        <circle class="bsil" cx="3" cy="-95" r="8.5"/>
+        <path class="bsil" d="M -6 -96 a 9 8 0 0 1 18 0 l 0 2 a 9 6 0 0 0 -18 0 Z"/>
+        <rect class="bsil" x="5" y="-86" width="22" height="7.5" rx="3.7" transform="rotate(-20 6 -82)"/>
+        <rect class="bbat" x="-3" y="-124" width="6" height="42" rx="3" transform="rotate(30 0 -103)"/>
+      </g>`;
+}
+
 const SZ_COLOR = {
     C: "#ef4444", S: "#dc2626", W: "#dc2626", T: "#dc2626",  // called / swinging strike
     B: "#3b82f6", "*B": "#3b82f6",                             // ball
@@ -5975,6 +6084,26 @@ function handlePlayAutoSwitch(g) {
         _lastAbKey = abKey;
         setFieldView(pane, "pitch");
     }
+}
+
+// When a NEW pitch lands in the Pitch view, fly it in from the mound to its
+// spot. Fires once per pitch; skips the batch already on screen at page load.
+let _lastPitchKey = null;
+function handlePitchThrow(g) {
+    if (!gameView || g.status !== "Live") return;
+    const pitches = (g.current_pitches || []).filter((p) => p && p.px != null && p.pz != null);
+    if (!pitches.length) { _lastPitchKey = null; return; }
+    const lp = pitches[pitches.length - 1];
+    const key = `${g.game_pk}:${g.batter?.id}:${pitches.length}:${lp.number || ""}`;
+    if (_lastPitchKey === null) { _lastPitchKey = key; return; }   // don't animate stale on load
+    if (key === _lastPitchKey) return;
+    _lastPitchKey = key;
+    const scene = gameView.querySelector(".pitch-scene");
+    if (!scene) return;
+    scene.classList.remove("pitch-throw");
+    void scene.offsetWidth;                                        // restart the CSS animation
+    scene.classList.add("pitch-throw");
+    setTimeout(() => scene.classList.remove("pitch-throw"), 1000);
 }
 
 function renderThisInning(g) {
