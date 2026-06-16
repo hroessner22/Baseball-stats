@@ -388,6 +388,54 @@ async function getOrderbook(ticker) {
     } catch { return null; }
 }
 
+// ── Market-list fetch by series (bot prop scanning) ─────────────
+//
+// The bot needs the open prop markets for a series (KXMLBHR, KXMLBKS,
+// etc.). Going through the server-side _markets.js worker hammers a
+// single shared Cloudflare IP and gets 429-rate-limited by Kalshi.
+// Fetching from the browser instead — authenticated when connected
+// (high per-API-key limit), unauthenticated otherwise (the user's own
+// IP, far less contended than the shared worker) — bypasses that.
+//
+// Cached per series for a short window so a multi-game scan loop makes
+// at most one network call per series per window.
+const _seriesCache = new Map(); // seriesTicker -> { at, markets }
+const SERIES_CACHE_MS = 45_000;
+
+async function getMarketsBySeries(series) {
+    if (!series) return [];
+    const now = Date.now();
+    const hit = _seriesCache.get(series);
+    if (hit && now - hit.at < SERIES_CACHE_MS) return hit.markets;
+
+    const path = `/trade-api/v2/markets?series_ticker=${encodeURIComponent(series)}&status=open&limit=400`;
+    try {
+        let markets = [];
+        if (isConnected()) {
+            // Authenticated → high per-key rate limit.
+            const data = await callKalshi("GET", path);
+            markets = Array.isArray(data?.markets) ? data.markets : [];
+        } else {
+            // Unauthenticated, but from the browser IP (not the shared
+            // worker), so far less likely to be throttled.
+            const res = await fetch("/api/kalshi/proxy", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ method: "GET", path, headers: {}, body: null }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) markets = Array.isArray(data?.markets) ? data.markets : [];
+        }
+        _seriesCache.set(series, { at: now, markets });
+        return markets;
+    } catch {
+        // On failure, serve a stale cache entry if we have one rather
+        // than blanking the bot's prop list for this scan.
+        if (hit) return hit.markets;
+        return [];
+    }
+}
+
 function normalizeOrderbook(raw) {
     if (!raw) return null;
     // Old format already in [price_cents, contracts] — pass through.
@@ -1408,6 +1456,7 @@ root.Kalshi = {
     getSettlements,
     getFills,
     getOrderbook,
+    getMarketsBySeries,
     placeOrder,
     cancelOrder,
     openConnectModal,

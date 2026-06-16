@@ -925,11 +925,70 @@ async function scanOneGame(g) {
                 // Attach weather to the model-props payload so the
                 // prop scanner can read it without a second pass.
                 if (weather) mp.weather = weather;
+                // Fetch the prop markets client-side (authenticated →
+                // high rate limit) and merge into the worker payload,
+                // deduped by ticker. The worker's Kalshi prop list gets
+                // 429-throttled past the first series, so this is what
+                // actually feeds the prop scan reliably.
+                const clientProps = await fetchClientKalshiProps();
+                if (clientProps.length) {
+                    if (!d.markets) d.markets = {};
+                    const existing = d.markets.player_prop || [];
+                    const seen = new Set(
+                        existing.map((m) => m.raw_market_id).filter(Boolean)
+                    );
+                    const merged = existing.slice();
+                    for (const p of clientProps) {
+                        if (seen.has(p.raw_market_id)) continue;
+                        seen.add(p.raw_market_id);
+                        merged.push(p);
+                    }
+                    d.markets.player_prop = merged;
+                }
                 await scanPlayerProps(g, d, mp);
             }
         } catch (e) {
             log("err", `Player-prop scan failed for ${g.away}@${g.home}: ${e.message || e}`);
         }
+    }
+}
+
+// The five per-game player-prop series we scan. Same set the server
+// (_markets.js) pulls, but we fetch them CLIENT-SIDE through the
+// authenticated Kalshi wrapper so we hit the high per-API-key rate
+// limit instead of the shared-worker per-IP limit that was 429-ing
+// every series past the first.
+const BOT_PROP_SERIES = ["KXMLBHR", "KXMLBKS", "KXMLBHIT", "KXMLBTB", "KXMLBHRR"];
+
+// Fetch the open prop markets for all five series straight from the
+// browser and shape them the way scanPlayerProps expects:
+//   { source: "kalshi", title, raw_market_id: ticker }
+// We do NOT filter by game here — scanPlayerProps self-filters by the
+// model-props roster (`if (!mlbam) continue`), so feeding it every
+// game's props is correct and lets one fetch serve every game in the
+// scan loop (getMarketsBySeries caches each series ~45s).
+async function fetchClientKalshiProps() {
+    if (!root.Kalshi || !root.Kalshi.getMarketsBySeries) return [];
+    try {
+        const perSeries = await Promise.all(
+            BOT_PROP_SERIES.map((s) =>
+                root.Kalshi.getMarketsBySeries(s).catch(() => [])
+            )
+        );
+        const out = [];
+        for (const mkts of perSeries) {
+            for (const m of (mkts || [])) {
+                if (!m || !m.ticker) continue;
+                // Open markets only — Kalshi marks active as "active".
+                if (m.status && m.status !== "active" && m.status !== "open") continue;
+                const title = m.title || m.yes_sub_title || m.subtitle || "";
+                if (!title) continue;
+                out.push({ source: "kalshi", title, raw_market_id: m.ticker });
+            }
+        }
+        return out;
+    } catch {
+        return [];
     }
 }
 
