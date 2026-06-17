@@ -2888,9 +2888,7 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     flex: 1;
     min-width: 0;
     color: var(--text-dim);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.35;
 }
 .br-score {
     font-variant-numeric: tabular-nums;

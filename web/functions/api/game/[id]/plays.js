@@ -249,6 +249,36 @@ function parsePlays(data) {
         }
 
         if (r.type !== "atBat") continue;
+
+        // Baserunning events (stolen bases, wild pitches, passed balls,
+        // balks, pickoffs, advances) come through the MLB feed as "action"
+        // playEvents INSIDE the at-bat, not as separate top-level plays — so
+        // the top-level eventType check above never sees them. Walk the
+        // at-bat's playEvents and emit each as a thin "just say what happened"
+        // row. (Runs before the in-progress skip so a steal shows live.)
+        for (const e of (p.playEvents || [])) {
+            const det = e.details || {};
+            const et = det.eventType || "";
+            // Baserunning only — skip "game_advisory" (status changes / mound
+            // visits) which also live as action playEvents but aren't plays.
+            if (e.type === "action" && et !== "game_advisory"
+                && NON_PA_EVENT_TYPES.has(et) && det.description) {
+                out.push({
+                    play_index:    i,
+                    type:          "baserunning",
+                    event_type:    et,
+                    event_label:   r.event && et === r.eventType ? r.event : prettifyEventType(et),
+                    inning:        about.inning,
+                    half:          about.isTopInning ? "top" : "bottom",
+                    description:   det.description,
+                    runner_name:   null,
+                    runner_id:     null,
+                    score_after:   null,
+                    we_delta_home: null,
+                });
+            }
+        }
+
         // Skip PAs still in progress — they don't have a resolved
         // event yet, so there's nothing meaningful to compare the
         // model's prediction against.

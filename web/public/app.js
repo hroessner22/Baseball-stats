@@ -5101,8 +5101,11 @@ async function refreshGamecast(gameId) {
         const recent = (data.plays || []).slice(0, 12);
 
         // Predictions per unique pair, fetched in parallel. Cloudflare's
-        // edge cache collapses duplicates from the rest of the page.
-        const pairs = [...new Set(recent.map((p) => `${p.batter.id}-${p.pitcher.id}`))];
+        // edge cache collapses duplicates from the rest of the page. Baserunning
+        // rows have no batter/pitcher — skip them when building the pair list.
+        const pairs = [...new Set(recent
+            .filter((p) => p.type !== "baserunning" && p.batter && p.pitcher)
+            .map((p) => `${p.batter.id}-${p.pitcher.id}`))];
         const predictionMap = {};
         await Promise.all(pairs.map(async (key) => {
             const [b, p] = key.split("-");
@@ -5146,30 +5149,14 @@ function renderGamecast(plays, predictionMap, teams) {
 // header chips (inning, score, WE swing) so the gamecast flows
 // as one continuous story instead of skipping over runner moves.
 function renderBaserunningRow(ev, teams) {
+    // Thin one-liner — just say what happened. No avatar, no chips. The MLB
+    // description already names the runner and the result ("Witt steals 2nd").
     const inn = `${ev.half === "top" ? "▲" : "▼"} ${ordinalSuffix(ev.inning)}`;
-    const score = ev.score_after
-        ? `${ev.score_after.away}-${ev.score_after.home}`
-        : "";
-    const weDelta = ev.we_delta_home;
-    let weChip = "";
-    if (weDelta != null && Math.abs(weDelta) >= 0.0005 && teams) {
-        const winnerAbbr = weDelta >= 0
-            ? (teams.home?.abbr || "HOME")
-            : (teams.away?.abbr || "AWAY");
-        const sign = weDelta >= 0 ? "+" : "+";
-        weChip = `<span class="br-we-delta">${winnerAbbr} ${sign}${Math.abs(weDelta * 100).toFixed(1)}pp WE</span>`;
-    }
-    const runnerName = ev.runner_name
-        ? `<a class="br-runner player-link" href="#player/${ev.runner_id}">${escapeHtml(shortName(ev.runner_name))}</a>`
-        : "";
+    const text = ev.description || ev.event_label || "";
     return `
       <div class="br-row" data-event-type="${escapeHtml(ev.event_type)}">
         <span class="br-inning">${inn}</span>
-        <span class="br-event">${escapeHtml(ev.event_label)}</span>
-        ${runnerName}
-        <span class="br-desc">${escapeHtml(ev.description)}</span>
-        ${score ? `<span class="br-score">${score}</span>` : ""}
-        ${weChip}
+        <span class="br-desc">${escapeHtml(text)}</span>
       </div>
     `;
 }
