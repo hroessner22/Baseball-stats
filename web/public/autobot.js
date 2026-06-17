@@ -1543,8 +1543,16 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             // YES + 5pp for NO bet to have real edge. Below that the
             // bot is fighting the market AND the base rate.
             const MARGIN = 0.05;
-            // Data-backed probability for THIS side (hits/HR/TB) → size on it.
-            if (empPYes != null) empPSide = (side === "no") ? (1 - empPYes) : empPYes;
+            // STAT-AWARE probability source for sizing. The AVG-bucket empirical
+            // is CONTACT-based — reliable for hits, but it can't see POWER, so it
+            // badly UNDER-estimates total_bases / home_runs (verified: the >25¢
+            // total_bases-YES winners hit 69% while the bucket says ~30%). Sizing
+            // those on the empirical would zero out our best pocket. So: use the
+            // empirical to size HITS only; leave power stats (TB/HR) on the model
+            // (empPSide stays null → sizeContractsByKelly falls back to our_p).
+            if (empPYes != null && parsed.stat === "hits") {
+                empPSide = (side === "no") ? (1 - empPYes) : empPYes;
+            }
             if (empPYes != null && market_p != null &&
                 (1 - market_p) < (empPYes + MARGIN)) {
                 if (score) logScoredDecisionOnce(score, {

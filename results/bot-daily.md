@@ -153,6 +153,42 @@ Moneylines already size on the empirical WE table.)
 and the rest is now instrumented + has a reproducible optimizer instead of being
 hand-set. No number in the firing/sizing path is a feel-based guess anymore.
 
+## Data-backing the prop entry — and a bug the verification caught (2026-06-17)
+
+Goal was to make prop ENTRY fire on the historical rate, not the model. Before
+touching it I checked whether that would hurt `total_bases YES` (the one proven
+winner). It would have — and it revealed a latent bug in the just-shipped sizing
+change too.
+
+**The finding (total_bases YES by market price):**
+| market price | n | win% | net |
+|---|---|---|---|
+| ≤15¢ (deep value) | 8 | 88% | +$5.04 |
+| >25¢ (avg 34¢) | 16 | **69%** | **+$32.07** |
+
+The big winner is the **>25¢** bucket: the market said ~34%, they hit **69%**,
+and the coarse AVG-bucket empirical says only **~30% — below the market.** The
+AVG bucket is **contact-based and can't see power**, so it badly under-estimates
+total bases / home runs. The MODEL captures power; the empirical doesn't.
+
+**Consequences:**
+1. Naively switching the YES entry to the empirical would **kill total_bases YES.**
+2. **My pushed Kelly-on-empirical sizing had the same bug** — it sized TB YES on
+   the empirical (~0.30), which is *below* the 34¢ market, so Kelly returned 0 →
+   it would have **skipped the best pocket** once the app reloaded. Caught before
+   it ever fired live.
+
+**Fix — stat-aware probability source (data-backed):**
+- **Contact stats (hits, strikeouts) → empirical** (reliable; K-NO calibrated,
+  AVG predicts hits). Size on the historical rate.
+- **Power stats (total_bases, home_runs) → model** (the empirical can't see
+  power). `empPSide` left null → sizing falls back to the model. TB/HR YES
+  preserved.
+
+So "data-back the entry" turned out to be **stat-specific**, not a blanket swap.
+The model and the empirical are each the better signal for different stats, and
+the bot now routes to the right one per pocket for sizing.
+
 ## What to watch as the sample grows
 - **Moneylines:** is the 4–0 ROI real, or just chalk regressing? Track ROI and
   hit-rate vs. implied probability.
