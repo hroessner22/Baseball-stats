@@ -4455,8 +4455,8 @@ function renderGame(g) {
                 data-watch
                 data-game-pk="${g.game_pk}"
                 data-live="${g.status === 'Live' ? '1' : '0'}"
-                title="Picture-in-Picture — opens the MLB.tv feed and floats it in a PiP window."
-                aria-label="Watch in picture-in-picture">▶ PiP</button>
+                title="Watch — opens the MLB.tv feed in a picture-in-picture window."
+                aria-label="Watch in picture-in-picture">▶ Watch</button>
       </div>
       ${mode === 'gamecast'
         ? `<div id="gamecast-pane" class="gamecast-pane">${cachedGamecastHTML || gamecastLoadingShell()}</div>`
@@ -5046,14 +5046,14 @@ document.addEventListener("click", (e) => {
     // Gamecast / board Watch → pure picture-in-picture (DCWatch.start now uses
     // PiP mode, no theater/layout takeover). Theater is reserved for the bottom
     // Watch tab. Falls back to opening MLB.tv if the extension isn't installed.
+    // Gamecast / board / top Watch → picture-in-picture (DCWatch.start = PiP
+    // mode, no theater). Theater is only the bottom-panel Watch tab.
     const live = btn.getAttribute("data-live") === "1";
     if (window.DCWatch && document.documentElement.dataset.dcWatchExt === "1") {
         window.DCWatch.start(pk, live);
-        if (typeof flashWatchBtn === "function") flashWatchBtn(btn, "PiP…");
     } else {
         window.open(live ? `https://www.mlb.com/tv/g${pk}` : "https://www.mlb.com/tv",
                     "_blank", "noopener");
-        if (typeof flashWatchBtn === "function") flashWatchBtn(btn, "Opened MLB.tv ↗");
     }
 });
 
@@ -5820,7 +5820,6 @@ function fieldPane(g) {
                </div>`
             : ""}
         ${stateBanner}
-        ${situationStrip(g)}
         </div>
       </div>
     `;
