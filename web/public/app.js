@@ -5627,8 +5627,9 @@ function fieldPane(g) {
              ${g.pitcher ? matchupRow("pitching", g.pitcher.name, `${g.pitcher.throws}HP`, g.pitcher.id, pitcherStat) : ""}
            </div>`
         : "";
-    const betsRail = renderGameBetsCardRail(g);
-    const railContent = matchupCompact + betsRail + inningStrip;
+    // The bets card moved to the right card-pane (see cardPane) so the left
+    // rail keeps AT BAT / PITCHING and the live pitch section above the fold.
+    const railContent = matchupCompact + inningStrip;
     // 3D model takes precedence over the photo backdrop for parks we've built.
     const has3d = PARK_3D.has(homeTri) && g.venue_id != null
                   && window.MLB_PARKS && window.MLB_PARKS[g.venue_id];
@@ -6378,7 +6379,7 @@ function renderThisInning(g) {
         ? `<div class="ti-pitches">
              <div class="ti-pitches-head">Pitches (${g.current_pitches.length})</div>
              ${renderStrikeZone(g.current_pitches)}
-             ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).join("")}
+             ${g.current_pitches.map((p, i) => renderPitchRow(p, i)).reverse().join("")}
            </div>`
         : "";
     return `
@@ -6558,6 +6559,8 @@ function cardPane(g) {
     const we = g.win_expectancy;
     const homeAbbr = g.teams.home.abbr;
     const awayAbbr = g.teams.away.abbr;
+    // Your bets on this game — relocated here from the left rail.
+    const betsCard = renderGameBetsCardRail(g) || "";
 
     if (we == null) {
         return `
@@ -6567,6 +6570,7 @@ function cardPane(g) {
               <div class="situation-line">${(g.detail || g.status).toUpperCase()}</div>
               <div class="read">${preGameRead(g)}</div>
             </div>
+            ${betsCard}
           </div>
         `;
     }
@@ -6630,6 +6634,7 @@ function cardPane(g) {
 
           <div class="read">${liveRead(g, we)}</div>
         </div>
+        ${betsCard}
         <div id="trace-slot">${cachedTraceSlot}</div>
         ${g.status === "Final" ? `<div id="recap-slot">${cachedRecapSlot}</div>` : ""}
         <div id="matchup-slot">${cachedMatchupSlot}</div>
