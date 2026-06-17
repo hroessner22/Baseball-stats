@@ -84,23 +84,20 @@
   //   just the field on its own screen.
   function watch(gamePk, away, home, watchUrl, mode) {
     if (!extInstalled()) { openSetup(); return; }
-    mode = mode === "fullscreen" ? "fullscreen"
-         : mode === "pip" ? "pip" : "shift";
+    // Watching is always Picture-in-Picture now — never a theater/layout
+    // takeover. "pip" → small Document-PiP (Gamecast); anything else → the
+    // larger native PiP (bottom Watch tab).
+    mode = mode === "pip" ? "pip" : "native";
     if (gamePk) {
       try { location.hash = "#game/" + gamePk; } catch {}
     }
-    // "pip" hands straight off to the extension's auto-PiP with NO layout
-    // takeover (Gamecast / board Watch). "shift"/"fullscreen" change our page
-    // layout — only the bottom Watch tab uses theater (fullscreen).
-    if (mode !== "pip") setTheater(true, mode);
     const send = () => {
       window.postMessage(
         { source: "diamond-context", type: "DC_WATCH", gamePk, away, home, watchUrl, mode },
         "*"
       );
     };
-    // Let the view/layout settle, then hand off to the extension.
-    setTimeout(send, mode === "pip" ? 60 : 420);
+    setTimeout(send, 60);
   }
 
   // The video box, dead simple:
@@ -314,19 +311,20 @@
   // cards (Hot/board) and the Watch tab. We only keep the handoff (window.DCWatch)
   // and restore the theater layout across navigation.
   function mount() {
-    const m = theaterMode();
-    if (m) setTheater(true, m);
+    // Theater is retired — clear any stale persisted layout so the page never
+    // takes over. Watching is always Picture-in-Picture now.
+    if (theaterMode()) setTheater(false);
   }
 
-  // Handoff API:
-  //   start()   — in-game / Gamecast / board Watch → pure PiP, no layout change.
-  //   theater() — bottom Watch tab                 → full-screen theater.
+  // Handoff API (always Picture-in-Picture — no theater):
+  //   start()   — Gamecast / board Watch → small Document-PiP window.
+  //   theater() — bottom Watch tab        → larger native PiP.
   window.DCWatch = {
     start(gamePk, live) {
       watch(gamePk, null, null, live ? null : MLBN_URL, "pip");
     },
     theater(gamePk, watchUrl) {
-      watch(gamePk, null, null, watchUrl, "fullscreen");
+      watch(gamePk, null, null, watchUrl, "native");
     },
   };
 
