@@ -120,6 +120,39 @@ the *entry* `our_p` for K/HR overs against the empirical Retrosheet probabilitie
 entry too) so "nothing is random." Staged for when the sample backs the per-stat
 calibration.
 
+## EV-maximizing the buffers (2026-06-17, later) — sizing is the real lever
+
+User: "the buffers should maximize EV." The honest finding is that the single
+biggest EV lever wasn't an entry buffer at all — it was **bet sizing**.
+
+**Sizing now runs half-Kelly on the EMPIRICAL (Retrosheet) probability, not the
+model.** Kelly is the growth/EV-optimal sizing criterion, but it was being fed
+the overconfident model projection — so it sized *up* on the mirage edges (the
+exact mechanism behind the huge-edge losses). Now, when a prop has a historical
+rate (K via `kprop_conditional`; hits/HR/TB via `hitter_quality_by_season_avg`),
+the bet is sized half-Kelly on **that** number. Same bets still fire; we just
+stop overbetting spots history doesn't support. Self-correcting for HR exactly
+as asked: long-odds HR where history beats the cheap market get sized up;
+fairly-priced HR shrink toward zero. (Half-Kelly is the standard fractional-Kelly
+hedge against estimation error — a documented choice, not a tuned constant.
+Moneylines already size on the empirical WE table.)
+
+**Buffers that remain, and their honest status:**
+- **Entry edge buffer = 5pp** over the historical rate. Backed by our own
+  results (edges <5pp ran −54% ROI, 5–10pp +37%). It's a risk buffer over a
+  DATA-DERIVED probability, not a guessed probability.
+- The truly EV-optimal buffer per pocket can't be derived from 205 noisy bets,
+  and the empirical edge wasn't even logged. So: **`emp_p` is now logged on
+  every fire**, and **`scripts/optimize_bot_thresholds.py`** pulls `bot_fires`
+  and computes the EV-maximizing band/buffer per pocket (Wilson CIs, ≥20-bet
+  guard, tightening-only since we can't score skipped bets). Re-run it as the
+  sample grows; it prints recommendations to apply by hand (never auto-tuned).
+
+**So:** probabilities come from 115 years of data; **sizing is EV-optimal
+(half-Kelly on those probabilities)**; the one entry buffer is results-backed;
+and the rest is now instrumented + has a reproducible optimizer instead of being
+hand-set. No number in the firing/sizing path is a feel-based guess anymore.
+
 ## What to watch as the sample grows
 - **Moneylines:** is the 4–0 ROI real, or just chalk regressing? Track ROI and
   hit-rate vs. implied probability.

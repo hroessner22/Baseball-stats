@@ -1286,6 +1286,10 @@ async function scanPlayerProps(g, marketsData, modelProps) {
         const market_p      = chooseNo ? no_market_p   : yes_market_p;
         const our_p         = chooseNo ? no_our_p      : our_p_yes;
         const edgePP        = chooseNo ? no_edge_pp    : yes_edge_pp;
+        // Empirical (historical) probability for the CHOSEN side, captured by
+        // the per-stat empirical gates below and used to size the bet half-Kelly
+        // on data rather than the model projection. null → fall back to model.
+        let empPSide = null;
 
         // K-prop NO floor check (2026-06-06). If we tagged this prop
         // upstream as 'NO threshold below pitcher's K floor', and the
@@ -1539,6 +1543,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             // YES + 5pp for NO bet to have real edge. Below that the
             // bot is fighting the market AND the base rate.
             const MARGIN = 0.05;
+            // Data-backed probability for THIS side (hits/HR/TB) → size on it.
+            if (empPYes != null) empPSide = (side === "no") ? (1 - empPYes) : empPYes;
             if (empPYes != null && market_p != null &&
                 (1 - market_p) < (empPYes + MARGIN)) {
                 if (score) logScoredDecisionOnce(score, {
@@ -1639,6 +1645,8 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                         log("skip", `Empirical K-prop — ${parsed.player} ${parsed.threshold}+ K ${side.toUpperCase()}: n=${n} too small to trust P(reach)=${(empPYes*100).toFixed(0)}% (need n·p≥10 & n·(1-p)≥10) — no bet`);
                         continue;
                     }
+                    // Data-backed probability for THIS side → size half-Kelly on it.
+                    empPSide = (side === "no") ? (1 - empPYes) : empPYes;
                     if (side === "yes" && market_p > (empPYes - MARGIN)) {
                         if (score) logScoredDecisionOnce(score, {
                             action: "skip", reason: "k_prop_yes_no_empirical_edge",
@@ -1869,7 +1877,7 @@ async function scanPlayerProps(g, marketsData, modelProps) {
             }
         }
 
-        let contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents);
+        let contracts = sizeContractsByConviction(askCents, score, _state.settings.unit_cents, { empP: empPSide });
         // LOW-PROBABILITY SIZING CAP (2026-06-06). User direction
         // (HR): 'betting on lower named guys hitting homeruns is
         // good, but we need to put less money on it.' (Montero):
@@ -2057,8 +2065,9 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                 side,
                 contracts,
                 price_cents:   askCents,
-                our_p,           // our probability of THIS side winning
+                our_p,           // our probability of THIS side winning (model)
                 our_p_yes,       // the original YES-side model for reference
+                emp_p:         empPSide,   // empirical (historical) P(this side) — for EV backtesting
                 savant_p:      null,
                 market_p,
                 edge_pp:       edgePP,
@@ -2189,14 +2198,23 @@ function sizeContractsByKelly(askCents, score, unitCents, bankrollCents, opts = 
         while (contracts > 1 && contracts * askCents > unitCents) contracts--;
         return contracts;
     }
-    if (!score || score.adjusted_p == null) {
-        // Fallback: 2 contracts if affordable.
+    // Probability for the Kelly fraction. Prefer the EMPIRICAL (Retrosheet,
+    // data-backed) probability when the caller supplies it — sizing half-Kelly
+    // on the overconfident MODEL projection was the main EV leak (it sized UP on
+    // the mirage edges). Kelly is the growth/EV-optimal criterion; feeding it
+    // the historical rate instead of a guess is what makes the size EV-correct.
+    // Fall back to the model's adjusted_p only when no empirical estimate exists.
+    const sideP = Number.isFinite(opts.empP) ? Number(opts.empP)
+                : (score && score.adjusted_p != null) ? Number(score.adjusted_p)
+                : null;
+    if (sideP == null) {
+        // No probability at all → 2 contracts if affordable.
         const fallback = Math.floor(unitCents / askCents);
         return Math.max(0, Math.min(2, fallback));
     }
     const marketP = askCents / 100;
-    const ourP    = Math.max(0.001, Math.min(0.999, Number(score.adjusted_p)));
-    if (ourP <= marketP) return 0;             // no edge → no bet
+    const ourP    = Math.max(0.001, Math.min(0.999, sideP));
+    if (ourP <= marketP) return 0;             // no edge on our best estimate → no bet
     const b = (1 - marketP) / marketP;
     const fullKelly = (b * ourP - (1 - ourP)) / b;
     if (fullKelly <= 0) return 0;
@@ -2212,12 +2230,12 @@ function sizeContractsByKelly(askCents, score, unitCents, bankrollCents, opts = 
     return contracts;
 }
 // Back-compat shim — old call sites used sizeContractsByConviction.
-function sizeContractsByConviction(askCents, score, unitCents) {
+function sizeContractsByConviction(askCents, score, unitCents, opts = {}) {
     // Read practice bankroll if available so Kelly scales properly.
     const bk = _state.settings.practice_mode
         ? _state.settings.practice_starting_bankroll_cents
         : _state.settings.open_exposure_max;
-    return sizeContractsByKelly(askCents, score, unitCents, bk);
+    return sizeContractsByKelly(askCents, score, unitCents, bk, opts);
 }
 
 async function checkAndMaybeFire(g, market, outcome, ourHome, savantHome) {
@@ -2871,6 +2889,7 @@ async function persistFireToSupabase(payload) {
             our_p:        payload.our_p ?? null,
             market_p:     payload.market_p ?? null,
             edge_pp:      payload.edge_pp ?? null,
+            emp_p:        payload.emp_p ?? null,
             savant_p:     payload.savant_p ?? null,
             savant_stance: payload.savant_stance ?? null,
             reasoning:    payload.reasoning ?? null,
@@ -2931,6 +2950,7 @@ function fireToBotRow(f, userId) {
         our_p:        f.our_p ?? null,
         market_p:     f.market_p ?? null,
         edge_pp:      f.edge_pp ?? null,
+        emp_p:        f.emp_p ?? null,
         savant_p:     f.savant_p ?? null,
         savant_stance: f.savant_stance ?? null,
         reasoning:    f.reasoning ?? null,
