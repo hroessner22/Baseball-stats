@@ -259,14 +259,12 @@ const DEFAULTS = {
     // (typical 5.5 IP per start). YES K-prop only fires when
     // expected_k_per_start covers a reasonable fraction of the
     // threshold; NO only when expected is comfortably below.
-    // 2026-06-17: raised 0.70 → 1.15. The strikeout-OVER projection proved
-    // badly overconfident on 205 settled bets (K-YES 0/8 on huge edges, ~14%
-    // win overall; K-NO is calibrated at 68%). Fire a K-over ONLY when we
-    // project COMFORTABLY over the line — "bet K with confidence only." This
-    // also fixes the fake "huge edge" override (K-YES was its only loser).
-    // See results/bot-daily.md.
-    k_prop_yes_min_ratio: 1.15,   // expected/threshold ≥ this to fire YES
-    k_prop_no_max_ratio:  1.20,   // expected/threshold ≤ this to fire NO (working — keep)
+    // LEGACY / UNUSED in the firing decision — the K-prop gate is the EMPIRICAL
+    // conditional table (kprop_conditional, Retrosheet-derived), not this ratio.
+    // Kept only so the settings UI/clamp don't break. The real, data-backed gate
+    // lives at the "K-PROP PITCHER QUALITY gate" below.
+    k_prop_yes_min_ratio: 0.70,   // (legacy — not read at fire time)
+    k_prop_no_max_ratio:  1.20,   // (legacy — not read at fire time)
     // CORRELATED-LADDER GATE — prop ladders (Cole over 6/7/8/9/10 K)
     // are perfectly correlated. Stacking fires across a ladder
     // sizes the same underlying bet Nx. BUT: a higher threshold
@@ -432,15 +430,6 @@ function loadState() {
                 s.k_prop_no_max_ratio = 1.20;
             }
             try { localStorage.setItem(KPROP_GATE_FLAG, "1"); } catch {}
-        }
-        // 2026-06-17: bump the K-YES gate 0.70 → 1.15 on existing saved
-        // settings (see DEFAULTS note + results/bot-daily.md). One-time.
-        const KPROP_YES_GATE_FLAG = "diamond_context_kprop_yes_gate_2026_06_17";
-        if (!localStorage.getItem(KPROP_YES_GATE_FLAG)) {
-            if (typeof s.k_prop_yes_min_ratio === "number" && s.k_prop_yes_min_ratio < 1.15) {
-                s.k_prop_yes_min_ratio = 1.15;
-            }
-            try { localStorage.setItem(KPROP_YES_GATE_FLAG, "1"); } catch {}
         }
         // 2026-06-05 (late): lower ML edge threshold 3 → 2pp.
         const ML_THRESHOLD_FLAG = "diamond_context_ml_threshold_2pp_2026_06_05";
@@ -1628,18 +1617,36 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                     game_pk:   g.game_pk,
                     player:    parsed.player,
                 });
+                // DATA-BACKED gate. Probability comes only from the Retrosheet
+                // conditional table (empPYes). The market must clear that base
+                // rate by MARGIN. The 5pp buffer is itself backed by our own
+                // settled results — edges under 5pp ran −54% ROI while 5–10pp
+                // made +37% (results/bot-daily.md) — so it's a risk buffer over
+                // a DATA-DERIVED rate, not a guessed probability. We also require
+                // the cell to be a valid sample (textbook n·p≥10 & n·(1-p)≥10);
+                // too few historical instances → we don't trust the rate, no bet.
                 if (emp != null && market_p != null) {
-                    const MARGIN = 0.05;
                     const empPYes = emp.p_yes;
+                    const n = emp.sample_n || 0;
+                    const MARGIN = 0.05;
+                    const enoughData = n * empPYes >= 10 && n * (1 - empPYes) >= 10;
+                    if (!enoughData) {
+                        if (score) logScoredDecisionOnce(score, {
+                            action: "skip", reason: "k_prop_insufficient_empirical_sample",
+                            player: parsed.player, threshold: parsed.threshold,
+                            empirical_p_yes: empPYes, sample_n: n, state_key: emp.state_key, side,
+                        });
+                        log("skip", `Empirical K-prop — ${parsed.player} ${parsed.threshold}+ K ${side.toUpperCase()}: n=${n} too small to trust P(reach)=${(empPYes*100).toFixed(0)}% (need n·p≥10 & n·(1-p)≥10) — no bet`);
+                        continue;
+                    }
                     if (side === "yes" && market_p > (empPYes - MARGIN)) {
                         if (score) logScoredDecisionOnce(score, {
                             action: "skip", reason: "k_prop_yes_no_empirical_edge",
                             player: parsed.player, threshold: parsed.threshold,
                             empirical_p_yes: empPYes, yes_market_p: market_p,
-                            sample_n: emp.sample_n, state_key: emp.state_key,
-                            side,
+                            sample_n: n, state_key: emp.state_key, side,
                         });
-                        log("skip", `Empirical K-prop YES — ${parsed.player} ${parsed.threshold}+ K YES: P(reach)=${(empPYes*100).toFixed(0)}% (n=${emp.sample_n}, ${emp.state_key}); market ${(market_p*100).toFixed(0)}% leaves no edge (need < ${((empPYes-MARGIN)*100).toFixed(0)}%)`);
+                        log("skip", `Empirical K-prop YES — ${parsed.player} ${parsed.threshold}+ K YES: P(reach)=${(empPYes*100).toFixed(0)}% (n=${n}); market ${(market_p*100).toFixed(0)}% leaves <5pp edge (need < ${((empPYes-MARGIN)*100).toFixed(0)}%)`);
                         continue;
                     }
                     if (side === "no" && market_p < (empPYes + MARGIN)) {
@@ -1647,13 +1654,27 @@ async function scanPlayerProps(g, marketsData, modelProps) {
                             action: "skip", reason: "k_prop_no_no_empirical_edge",
                             player: parsed.player, threshold: parsed.threshold,
                             empirical_p_yes: empPYes, yes_market_p: market_p,
-                            sample_n: emp.sample_n, state_key: emp.state_key,
-                            side,
+                            sample_n: n, state_key: emp.state_key, side,
                         });
-                        log("skip", `Empirical K-prop NO — ${parsed.player} ${parsed.threshold}+ K NO: P(reach)=${(empPYes*100).toFixed(0)}% (n=${emp.sample_n}, ${emp.state_key}); market ${(market_p*100).toFixed(0)}% leaves no NO edge (need > ${((empPYes+MARGIN)*100).toFixed(0)}%)`);
+                        log("skip", `Empirical K-prop NO — ${parsed.player} ${parsed.threshold}+ K NO: P(reach)=${(empPYes*100).toFixed(0)}% (n=${n}); market ${(market_p*100).toFixed(0)}% leaves <5pp NO edge (need > ${((empPYes+MARGIN)*100).toFixed(0)}%)`);
                         continue;
                     }
+                } else {
+                    // No empirical historical data for this pitcher/state → we
+                    // have no data-backed basis to price the bet. Skip rather
+                    // than fall through to the model projection.
+                    if (score) logScoredDecisionOnce(score, {
+                        action: "skip", reason: "k_prop_no_empirical_data",
+                        player: parsed.player, threshold: parsed.threshold, side,
+                    });
+                    log("skip", `Empirical K-prop — ${parsed.player} ${parsed.threshold}+ K ${side.toUpperCase()}: no historical conditional data for this state — no bet (won't guess from the projection)`);
+                    continue;
                 }
+            } else {
+                // No live pitcher info → no empirical basis. Don't bet a K-prop
+                // on the model projection alone.
+                log("skip", `K-prop — ${parsed.player} ${parsed.threshold}+ K ${side.toUpperCase()}: no pitcher data to look up the historical rate — no bet`);
+                continue;
             }
         }
 

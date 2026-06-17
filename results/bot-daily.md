@@ -90,11 +90,22 @@ Diagnosed each leak against the data before touching code. Key finding: the
    +12%), K NO (68% → 67%, +19%) all WON. The *only* huge-edge loser was
    **strikeouts YES: our_p 47% → actual 0/8, −86%.** The override is fine; the
    strikeout-OVER projection was manufacturing fake edges it then sized up on.
-2. **Strikeouts: confidence-only.** K-NO is calibrated (68% says / 68% hits) —
-   kept. K-YES gate raised **0.70 → 1.15** (`k_prop_yes_min_ratio`): only fire a
-   K-over when we project comfortably *over* the line. This also removes K-YES
-   from the huge-edge pool, fixing #1 at the source. (DEFAULT + one-time
-   migration of saved settings.)
+2. **Strikeouts: data-backed gate, no made-up numbers.** First correction:
+   `k_prop_yes_min_ratio` (which I briefly set to 1.15) is **not even read** by
+   the firing logic — the real K gate is the **Retrosheet conditional table**
+   (`kprop_conditional`, with sample sizes). Reverted that dead knob. The actual
+   fix, all grounded in data:
+   - **Probability = the historical rate only** (the conditional table), never
+     the model projection.
+   - **No historical data for the state → no bet** (was: fall back to the model
+     projection and fire anyway — the source of the fake K-YES edges).
+   - **Cell must be a valid sample** (textbook n·p≥10 & n·(1-p)≥10) or no bet.
+   - **Margin over market = 5pp**, and that 5pp is itself backed by our results:
+     edges <5pp ran −54% ROI, 5–10pp +37%. (Not the "1 SE" idea I floated — at
+     these huge n's, 1 SE is ~0.4pp, which would *loosen* the gate; SE of a
+     base-rate estimate isn't a betting margin.)
+   K-NO stays (calibrated 68%). This also removes K-YES from the huge-edge pool,
+   fixing #1 at the source.
 3. **Home runs: unchanged — they're +EV.** All HR-YES were long odds (avg 10¢);
    the huge-edge ones hit 75% (+12%). "1/5 at +500 wins." Kept firing.
 4. **Moneylines: fixed the cash-out leak.** The ML logic already holds to
