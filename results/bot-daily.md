@@ -189,6 +189,33 @@ So "data-back the entry" turned out to be **stat-specific**, not a blanket swap.
 The model and the empirical are each the better signal for different stats, and
 the bot now routes to the right one per pocket for sizing.
 
+## Moneyline scope (2026-06-17) — no rebuild needed, the fix is already deployed
+
+Diagnosed before building. The WE model isn't broken:
+
+| WE bucket | n | WE says | actual | avg contracts | ROI |
+|---|---|---|---|---|---|
+| **Favorites (≥60%)** | 7 | 71% | **86%** | 2.7 | **+23%** |
+| Underdogs (<50%) | 10 | 43% | **30%** | **4.8** | **−57%** |
+
+Same disease as the props: the model is fine on the high-probability side
+(favorites — it even *under*-predicts), and the whole loss is **betting
+underdogs**, where the WE over-predicts AND Kelly sizes them *bigger* (cheap
+prices → more contracts). The −35% overall is entirely the underdog bucket.
+
+**But the fix already exists and is deployed:** `checkAndMaybeFire` has a
+LARGE-MARGIN GATE (added 06-16) requiring `our_p ≥ 0.5 + ml_confident_margin`
+(= **WE ≥ 0.60**), citing a 3,201-game calibration (≥10pp margin ~63%, ≥15pp
+~70%). Verified it's the **only** ML fire path (single call site, no bypass), so
+every fire must be a confident favorite. Every 06-17 fire is ≥0.60; the losing
+underdogs are all 06-15/06-16 — **pre-gate old code still running on the app.**
+So the underdog bleed is already closed in code; it just needs the reload.
+
+**One genuine, deferred improvement:** the WE *under*-predicts favorites
+(71%→86%) — conservative, so we leave EV on the table and may miss some favorite
+fires. Recalibrating the WE up would capture more, but 7 favorite bets is too few
+— revisit once the sample grows.
+
 ## What to watch as the sample grows
 - **Moneylines:** is the 4–0 ROI real, or just chalk regressing? Track ROI and
   hit-rate vs. implied probability.
