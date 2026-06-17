@@ -259,8 +259,14 @@ const DEFAULTS = {
     // (typical 5.5 IP per start). YES K-prop only fires when
     // expected_k_per_start covers a reasonable fraction of the
     // threshold; NO only when expected is comfortably below.
-    k_prop_yes_min_ratio: 0.70,   // expected/threshold ≥ this to fire YES
-    k_prop_no_max_ratio:  1.20,   // expected/threshold ≤ this to fire NO
+    // 2026-06-17: raised 0.70 → 1.15. The strikeout-OVER projection proved
+    // badly overconfident on 205 settled bets (K-YES 0/8 on huge edges, ~14%
+    // win overall; K-NO is calibrated at 68%). Fire a K-over ONLY when we
+    // project COMFORTABLY over the line — "bet K with confidence only." This
+    // also fixes the fake "huge edge" override (K-YES was its only loser).
+    // See results/bot-daily.md.
+    k_prop_yes_min_ratio: 1.15,   // expected/threshold ≥ this to fire YES
+    k_prop_no_max_ratio:  1.20,   // expected/threshold ≤ this to fire NO (working — keep)
     // CORRELATED-LADDER GATE — prop ladders (Cole over 6/7/8/9/10 K)
     // are perfectly correlated. Stacking fires across a ladder
     // sizes the same underlying bet Nx. BUT: a higher threshold
@@ -426,6 +432,15 @@ function loadState() {
                 s.k_prop_no_max_ratio = 1.20;
             }
             try { localStorage.setItem(KPROP_GATE_FLAG, "1"); } catch {}
+        }
+        // 2026-06-17: bump the K-YES gate 0.70 → 1.15 on existing saved
+        // settings (see DEFAULTS note + results/bot-daily.md). One-time.
+        const KPROP_YES_GATE_FLAG = "diamond_context_kprop_yes_gate_2026_06_17";
+        if (!localStorage.getItem(KPROP_YES_GATE_FLAG)) {
+            if (typeof s.k_prop_yes_min_ratio === "number" && s.k_prop_yes_min_ratio < 1.15) {
+                s.k_prop_yes_min_ratio = 1.15;
+            }
+            try { localStorage.setItem(KPROP_YES_GATE_FLAG, "1"); } catch {}
         }
         // 2026-06-05 (late): lower ML edge threshold 3 → 2pp.
         const ML_THRESHOLD_FLAG = "diamond_context_ml_threshold_2pp_2026_06_05";
@@ -3584,9 +3599,18 @@ async function runCashoutCheck() {
                     }
                     continue;
                 }
+            } else {
+                // 2026-06-17: live WE unavailable. DON'T fall through to the
+                // heuristic profit-take/EV-capture — that was cashing winning
+                // moneylines out early. Per the standing rule, a moneyline
+                // holds to settlement (the daily-loss limit handles losers);
+                // we only sell when we can CONFIRM the market is overpaying our
+                // live WE, which we can't here. So hold.
+                if (hitAbsolute || hitEvCapture || hitLiveEv || hitLockIn) {
+                    log("hold", `ML hold-to-settle ${p.ticker} (${fire.bet_team || ""}): live WE unavailable — holding to settlement rather than cashing out on a heuristic trigger`);
+                }
+                continue;
             }
-            // weCents == null → no live WE available; fall through to
-            // the heuristic gate below as a safety net.
         }
 
         if (!mlOverpaySell && !hitAbsolute && !hitEvCapture && !hitLiveEv && !hitPitchCount && !hitHitterSell && !hitDeadPosition && !hitLockIn && !hitEvCashout) continue;

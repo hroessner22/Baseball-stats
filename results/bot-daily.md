@@ -80,6 +80,35 @@ But the average hides a clear shape: a couple of pockets carry it, several bleed
 - Distrust the model's **biggest-edge / highest-our_p** signals; the middle is the edge.
 - Re-check every ~100 settled bets; only harden gates when a pocket holds across 2–3 re-checks.
 
+## Changes made 2026-06-17 (root-cause fixes, not amputations)
+
+Diagnosed each leak against the data before touching code. Key finding: the
+"fake huge edge" wasn't the override — it was **one broken projection**.
+
+1. **Huge-edge override: KEPT, root cause fixed.** Cut the huge-edge bets by
+   stat: total_bases YES (our_p 36% → actual 70%, +63%), HR YES (16% → 75%,
+   +12%), K NO (68% → 67%, +19%) all WON. The *only* huge-edge loser was
+   **strikeouts YES: our_p 47% → actual 0/8, −86%.** The override is fine; the
+   strikeout-OVER projection was manufacturing fake edges it then sized up on.
+2. **Strikeouts: confidence-only.** K-NO is calibrated (68% says / 68% hits) —
+   kept. K-YES gate raised **0.70 → 1.15** (`k_prop_yes_min_ratio`): only fire a
+   K-over when we project comfortably *over* the line. This also removes K-YES
+   from the huge-edge pool, fixing #1 at the source. (DEFAULT + one-time
+   migration of saved settings.)
+3. **Home runs: unchanged — they're +EV.** All HR-YES were long odds (avg 10¢);
+   the huge-edge ones hit 75% (+12%). "1/5 at +500 wins." Kept firing.
+4. **Moneylines: fixed the cash-out leak.** The ML logic already holds to
+   settlement and only sells when the market overpays live WE — BUT when the WE
+   lookup returned null it **fell through to the generic profit-take and cashed
+   winners out early.** Now: WE unavailable → hold to settlement (losers are the
+   daily-loss limit's job). No more cashing out a winning ML when we're up.
+
+**Still open (principled, needs the historical engine, not 205 bets):** recalibrate
+the *entry* `our_p` for K/HR overs against the empirical Retrosheet probabilities
+(`getEmpiricalKpropPYes` etc. already power the cash-out vetoes — wire them into
+entry too) so "nothing is random." Staged for when the sample backs the per-stat
+calibration.
+
 ## What to watch as the sample grows
 - **Moneylines:** is the 4–0 ROI real, or just chalk regressing? Track ROI and
   hit-rate vs. implied probability.
