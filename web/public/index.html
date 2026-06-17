@@ -13,20 +13,28 @@
          actually exist rather than silently rounding to the nearest
          discrete weight. -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20260616COLLAPSE">
-    <link rel="icon" type="image/svg+xml" href="logo.svg">
+    <link rel="stylesheet" href="style.css?v=20260616LOGO">
+    <link rel="icon" type="image/svg+xml" href="logo.svg?v=2">
 </head>
 <body>
     <header>
         <a class="brand" href="#live" aria-label="DIAMOND:CONTEXT home">
-            <!-- Inline SVG so the logo renders without an extra
-                 HTTP request and inherits currentColor for the
-                 stroke (white in the header; works on any bg). -->
-            <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M 12 2.5 L 21.5 12 L 12 21.5 L 2.5 12 Z"
-                      fill="none" stroke="currentColor"
-                      stroke-width="1.8" stroke-linejoin="round"/>
-                <circle cx="12" cy="12" r="2.5" fill="#22C55E"/>
+            <!-- Brand mark: the diamond + baseball logo. Inline so it renders
+                 without an extra request; fixed brand colors (works on any bg). -->
+            <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true">
+                <path d="M50 5 L95 50 L50 95 L5 50 Z" fill="#3E8E54"/>
+                <path d="M50 28 L72 50 L50 72 L28 50 Z" fill="none"
+                      stroke="#C9A06A" stroke-width="4" stroke-linejoin="round"/>
+                <g fill="#F4F4F0">
+                    <rect x="-3.4" y="-3.4" width="6.8" height="6.8" rx="1.2" transform="translate(72 50) rotate(45)"/>
+                    <rect x="-3.4" y="-3.4" width="6.8" height="6.8" rx="1.2" transform="translate(28 50) rotate(45)"/>
+                    <rect x="-3.4" y="-3.4" width="6.8" height="6.8" rx="1.2" transform="translate(50 72) rotate(45)"/>
+                </g>
+                <circle cx="50" cy="46" r="18" fill="#FBFBF6" stroke="#26323F" stroke-width="1.4"/>
+                <polyline points="44,34 40,38 44,42 40,46 44,50 40,54 44,58" fill="none"
+                          stroke="#CE3B33" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="56,34 60,38 56,42 60,46 56,50 60,54 56,58" fill="none"
+                          stroke="#CE3B33" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <h1>DIAMOND<span class="colon">:</span>CONTEXT</h1>
         </a>

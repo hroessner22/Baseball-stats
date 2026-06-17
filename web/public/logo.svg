@@ -1,13 +1,19 @@
-<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-label="DIAMOND:CONTEXT logo">
-  <!-- Rotated square = baseball infield from above.
-       Stroke uses currentColor so the mark inherits text color
-       (white on dark by default, but works on any background). -->
-  <path d="M 12 2.5 L 21.5 12 L 12 21.5 L 2.5 12 Z"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.6"
-        stroke-linejoin="round"/>
-  <!-- Center dot = the 'moment in context' — matches --accent-win
-       (the same green the colon uses in the wordmark). -->
-  <circle cx="12" cy="12" r="2.4" fill="#22C55E"/>
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-label="DIAMOND:CONTEXT logo">
+  <!-- App-icon tile: rounded green square with the diamond + baseball mark. -->
+  <rect x="2" y="2" width="96" height="96" rx="22" fill="#3E8E54"/>
+  <!-- basepaths -->
+  <path d="M50 30 L72 52 L50 74 L28 52 Z" fill="none"
+        stroke="#C9A06A" stroke-width="4.5" stroke-linejoin="round"/>
+  <!-- bases -->
+  <g fill="#F4F4F0">
+    <rect x="-3.6" y="-3.6" width="7.2" height="7.2" rx="1.3" transform="translate(72 52) rotate(45)"/>
+    <rect x="-3.6" y="-3.6" width="7.2" height="7.2" rx="1.3" transform="translate(28 52) rotate(45)"/>
+    <rect x="-3.6" y="-3.6" width="7.2" height="7.2" rx="1.3" transform="translate(50 74) rotate(45)"/>
+  </g>
+  <!-- baseball -->
+  <circle cx="50" cy="48" r="18.5" fill="#FBFBF6" stroke="#26323F" stroke-width="1.5"/>
+  <polyline points="44,36 40,40 44,44 40,48 44,52 40,56 44,60" fill="none"
+            stroke="#CE3B33" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="56,36 60,40 56,44 60,48 56,52 60,56 56,60" fill="none"
+            stroke="#CE3B33" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
