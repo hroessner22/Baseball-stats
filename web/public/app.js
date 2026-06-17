@@ -4897,21 +4897,34 @@ function renderGameBetsCardRail(g) {
         ? `<span class="${realizedCls}">${won}–${lost} · ${realized >= 0 ? "+" : ""}$${(realized/100).toFixed(2)}</span>`
         : `<span class="rail-bets-cost">$${(totalCost/100).toFixed(2)} at risk</span>`;
     const modeTag = practiceMode ? "PRACTICE" : "LIVE";
+    // Collapsed by default — the header toggles it open. State per game in
+    // sessionStorage ('0' = expanded; anything else / missing = collapsed).
+    let collapsed = true;
+    try { collapsed = sessionStorage.getItem(`gbets_collapsed_${gamePk}`) !== "0"; } catch {}
+    // Quick at-a-glance summary shown in the (collapsed) header.
+    const headSummary = (won + lost) > 0
+        ? `${won}–${lost} · ${realized >= 0 ? "+" : ""}$${(realized / 100).toFixed(2)}`
+        : `${onGame.length} on game`;
 
     return `
-      <section class="rail-bets-card" data-practice="${practiceMode ? "true" : "false"}">
-        <header class="rail-bets-head">
+      <section class="rail-bets-card ${collapsed ? "is-collapsed" : ""}" data-practice="${practiceMode ? "true" : "false"}">
+        <header class="rail-bets-head" data-gbets-collapse="${gamePk}" role="button" tabindex="0"
+                title="Show / hide your bets on this game">
           <span class="rail-bets-tag">${modeTag}</span>
           <span class="rail-bets-title">${escapeHtml(title)}</span>
+          <span class="rail-bets-headsum">${escapeHtml(headSummary)}</span>
+          <span class="rail-bets-chev" aria-hidden="true">▸</span>
         </header>
-        <div class="rail-bets-meta">
-          <span class="rail-bets-count">${onGame.length} on game</span>
-          ${realizedTxt}
-          ${toggleHtml}
+        <div class="rail-bets-body">
+          <div class="rail-bets-meta">
+            <span class="rail-bets-count">${onGame.length} on game</span>
+            ${realizedTxt}
+            ${toggleHtml}
+          </div>
+          ${displayed.length > 0
+            ? `<ul class="rail-bets-list">${rows}</ul>`
+            : `<p class="rail-bets-empty">${hidden} on other players — tap "+${hidden} more" to view.</p>`}
         </div>
-        ${displayed.length > 0
-          ? `<ul class="rail-bets-list">${rows}</ul>`
-          : `<p class="rail-bets-empty">${hidden} on other players — tap "+${hidden} more" to view.</p>`}
       </section>
     `;
 }
@@ -4929,6 +4942,21 @@ document.addEventListener("click", (e) => {
         sessionStorage.setItem(k, cur ? "0" : "1");
     } catch {}
     if (activeGameId) refreshGame(activeGameId);
+});
+
+// Collapse/expand the whole bets card from its header. The body is always in
+// the DOM (CSS hides it when collapsed), so this just flips the class + saves —
+// no re-render needed.
+document.addEventListener("click", (e) => {
+    const head = e.target.closest("[data-gbets-collapse]");
+    if (!head) return;
+    if (e.target.closest("button, a")) return;     // let inner buttons act first
+    const pk = head.getAttribute("data-gbets-collapse");
+    const card = head.closest(".rail-bets-card");
+    if (!card) return;
+    const nowCollapsed = !card.classList.contains("is-collapsed");
+    card.classList.toggle("is-collapsed", nowCollapsed);
+    try { sessionStorage.setItem(`gbets_collapsed_${pk}`, nowCollapsed ? "1" : "0"); } catch {}
 });
 
 // Per-row Sell button — user direction (2026-06-05): 'this would be
@@ -6359,15 +6387,8 @@ function renderThisInning(g) {
           ${pitchesHtml}
         `;
     }).join("");
-    const currentRow = g.batter
-        ? `<div class="ti-row ti-now">
-              <span class="ti-row-chev ti-row-chev-blank"></span>
-              <span class="ti-outcome ti-now-chip">NOW</span>
-              ${inlineAvatar(g.batter.id, { size: 30, class: "ti-photo", alt: g.batter.name })}
-              <span class="ti-batter">${shortName(g.batter.name)}</span>
-              <span class="ti-desc">at bat · ${g.balls}-${g.strikes}, ${g.outs} out</span>
-           </div>`
-        : "";
+    // The "NOW" current-batter row is intentionally omitted here — the AT BAT /
+    // PITCHING matchup card above the strip already shows who's hitting.
     // Live pitch sequence for the in-progress PA, with the original
     // 'Pitches (N)' header restored. User direction (2026-06-05):
     // 'while a hitter is hitting, I want to see the pitches there
@@ -6385,7 +6406,6 @@ function renderThisInning(g) {
     return `
       <div class="this-inning">
         <div class="ti-head">${innLabel}</div>
-        ${currentRow}
         ${currentPitchesHtml}
         ${rows}
       </div>

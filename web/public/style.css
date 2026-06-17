@@ -4862,7 +4862,27 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     align-items: center;
     gap: 6px;
     margin-bottom: 6px;
+    cursor: pointer;
+    user-select: none;
 }
+/* Collapsed by default: header only, body hidden until expanded. */
+.rail-bets-card.is-collapsed .rail-bets-head { margin-bottom: 0; }
+.rail-bets-card.is-collapsed .rail-bets-body { display: none; }
+.rail-bets-headsum {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+.rail-bets-chev {
+    flex: 0 0 auto;
+    color: var(--text-faint);
+    font-size: 11px;
+    transition: transform 0.15s ease;
+}
+.rail-bets-card:not(.is-collapsed) .rail-bets-chev { transform: rotate(90deg); }
+.rail-bets-card:not(.is-collapsed) .rail-bets-headsum { display: none; }
 .rail-bets-tag {
     font-size: 9px;
     font-weight: 700;
@@ -4884,6 +4904,9 @@ nav .nav-item.disabled .num { color: var(--text-dim); }
     color: var(--text-dim);
     flex: 1;
     min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .rail-bets-meta {
     display: flex;
