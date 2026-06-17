@@ -2871,6 +2871,79 @@ async function persistSettlementToSupabase(fire, settled) {
             .eq("placed_at", fire.placed_at);
     } catch (e) { console.warn("[bot_fires settle err]", e?.message || e); }
 }
+
+// Map a localStorage fire → a bot_fires row (with current settlement state).
+// Coerces values to the table's CHECK constraints so a stray field doesn't
+// reject the whole upsert chunk.
+function fireToBotRow(f, userId) {
+    const st = f.settled || null;
+    const okStat = ["hits", "home_runs", "total_bases", "strikeouts"];
+    return {
+        user_id:      userId,
+        placed_at:    f.placed_at,
+        kind:         f.kind === "moneyline" ? "moneyline" : "player_prop",
+        game_pk:      f.game_pk || null,
+        matchup:      f.matchup || null,
+        bet_team:     f.bet_team || null,
+        player:       f.player || null,
+        stat:         okStat.includes(f.stat) ? f.stat : null,
+        threshold:    f.threshold != null ? f.threshold : null,
+        side:         f.side === "no" ? "no" : "yes",
+        ticker:       f.ticker || "",
+        contracts:    Math.max(1, Math.round(f.contracts || 1)),
+        price_cents:  Math.max(1, Math.min(99, Math.round(f.price_cents || 1))),
+        our_p:        f.our_p ?? null,
+        market_p:     f.market_p ?? null,
+        edge_pp:      f.edge_pp ?? null,
+        savant_p:     f.savant_p ?? null,
+        savant_stance: f.savant_stance ?? null,
+        reasoning:    f.reasoning ?? null,
+        practice:     !!f.practice,
+        settled:      !!st,
+        won:          st ? !!st.won : false,
+        profit_cents: st ? (st.profit_cents ?? null) : null,
+        settled_at:   st ? (st.settled_at || new Date().toISOString()) : null,
+    };
+}
+
+// Daily export / reconciliation. Once per calendar day, upsert ALL settled
+// fires (real + practice) from localStorage into Supabase bot_fires on the
+// (user_id, ticker, placed_at) unique key. This catches settlements the live
+// per-fire persist missed (page closed at settle time, settle paths that don't
+// call persistSettlementToSupabase, etc.) so the settled record stays complete.
+// Needs a signed-in user (RLS). Cheap no-op once it's run for the day.
+const LS_DAILY_EXPORT = "diamond_context_bot_last_export";
+async function exportSettledFiresDaily() {
+    try {
+        if (!root.Auth || !root.Auth.supabase || !root.Auth.getUser) return;
+        const user = root.Auth.getUser();
+        if (!user || !user.id) return;                 // needs sign-in
+        const today = new Date().toISOString().slice(0, 10);
+        let last = null;
+        try { last = localStorage.getItem(LS_DAILY_EXPORT); } catch {}
+        if (last === today) return;                    // already exported today
+
+        const real     = getFires().map((f) => ({ ...f, practice: false }));
+        const practice = getPracticeFires().map((f) => ({ ...f, practice: true }));
+        const settled  = [...real, ...practice].filter((f) => f.settled && f.placed_at);
+        if (!settled.length) { try { localStorage.setItem(LS_DAILY_EXPORT, today); } catch {} return; }
+
+        const supabase = root.Auth.supabase();
+        const rows = settled.map((f) => fireToBotRow(f, user.id));
+        let ok = 0;
+        for (let i = 0; i < rows.length; i += 100) {
+            const chunk = rows.slice(i, i + 100);
+            const { error } = await supabase
+                .from("bot_fires")
+                .upsert(chunk, { onConflict: "user_id,ticker,placed_at" });
+            if (error) { console.warn("[bot daily export]", error.message || error); }
+            else ok += chunk.length;
+        }
+        if (ok > 0) { try { localStorage.setItem(LS_DAILY_EXPORT, today); } catch {} }
+        console.info(`[bot daily export] reconciled ${ok}/${rows.length} settled fires → Supabase`);
+    } catch (e) { console.warn("[bot daily export err]", e?.message || e); }
+}
+
 function getPracticeFires() {
     try { return JSON.parse(localStorage.getItem(LS_PRACTICE_FIRES) || "[]"); }
     catch { return []; }
@@ -8355,6 +8428,12 @@ function ensurePracticeCashoutTimer() {
 }
 ensurePracticeCashoutTimer();
 
+// Daily export of settled fires to Supabase. Kick a few seconds after load
+// (lets Auth resolve), then re-check every 30 min — the once-per-day guard
+// makes the repeats cheap and also covers the page staying open past midnight.
+setTimeout(() => { try { exportSettledFiresDaily(); } catch {} }, 9000);
+setInterval(() => { try { exportSettledFiresDaily(); } catch {} }, 30 * 60 * 1000);
+
 
 // ── Public surface ────────────────────────────────────────────────
 
@@ -8373,6 +8452,7 @@ root.AutoBot = {
     runScan,
     runCashoutCheck,
     runPracticeCashoutCheck,
+    exportSettledFiresDaily,   // manual trigger for the daily settled-fire export
     // Progress / boxscore helpers — needed by app.js's rail bets
     // card so the meter renders with the same shape and same name-
     // resolution path the drawer's All Bets pane uses. Without
