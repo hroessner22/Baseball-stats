@@ -19,11 +19,18 @@
   // Announce we're loaded so the worker hands us the watch intent.
   safeSend({ type: "DC_MLB_READY" });
 
+  // How this watch was launched:
+  //   "pip"        → Gamecast / board Watch → small Document-PiP window.
+  //   "fullscreen" → bottom Watch tab (theater) → larger native PiP.
+  //   "shift"      → legacy default → native PiP.
+  let watchMode = "shift";
+
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "DC_ENTER_PIP") startWatch(msg);
   });
 
   async function startWatch(intent) {
+    watchMode = (intent && intent.mode) || "shift";
     showPipButton(); // make sure the button is up no matter what
     // If the deep link missed and we're on a listing, click into the game.
     await maybeClickIntoGame(intent);
@@ -70,6 +77,28 @@
     video.addEventListener("leavepictureinpicture", () => showPipButton());
   }
 
+  // Small Picture-in-Picture via the Document-PiP API — the only way to control
+  // the window SIZE. We move the live <video> into a small window and put it
+  // back when the window closes (so MLB's page isn't left broken).
+  async function enterSmallPip(v) {
+    const ratio = (v.videoWidth && v.videoHeight) ? v.videoHeight / v.videoWidth : 9 / 16;
+    const w = 384, h = Math.max(176, Math.round(w * ratio));
+    const pipWin = await documentPictureInPicture.requestWindow({ width: w, height: h });
+    const home = v.parentElement, after = v.nextSibling;
+    const prevW = v.style.width, prevH = v.style.height;
+    Object.assign(pipWin.document.body.style, { margin: "0", background: "#000", overflow: "hidden" });
+    v.style.width = "100%"; v.style.height = "100%";
+    pipWin.document.body.appendChild(v);
+    safeSend({ type: "DC_PIP_ON" });
+    removePipButton();
+    pipWin.addEventListener("pagehide", () => {
+      try { if (home) home.insertBefore(v, after); } catch (_) {}
+      v.style.width = prevW; v.style.height = prevH;
+      showPipButton();
+    }, { once: true });
+    try { if (v.paused) await v.play(); } catch (_) {}
+  }
+
   function showPipButton() {
     if (pipBtn) return;
     pipBtn = document.createElement("div");
@@ -108,12 +137,25 @@
       e.preventDefault(); e.stopPropagation();
       const v = pickVideo();
       if (!v) { pip.textContent = "Press play first"; return; }
-      wirePip(v);
       try {
-        try { v.disablePictureInPicture = false; } catch (_) {}
-        if (v.paused) { try { await v.play(); } catch (_) {} }
-        await v.requestPictureInPicture();
-      } catch (_) { pip.textContent = "Tap the video, then PiP"; }
+        // Gamecast Watch ("pip") → a deliberately SMALL Document-PiP window.
+        // The native PiP can't be sized from script; Document-PiP can.
+        if (watchMode === "pip" && window.documentPictureInPicture) {
+          await enterSmallPip(v);
+        } else {
+          wirePip(v);
+          try { v.disablePictureInPicture = false; } catch (_) {}
+          if (v.paused) { try { await v.play(); } catch (_) {} }
+          await v.requestPictureInPicture();
+        }
+      } catch (_) {
+        // Fall back to native PiP if Document-PiP isn't available / fails.
+        try {
+          wirePip(v);
+          if (v.paused) { try { await v.play(); } catch (__) {} }
+          await v.requestPictureInPicture();
+        } catch (__) { pip.textContent = "Tap the video, then PiP"; }
+      }
     });
 
     pipBtn.appendChild(full);

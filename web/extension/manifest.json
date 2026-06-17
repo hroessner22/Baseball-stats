@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DIAMOND:CONTEXT — Watch",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Opens the MLB.tv game you pick in DIAMOND:CONTEXT and floats it into a picture-in-picture window.",
   "permissions": ["tabs", "scripting", "storage", "activeTab"],
   "host_permissions": ["https://www.mlb.com/*", "https://*.mlb.com/*", "http://127.0.0.1/*", "http://localhost/*"],

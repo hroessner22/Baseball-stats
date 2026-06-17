@@ -43,6 +43,7 @@
         date: msg.date,
         watchUrl: msg.watchUrl, // when set (test mode), overrides the deep link
         rect: msg.rect, // exact screen rect to float the video above the field
+        mode: msg.mode, // "pip" (small) | "fullscreen" (theater) | "shift"
       });
     } else if (msg.type === "DC_SAVE_WATCH_POS") {
       relay({ type: "DC_SAVE_WATCH_POS" });
