@@ -13,7 +13,7 @@ current (e.g. Bichette & Semien are Mets in 2026 — that's correct, not a bug).
 | Date | Bets | Settled | Net | Moneyline (rec · P&L) | Props (rec · P&L) | Notes |
 |------|------|---------|-----|-----------------------|-------------------|-------|
 | 2026-06-16 | 29 | 16–13 | +$0.85 | 4–0 · +$1.49 | 12–13 · −$0.64 | Day saved by 2 longshot YES props (Arias +$4.20, Díaz +$2.08); strip those → red. Props ~coin-flips (NO unders @ ~48–52¢). |
-| 2026-06-17 | 20 | 7–13 | **−$14.20** | 6–2 · +$0.28 | 1–11 · −$14.48 | **STILL OLD CODE** (emp_p null on every fire → none of the fixes live). Damage is almost all **hits-NO** (1–7, −$10.27) oversized at 4–9× contracts — the exact pocket the stat-aware empirical sizing fixes (would ~halve it). MLs held (favorites only). Needs the reload. |
+| 2026-06-17 | 11 | 3–8 | **−$9.30** | 3–2 · −$0.70 | 0–6 · −$9.27 | **STILL OLD CODE** (emp_p null on every fire → no fixes live). Damage is the **NO-side fade-the-hitter props**: hits-NO 0–3 −$5.54 + total_bases-NO 0–2 −$3.33, oversized at 4–9× contracts (Bichette/Semien) — the exact pocket the stat-aware empirical sizing halves. MLs favorites-only. Needs the reload. (Earlier −$14.20 was a bad UTC date window; ET-bucketed is −$9.30.) |
 
 ## Per-day detail
 
