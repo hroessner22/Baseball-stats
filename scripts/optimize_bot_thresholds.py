@@ -49,7 +49,7 @@ def fetch_settled_fires():
     if not base or not key:
         sys.exit("Set SUPABASE_URL and SUPABASE_SERVICE_KEY in the environment.")
     cols = ("kind,stat,side,threshold,contracts,price_cents,our_p,market_p,"
-            "edge_pp,emp_p,settled,won,profit_cents")
+            "edge_pp,emp_p,settled,won,profit_cents,reasoning")
     rows, offset, page = [], 0, 1000
     while True:
         q = urllib.parse.urlencode({"select": cols, "settled": "eq.true",
@@ -63,7 +63,19 @@ def fetch_settled_fires():
         if len(batch) < page:
             break
         offset += page
-    return rows
+    # EXCLUDE the malfunction era (Jun 1-2 2026). Those 88 fires were
+    # placed by a broken pre-sanity-gate model (1¢ garbage fires, our_p
+    # ~0.99 vs market ~0.01) and were recovered + settled retroactively
+    # on 2026-07-09, tagged reasoning.source = 'first_run_recovered_*'.
+    # They are honest history for the P&L ledger but must NEVER inform
+    # tuning — they don't represent the strategy.
+    kept = [r for r in rows
+            if not str(((r.get("reasoning") or {}) if isinstance(r.get("reasoning"), dict) else {})
+                       .get("source", "")).startswith("first_run_recovered")]
+    dropped = len(rows) - len(kept)
+    if dropped:
+        print(f"# excluded {dropped} malfunction-era (first_run_recovered) fires from tuning\n")
+    return kept
 
 
 def wilson(wins, n, z=1.96):

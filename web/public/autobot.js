@@ -6296,6 +6296,18 @@ async function renderPracticeBetsPane() {
     })();
     const rowsByDay = new Map();      // dayKey → Map<gameKey, { label, rows[], agg, firstSeen }>
     const dayAggregates = new Map();  // dayKey → { count, won, lost, openCount, settledNet, openCost, openLive }
+    // HEADER TOTALS over the FULL settled set — not the 200-row render
+    // cap below. (Fix 2026-07-09: the slice(0,200) was truncating the
+    // P&L to the most-recent 200 fires, silently dropping the losing
+    // early days and overstating the headline total — e.g. showing
+    // +$16.12 when the true settled sum was negative. Row RENDERING is
+    // still capped at 200 for performance; the totals are not.)
+    visibleFires.forEach((f) => {
+        if (f.settled) {
+            settledNet += (f.settled.profit_cents || 0);
+            if (f.settled.won) settledWon++; else settledLost++;
+        }
+    });
     visibleFires.slice(0, 200).forEach((f) => {
         const cost = (f.contracts || 1) * (f.price_cents || 0);
         const result = f.settled
@@ -6320,8 +6332,9 @@ async function renderPracticeBetsPane() {
             resultBadge = result.won
                 ? `<span class="bot-result-badge bot-result-won">WON</span>`
                 : `<span class="bot-result-badge bot-result-lost">LOST</span>`;
-            settledNet += result.profit_cents;
-            if (result.won) settledWon++; else settledLost++;
+            // NOTE: header totals (settledNet/Won/Lost) are accumulated
+            // over the full set above — do NOT increment here or the
+            // first 200 fires would be double-counted.
         } else if (liveBid != null) {
             const liveVal = (f.contracts || 1) * liveBid;
             const pnl = liveVal - cost;

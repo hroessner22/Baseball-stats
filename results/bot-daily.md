@@ -25,22 +25,39 @@ current (e.g. Bichette & Semien are Mets in 2026 — that's correct, not a bug).
 | 2026-07-05 | 1 | 1–0 | +$0.66 | — | 1–0 · +$0.66 | One winner. |
 | 2026-07-06 | 3 | 2–1 | +$0.18 | — | 2–1 · +$0.18 | Up a touch. |
 
-### Lifetime — the honest, deduplicated number (as of 2026-07-09)
+### Lifetime — the complete, honest record (rebuilt 2026-07-09)
 
-Pulled the **complete** settled record straight from Supabase `bot_fires` and
-deduplicated it (13 rows were the same bet fired twice — placed_at drifted by
-milliseconds so the upsert key missed them; 3 of those double-counted a settled
-result). Clean record:
+Rebuilt the entire settled record from every source (Supabase `bot_fires` +
+the browser localStorage stores), deduplicated it, recovered two missing days,
+and settled them against real MLB box scores. Split by era:
 
-> **280 settled bets · 143–137 (51.1%) · −$6.88**
+| Era | Settled | W–L | Net | What it is |
+|-----|---------|-----|-----|------------|
+| **First run** (Jun 1–2) | 88 | 14–74 | **−$22.97** | Broken pre-sanity-gate model — 1¢ "garbage" fires (our_p ≈0.99 vs market ≈0.01). **Malfunctions, not strategy.** Recovered from localStorage + settled retroactively; tagged `first_run_recovered` and excluded from all tuning. |
+| **Model era** (Jun 3 → Jul 6) | 280 | 143–137 (51.1%) | **−$6.88** | The real strategy record. Roughly break-even; the losing pockets are already gated (see below). |
+| **TOTAL** | **368** | **157–211** | **−$29.85** | The complete, honest lifetime. |
 
-Three numbers were floating around; only the last is real:
-- **+$16.12** — the app header. A *localStorage artifact*: the browser rotates
-  out old fires, so it silently dropped the losing early-June days. Flattering,
-  not true.
-- **−$3.51** — raw Supabase (before dedup; double-counts 3 bets).
-- **−$6.88** — the true deduped record. Backup of the removed rows:
-  `results/bot_fires_dupe_backup_2026-07-09.json`.
+**The +$16.12 the app used to show was a bug, now fixed.** The bets pane summed
+P&L over only the first 200 rendered fires (`visibleFires.slice(0,200)`), which
+silently dropped the oldest ~83 losing bets and overstated the total. The header
+now sums the full settled set (`web/public/autobot.js`). localStorage was also
+deduped so it matches Supabase; the app now reads **−$6.88** for the model era.
+
+**Data hygiene done 2026-07-09:** 13 duplicate rows removed from Supabase
+(same bet fired twice, ms-apart) — backup `results/bot_fires_dupe_backup_2026-07-09.json`;
+3 duplicate rows removed from localStorage (backup in a `*_backup_20260709`
+localStorage key); 88 Jun 1–2 fires recovered and saved.
+
+**Algorithm — evidence review (no new gate justified).** Model-era pockets:
+the only money-losers are `strikeouts-YES` and `home_runs-YES`, both already
+gated off (1 and 3 fires respectively since Jun 16). Everything else is
+break-even or better — NO props are 95–66 / −1% ROI (break-even, no oversized
+cluster to cap), cheap YES longshots are +28%. Tuning on these n=30–40 samples
+would be overfitting, so **no thresholds were changed**. The one real forward
+improvement is activating the empirical hitter-quality NO-fade gate on the
+*live* fire path (it currently only guards pre-game fires — hence `emp_p` null
+on 100% of fires); that needs live testing, not a blind edit. The threshold
+optimizer was hardened to exclude the malfunction era from tuning.
 
 **Where the −$6.88 comes from — it's the early-June learning tax, not a live
 leak.** The two worst pockets are already gated off:
