@@ -14,6 +14,56 @@ current (e.g. Bichette & Semien are Mets in 2026 — that's correct, not a bug).
 |------|------|---------|-----|-----------------------|-------------------|-------|
 | 2026-06-16 | 29 | 16–13 | +$0.85 | 4–0 · +$1.49 | 12–13 · −$0.64 | Day saved by 2 longshot YES props (Arias +$4.20, Díaz +$2.08); strip those → red. Props ~coin-flips (NO unders @ ~48–52¢). |
 | 2026-06-17 | 11 | 3–8 | **−$9.30** | 3–2 · −$0.70 | 0–6 · −$9.27 | **STILL OLD CODE** (emp_p null on every fire → no fixes live). Damage is the **NO-side fade-the-hitter props**: hits-NO 0–3 −$5.54 + total_bases-NO 0–2 −$3.33, oversized at 4–9× contracts (Bichette/Semien) — the exact pocket the stat-aware empirical sizing halves. MLs favorites-only. Needs the reload. (Earlier −$14.20 was a bad UTC date window; ET-bucketed is −$9.30.) |
+| 2026-06-18 | 16 | 11–5 | **+$0.92** | 2 · −$1.17 | 14 · +$2.09 | Up. Props carried (11–5 overall). (My earlier −$3.51 was a query-filter bug — raw-UTC `placed_at` chopped the ET day to 2 fires; data was complete all along.) |
+| 2026-06-20 | 17 | 9–8 | **+$1.09** | — | 9–8 · +$1.09 | All props. Up small. Hits-NO fades cashed this time (Grissom +$4.08, Tucker +$3.25, Mayo +$2.16) vs misses (Volpe/Lewis −$1.92) — same oversized 4–6× NO bets, variance went our way. Still old code. |
+| 2026-06-21 | 10 | 5–5 | **+$1.55** | 4–0 · +$5.10 | 1–5 · −$3.55 | **MLs (favorites) carried it** 4–0; props 1–5 a drag. |
+| 2026-06-28 | 1 | 0–1 | −$1.70 | — | 0–1 · −$1.70 | Tiny slate, one losing prop. |
+| 2026-06-29 | 3 | 2–1 | −$0.15 | — | 2–1 · −$0.15 | Break-even. |
+| 2026-06-30 | 4 | 2–2 | +$0.19 | — | 2–2 · +$0.19 | Flat. |
+| 2026-07-01 | 3 | 3–0 | **+$2.78** | — | 3–0 · +$2.78 | Clean sweep, small slate. |
+| 2026-07-02 | 5 | 3–2 | −$1.29 | — | 3–2 · −$1.29 | Down small. |
+| 2026-07-05 | 1 | 1–0 | +$0.66 | — | 1–0 · +$0.66 | One winner. |
+| 2026-07-06 | 3 | 2–1 | +$0.18 | — | 2–1 · +$0.18 | Up a touch. |
+
+### Lifetime — the honest, deduplicated number (as of 2026-07-09)
+
+Pulled the **complete** settled record straight from Supabase `bot_fires` and
+deduplicated it (13 rows were the same bet fired twice — placed_at drifted by
+milliseconds so the upsert key missed them; 3 of those double-counted a settled
+result). Clean record:
+
+> **280 settled bets · 143–137 (51.1%) · −$6.88**
+
+Three numbers were floating around; only the last is real:
+- **+$16.12** — the app header. A *localStorage artifact*: the browser rotates
+  out old fires, so it silently dropped the losing early-June days. Flattering,
+  not true.
+- **−$3.51** — raw Supabase (before dedup; double-counts 3 bets).
+- **−$6.88** — the true deduped record. Backup of the removed rows:
+  `results/bot_fires_dupe_backup_2026-07-09.json`.
+
+**Where the −$6.88 comes from — it's the early-June learning tax, not a live
+leak.** The two worst pockets are already gated off:
+| Pocket | n | W–L | Net | Since Jun 16 |
+|--------|---|-----|-----|--------------|
+| strikeouts YES | 30 | 4–26 | **−$16.92** | only 1 fire, −$0.40 (gate works) |
+| home_runs YES | 13 | 3–10 | **−$9.03** | 3 fires, −$1.34 (nearly off) |
+| total_bases NO | 38 | 22–16 | −$9.85 | the *remaining* bleed — oversized NO fades |
+| moneyline YES | 29 | 17–12 | −$7.89 | paying up for chalk |
+| **total_bases YES** | 32 | 18–14 | **+$29.61 (+72%)** | the engine's real edge |
+| hits NO | 103 | 60–43 | +$3.49 | bread-and-butter, thin |
+
+The current-gate era (Jun 16 → Jul 6) is **−$4.22**, and that is *entirely* the
+single Jun-17 −$9.30 day (oversized NO fade-the-hitter props). Strip that one
+day and the other 11 are **+$5.08**. The gates we built are holding.
+
+**Open structural note (not "old code"):** the live bot IS the current code
+(live `autobot.js` == local, byte-for-byte). But `emp_p` is null on 100% of
+fires because `empPSide` is only set for hits-NO and only when the batter's
+`season_avg` resolves at fire time — which it doesn't. So the empirical
+*sizing* lever is dormant. It's low-priority: hits-NO is already profitable, so
+turning it on is ambiguous. The real live lever is **sizing discipline on the
+NO fade pockets** (what blew up Jun 17), not a new gate.
 
 ## Per-day detail
 

@@ -1,0 +1,19 @@
+{
+  "backup_date": "2026-07-09",
+  "reason": "Duplicate bot_fires rows removed to make the settled record mathematically correct. Same ticker fired twice (placed_at drifted by ms, so the (user_id,ticker,placed_at) upsert key did not dedupe). Kept the settled row; for both-settled pairs kept the earliest fire. These 13 rows were DELETED. Restore with an INSERT if ever needed.",
+  "deleted_rows": [
+    {"id":"155ba41f-6e8c-4b1d-8795-51565032fd47","ticker":"KXMLBHIT-26JUN061415CINSTL-STLJWALKER18-2","placed_at":"2026-06-06 19:15:25.456+00","settled":true,"won":false,"profit_cents":-184,"contracts":4,"price_cents":46,"note":"later identical copy of -184"},
+    {"id":"ffec241b-6d61-4991-9971-61e011b15cb3","ticker":"KXMLBHIT-26JUN061610TBMIA-TBCMULLINS31-1","placed_at":"2026-06-06 20:11:40.365+00","settled":false,"won":null,"profit_cents":null,"contracts":4,"price_cents":47,"note":"unsettled shadow (kept +84)"},
+    {"id":"5b4199f8-22b3-430c-aeb4-f34c00a7057f","ticker":"KXMLBHIT-26JUN081907PHITOR-TORTHEINEMAN55-1","placed_at":"2026-06-08 23:10:16.816+00","settled":false,"won":null,"profit_cents":null,"contracts":3,"price_cents":53,"note":"unsettled shadow (kept -159)"},
+    {"id":"4996795b-415f-4d1f-85f3-c433ce12c530","ticker":"KXMLBHIT-26JUN082138HOULAA-LAAMTROUT27-1","placed_at":"2026-06-09 01:43:51.182+00","settled":false,"won":null,"profit_cents":null,"contracts":5,"price_cents":38,"note":"unsettled shadow (kept +65)"},
+    {"id":"582fa424-6cad-41e7-8ff8-23d270b4f4a0","ticker":"KXMLBHIT-26JUN091940TEXKC-TEXWLANGFORD36-1","placed_at":"2026-06-09 23:51:33.386+00","settled":false,"won":null,"profit_cents":null,"contracts":6,"price_cents":31,"note":"unsettled shadow (kept +60)"},
+    {"id":"d8dcb58a-3d12-48bc-bf14-f8901e8d5be7","ticker":"KXMLBHR-26JUN061610TBMIA-TBJCAMINERO13-1","placed_at":"2026-06-06 20:16:16.576+00","settled":false,"won":null,"profit_cents":null,"contracts":2,"price_cents":18,"note":"unsettled shadow (kept -195)"},
+    {"id":"86bbc5c2-a303-4cc7-94f5-c1453f51c1b5","ticker":"KXMLBHR-26JUN071435CLETEX-CLEKMANZARDO9-1","placed_at":"2026-06-07 18:56:15.431+00","settled":false,"won":null,"profit_cents":null,"contracts":16,"price_cents":3,"note":"unsettled shadow (kept -198)"},
+    {"id":"8f9feb81-7863-4e46-8cd0-15bea2da75b4","ticker":"KXMLBKS-26JUN061415CINSTL-CINNLODOLO40-4","placed_at":"2026-06-06 18:57:32.426+00","settled":true,"won":true,"profit_cents":196,"contracts":4,"price_cents":45,"note":"later win copy (kept earlier +192)"},
+    {"id":"9b98623f-b743-4475-9c53-48003635607e","ticker":"KXMLBKS-26JUN061610PITATL-ATLSSTRIDER99-7","placed_at":"2026-06-06 20:19:46.277+00","settled":false,"won":null,"profit_cents":null,"contracts":3,"price_cents":56,"note":"unsettled shadow (kept +63)"},
+    {"id":"5204f6bd-0827-43bb-8d7a-c0b4bb599710","ticker":"KXMLBTB-26JUN071435CLETEX-TEXJFOSCUE56-2","placed_at":"2026-06-07 18:43:29.268+00","settled":true,"won":true,"profit_cents":325,"contracts":5,"price_cents":34,"note":"later win copy 5x (kept earlier +396 6x)"},
+    {"id":"c62d6219-9a83-4e07-945c-e59ab334da69","ticker":"KXMLBTB-26JUN082138HOULAA-LAATMANCINI34-2","placed_at":"2026-06-09 02:09:02.369+00","settled":false,"won":null,"profit_cents":null,"contracts":6,"price_cents":31,"note":"unsettled shadow (kept +408)"},
+    {"id":"0149f4c3-36c2-4857-b280-601e3f4d45a1","ticker":"KXMLBTB-26JUN082138HOULAA-LAAZNETO9-2","placed_at":"2026-06-09 01:43:53.944+00","settled":false,"won":null,"profit_cents":null,"contracts":3,"price_cents":60,"note":"unsettled shadow (kept +66)"},
+    {"id":"9ae2fb24-04e0-4559-aa2d-290154182d18","ticker":"KXMLBTB-26JUN082145WSHSF-WSHKRUIZ20-2","placed_at":"2026-06-09 02:49:52.7+00","settled":false,"won":null,"profit_cents":null,"contracts":6,"price_cents":32,"note":"unsettled shadow (kept -192)"}
+  ]
+}
